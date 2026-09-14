@@ -279,7 +279,9 @@ QImage frame_to_image(const QByteArray& frame, int width, int height) {
 }
 
 VideoPane::VideoPane(QWidget* parent) : QWidget(parent) {
-    setMinimumSize(320, 180);
+    // Half the decode resolution at 16:9. A 320x180 floor here forced the info page
+    // to 696px, silently overriding the app's own 620px window minimum.
+    setMinimumSize(160, 90);
     setAutoFillBackground(false);
 }
 
@@ -393,16 +395,30 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     video_column->addWidget(video_heading);
     info_video_pane_ = new VideoPane(video_box);
     info_video_pane_->setObjectName(QStringLiteral("infoVideoPane"));
-    // Capped at the decoder's own resolution: scaling a 320x180 frame up in the
-    // corner buys no detail and costs a resample every repaint.
-    info_video_pane_->setFixedSize(320, 180);
-    video_column->addWidget(info_video_pane_);
+    // A cap, not a fixed size: scaling a 320x180 frame up buys no detail, but
+    // setFixedSize also pinned the floor, so the box could not shrink on a short
+    // window and overflowed onto the stats label. paintEvent keeps the aspect.
+    info_video_pane_->setMaximumSize(320, 180);
+    // Half the cap, so a short window shrinks the picture instead of overlapping the
+    // stats text with it. paintEvent keeps the aspect ratio at whatever height it gets.
+    info_video_pane_->setMinimumSize(160, 90);
+
     video_stats_ = new QLabel(QStringLiteral("--"), video_box);
+    video_stats_->setObjectName(QStringLiteral("videoStats"));
     QFont mono(QStringLiteral("Menlo"));
     mono.setStyleHint(QFont::Monospace);
     mono.setPointSize(10);
     video_stats_->setFont(mono);
-    video_column->addWidget(video_stats_);
+    video_stats_->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+
+    // Picture beside the numbers, not above them. This box is wide and short (374x158
+    // at the 980x620 floor), so stacking heading + 90px picture + 3 lines of stats
+    // needed 196px, and QVBoxLayout resolved the 38px deficit by painting the text on
+    // top of the picture. Side by side the box needs only the taller of the two.
+    auto* video_row = new QHBoxLayout();
+    video_row->addWidget(info_video_pane_, 0, Qt::AlignTop);
+    video_row->addWidget(video_stats_, 1, Qt::AlignTop);
+    video_column->addLayout(video_row);
     grid->addWidget(video_box, 2, 1);
 
     auto* event_box = new QFrame(info_page_);
@@ -427,7 +443,12 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     // keeps the growth rather than the text panel below it.
     grid->setRowStretch(0, 3);
     grid->setRowStretch(1, 3);
-    grid->setRowStretch(2, 1);
+    // Row 2 takes no stretch share at all. The telemetry scroll areas above can shrink
+    // to nothing, so any share here let the grid hand row 2 less than the video box
+    // needs, and QVBoxLayout then overlapped the picture with the stats text. At zero
+    // stretch the row is sized from its own minimum and the spare height goes to the
+    // map column instead, which is where it was wanted anyway.
+    grid->setRowStretch(2, 0);
     grid->setRowStretch(3, 0);
 
     auto* video_layout = new QVBoxLayout(video_page_);

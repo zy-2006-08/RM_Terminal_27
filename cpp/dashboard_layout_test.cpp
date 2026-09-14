@@ -21,6 +21,11 @@ void check(bool condition, const char* name) {
 constexpr int kWidth = 1280;
 constexpr int kHeight = 720;
 
+// Mirrors main.cpp's setMinimumSize(980, 620) - the smallest window the app can
+// present, so the info page must lay out cleanly here, not only at 1280x720.
+constexpr int kMinWidth = 980;
+constexpr int kMinHeight = 620;
+
 template <class T>
 Field<T> present(T value, Freshness freshness = Freshness::Fresh) {
     Field<T> field;
@@ -143,6 +148,50 @@ void the_layout_fits_the_requested_screen_size() {
     drive_to_video(dashboard);
     check(dashboard.height() == kHeight && dashboard.width() == kWidth,
           "video mode honours the requested 1280x720 without growing");
+}
+
+// Regression: every ratio and visibility assertion passed while the video box was
+// visibly broken - the unshrinkable 320x180 thumbnail overflowed its box at 980x620
+// and the stats label was painted on top of the picture.
+void the_thumbnail_and_its_stats_never_overlap() {
+    Dashboard dashboard(test_config());
+    dashboard.resize(kMinWidth, kMinHeight);
+    drive_to_info(dashboard);
+
+    check(dashboard.width() == kMinWidth && dashboard.height() == kMinHeight,
+          "info mode honours the 980x620 minimum without growing");
+
+    const VideoPane* thumbnail = find_pane(dashboard, "infoVideoPane");
+    const QLabel* stats = find_label(dashboard, "videoStats");
+    const QWidget* box = thumbnail->parentWidget();
+
+    // update(..., nullptr, ...) leaves the one-line "图传未启用" placeholder, which is
+    // shorter than what a live receiver produces and hid this overlap. Reproduce the
+    // real three-line shape of video_panel_text() so the box faces its true height.
+    const_cast<QLabel*>(stats)->setText(QStringLiteral("状态 online    已解码 43 帧\n"
+                                                      "包 975   丢失 0   乱序 0   重复 0\n"
+                                                      "整帧 71   不完整 0   超时 0"));
+    settle(dashboard);
+
+    check(box == stats->parentWidget(),
+          "thumbnail and stats share the video box, so their geometry is comparable");
+    check(thumbnail->isVisible() && stats->isVisible(),
+          "both the thumbnail and its stats are visible at the minimum size");
+
+    // Without these, the overlap check below passes vacuously: a zero-height picture
+    // intersects nothing, and a clipped stats label shrinks out of the way. Both are
+    // worse than the bug, so the useful area is asserted before the non-overlap.
+    check(thumbnail->height() >= 90 && thumbnail->width() >= 160,
+          "the thumbnail keeps a usable picture area instead of collapsing");
+    check(stats->height() >= stats->minimumSizeHint().height(),
+          "the stats label is tall enough to show every line it holds");
+
+    check(!thumbnail->geometry().intersects(stats->geometry()),
+          "the stats text does not overlap the thumbnail picture");
+    check(box->rect().contains(thumbnail->geometry()),
+          "the thumbnail fits inside its box instead of overflowing it");
+    check(box->rect().contains(stats->geometry()),
+          "the stats label fits inside its box instead of overflowing it");
 }
 
 // (3): video mode hands the picture the screen, and the map goes away.
@@ -287,6 +336,7 @@ int main(int argc, char* argv[]) {
     try {
         info_mode_is_map_dominant_with_a_capped_thumbnail();
         the_layout_fits_the_requested_screen_size();
+        the_thumbnail_and_its_stats_never_overlap();
         video_mode_fills_the_window_and_hides_the_map();
         the_read_only_banner_survives_both_modes();
         video_mode_keeps_the_countdown_and_hp();
