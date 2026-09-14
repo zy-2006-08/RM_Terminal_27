@@ -44,5 +44,35 @@ int main() {
     require(s.robots.at(RobotId{3}).position.x.quality == Quality::Invalid, "invalid quality");
     require(s.robots.at(RobotId{3}).position.x.freshness == Freshness::Stale, "stale freshness");
     require(s.robots.size() == 1, "single source");
-    std::cout << "six-family decoder contract PASS\n";
+    // Given the two simulated families; When they arrive over the real decoder;
+    // Then values land in the snapshot with presence preserved.
+    rm::BlindStatus blind; blind.set_self_base_blinded(true); blind.set_blind_started_ms(9000); blind.set_cause(1);
+    require(decoder.accept("BlindStatus", blind.SerializeAsString(), 13), "BlindStatus");
+    rm::RobotPositionSet set;
+    auto* teammate = set.add_entries(); teammate->set_robot_id(7); teammate->set_faction(1); teammate->set_x(6.5); teammate->set_y(2.5);
+    auto* mine = set.add_entries(); mine->set_robot_id(3); mine->set_faction(1); mine->set_x(99.0); mine->set_y(99.0); mine->set_is_self(true);
+    require(decoder.accept("RobotPositionSet", set.SerializeAsString(), 14), "RobotPositionSet");
+    s = store.snapshot(14);
+    require(s.blind.self_base_blinded.value == true, "blind flag decoded");
+    require(s.blind.cause.value == 1, "blind cause decoded");
+    require(s.blind.blind_remaining_ms.quality == Quality::Missing, "absent blind field stays missing");
+    require(s.map_robots.size() == 2, "both map entries decoded");
+    require(s.map_robots[0].id.value == 3 && s.map_robots[1].id.value == 7, "map entries sorted by id");
+    require(s.map_robots[0].is_self, "the self entry is identified");
+    // 14.5 is what the authoritative RobotPosition path wrote above, so the
+    // fabricated 99 in the set must not survive even through the real decoder.
+    require(s.map_robots[0].position.x.value == 14.5, "self position keeps the authoritative value");
+    require(s.map_robots[1].position.x.value == 6.5, "teammate position comes from the set");
+    // Given malformed or non-finite input on the new topics; When decoded;
+    // Then reject without crashing, matching the existing invalid path.
+    require(!decoder.accept("BlindStatus", "\xff", 15), "malformed BlindStatus");
+    require(!decoder.accept("RobotPositionSet", "garbage", 16), "malformed RobotPositionSet");
+    rm::BlindStatus bad_cause; bad_cause.set_cause(7);
+    require(!decoder.accept("BlindStatus", bad_cause.SerializeAsString(), 17), "out of range blind cause");
+    rm::RobotPositionSet nan_set;
+    auto* broken = nan_set.add_entries(); broken->set_robot_id(5);
+    broken->set_x(std::numeric_limits<float>::quiet_NaN());
+    require(!decoder.accept("RobotPositionSet", nan_set.SerializeAsString(), 18), "non-finite map coordinate");
+    require(store.snapshot(18).map_robots.size() == 2, "a rejected set leaves the previous map intact");
+    std::cout << "eight-family decoder contract PASS\n";
 }

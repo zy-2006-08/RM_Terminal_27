@@ -107,5 +107,13 @@ bool convert(TelemetryFields<Field>& state, const inbound::RobotTelemetry& patch
     MERGE(bbox_h, between(0, 1080));
     return ok;
 }
+bool convert(BlindFields<Field>& state, const inbound::BlindStatus& patch, MonotonicMs now) {
+    bool ok = true;
+    MERGE(self_base_blinded, any_value);
+    MERGE(blind_started_ms, any_value);
+    MERGE(blind_remaining_ms, nonnegative);
+    MERGE(cause, between(0, 2));
+    return ok;
+}
 #undef MERGE
 }

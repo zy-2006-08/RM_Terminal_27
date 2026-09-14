@@ -187,6 +187,176 @@ void stale_reporter_logs_once_per_transition() {
     check(details.back().contains(QLatin1String("robots=1")), "stale record reports the robot count");
 }
 
+inbound::RobotPositionEntry map_entry(std::uint32_t id, std::uint32_t faction,
+                                      double x, double y, bool is_self = false) {
+    inbound::RobotPositionEntry entry;
+    entry.robot_id = id;
+    entry.faction = faction;
+    entry.x = x;
+    entry.y = y;
+    entry.yaw = 0.0;
+    entry.is_self = is_self;
+    return entry;
+}
+
+// Blind status is a normal field group, so it must inherit the same
+// Missing/Invalid/Stale semantics as every other group rather than a bypass.
+void store_tracks_blind_status_like_any_other_group() {
+    Store store(10);
+    check(store.snapshot(0).blind.self_base_blinded.quality == Quality::Missing,
+          "blind starts Missing");
+    check(store.snapshot(0).blind.self_base_blinded.freshness == Freshness::NeverReceived,
+          "blind starts NeverReceived");
+
+    inbound::BlindStatus blind;
+    blind.self_base_blinded = true;
+    blind.blind_started_ms = 1000;
+    blind.cause = 1;
+    check(store.apply(blind, 0), "blind status accepted");
+
+    auto snapshot = store.snapshot(0);
+    check(snapshot.blind.self_base_blinded.quality == Quality::Valid, "blind reports Valid");
+    check(snapshot.blind.self_base_blinded.value == true, "blind flag value preserved");
+    check(snapshot.blind.cause.value == 1, "blind cause preserved");
+    check(snapshot.blind.blind_remaining_ms.quality == Quality::Missing,
+          "an omitted blind field stays Missing rather than becoming zero");
+    check(!snapshot.blind.blind_remaining_ms.value, "omitted blind field holds no value");
+    check(store.snapshot(10).blind.self_base_blinded.freshness == Freshness::Stale,
+          "blind ages into Stale on the shared threshold");
+
+    inbound::BlindStatus bad;
+    bad.cause = 7;
+    check(!store.apply(bad, 10), "out of range blind cause rejected");
+    snapshot = store.snapshot(10);
+    check(snapshot.blind.cause.quality == Quality::Invalid, "invalid cause reported as Invalid");
+    check(snapshot.blind.cause.value == 1, "invalid cause does not erase the last valid value");
+}
+
+// The position set is a full snapshot, not a delta. Accumulating would grow
+// without bound across a match and leave dead robots on the map.
+void store_replaces_map_robots_wholesale() {
+    Store store(10);
+    inbound::RobotPositionSet three;
+    three.entries = {map_entry(1, 1, 1, 1), map_entry(2, 1, 2, 2), map_entry(3, 2, 3, 3)};
+    check(store.apply(three, 0), "three entry set accepted");
+    check(store.snapshot(0).map_robots.size() == 3, "three robots stored");
+
+    inbound::RobotPositionSet one;
+    one.entries = {map_entry(7, 2, 5, 5)};
+    check(store.apply(one, 1), "single entry set accepted");
+    auto snapshot = store.snapshot(1);
+    check(snapshot.map_robots.size() == 1, "the set replaces wholesale instead of accumulating");
+    check(snapshot.map_robots[0].id.value == 7, "the surviving robot comes from the newest set");
+
+    inbound::RobotPositionSet empty;
+    check(store.apply(empty, 2), "an empty set is legal");
+    check(store.snapshot(2).map_robots.empty(), "an empty set clears the list");
+}
+
+// Unordered delivery must not reorder the drawing sequence, or screenshot
+// evidence cannot be compared frame to frame.
+void store_sorts_map_robots_by_id() {
+    Store store(10);
+    inbound::RobotPositionSet set;
+    set.entries = {map_entry(104, 2, 1, 1), map_entry(3, 1, 2, 2), map_entry(7, 1, 3, 3)};
+    check(store.apply(set, 0), "unordered set accepted");
+    const auto snapshot = store.snapshot(0);
+    check(snapshot.map_robots.size() == 3, "all three robots kept");
+    check(snapshot.map_robots[0].id.value == 3 && snapshot.map_robots[1].id.value == 7 &&
+          snapshot.map_robots[2].id.value == 104,
+          "map robots are sorted by ascending id");
+}
+
+void store_discards_map_entries_without_identity() {
+    Store store(10);
+    inbound::RobotPositionEntry anonymous;
+    anonymous.x = 5.0;
+    anonymous.y = 5.0;
+    inbound::RobotPositionSet set;
+    set.entries = {map_entry(4, 1, 1, 1), anonymous};
+    check(!store.apply(set, 0), "a set holding an identity-less entry reports invalid");
+    const auto snapshot = store.snapshot(0);
+    check(snapshot.map_robots.size() == 1, "the identity-less entry is discarded");
+    check(snapshot.map_robots[0].id.value == 4, "the identified entry survives");
+    check(snapshot.map_invalid_entries == 1, "the discard is counted");
+}
+
+// The single-robot path is module one's verified pipeline. If a simulated set
+// could overwrite our own coordinates, a real robot would silently render from
+// fabricated data.
+void store_keeps_authoritative_self_position() {
+    Store store(10);
+    inbound::RobotPosition authoritative;
+    authoritative.x = 3.0;
+    authoritative.y = 4.0;
+    authoritative.yaw = 90.0;
+    check(store.apply(authoritative, RobotId{3}, 0), "authoritative self position accepted");
+
+    inbound::RobotPositionSet set;
+    set.entries = {map_entry(3, 1, 99.0, 99.0, true), map_entry(4, 1, 1.0, 1.0)};
+    check(store.apply(set, 0), "set carrying a self entry accepted");
+
+    const auto snapshot = store.snapshot(0);
+    const auto& self = snapshot.map_robots[0];
+    check(self.id.value == 3 && self.is_self, "the self robot is identified from the set");
+    check(self.position.x.value == 3.0, "self x comes from the authoritative path, not the set's 99");
+    check(self.position.y.value == 4.0, "self y comes from the authoritative path");
+    check(self.position.yaw.value == 90.0, "self yaw comes from the authoritative path");
+    check(self.position.x.quality == Quality::Valid, "authoritative self position is Valid");
+    check(snapshot.map_robots[1].position.x.value == 1.0,
+          "a teammate still uses the coordinates carried by the set");
+}
+
+void store_leaves_self_position_missing_without_authoritative_source() {
+    Store store(10);
+    inbound::RobotPositionSet set;
+    set.entries = {map_entry(3, 1, 99.0, 99.0, true)};
+    check(store.apply(set, 0), "self entry accepted with no authoritative position yet");
+    const auto snapshot = store.snapshot(0);
+    check(snapshot.map_robots.size() == 1, "the self robot is still listed");
+    check(snapshot.map_robots[0].position.x.quality == Quality::Missing,
+          "self position stays Missing instead of falling back to fabricated coordinates");
+    check(!snapshot.map_robots[0].position.x.value, "the fabricated 99 never leaks through");
+    check(snapshot.map_robots[0].position.x.freshness == Freshness::NeverReceived,
+          "a never received self position reports NeverReceived");
+}
+
+void store_demotes_duplicate_self_claims() {
+    Store store(10);
+    inbound::RobotPositionSet set;
+    set.entries = {map_entry(9, 1, 1.0, 1.0, true), map_entry(2, 1, 2.0, 2.0, true)};
+    check(!store.apply(set, 0), "a set with two self claims reports invalid");
+    const auto snapshot = store.snapshot(0);
+    check(snapshot.map_robots.size() == 2, "both robots survive");
+    check(snapshot.map_robots[0].id.value == 2 && snapshot.map_robots[0].is_self,
+          "the lowest id keeps the self identity");
+    check(snapshot.map_robots[1].id.value == 9 && !snapshot.map_robots[1].is_self,
+          "the higher id is demoted to a teammate");
+    check(snapshot.map_invalid_entries == 1, "the duplicate self claim is counted");
+    check(snapshot.map_robots[1].position.x.value == 1.0,
+          "the demoted robot keeps the coordinates from the set");
+}
+
+// Faction is never inferred from robot_id: the 2027 id encoding is unknown, so
+// inferring would state a side with false confidence.
+void store_normalizes_unknown_faction() {
+    Store store(10);
+    inbound::RobotPositionEntry absent;
+    absent.robot_id = 6;
+    absent.x = 2.0;
+    absent.y = 2.0;
+    inbound::RobotPositionSet set;
+    set.entries = {map_entry(5, 7, 1.0, 1.0), absent, map_entry(8, 2, 3.0, 3.0)};
+    check(!store.apply(set, 0), "an out of range faction reports invalid");
+    const auto snapshot = store.snapshot(0);
+    check(snapshot.map_robots.size() == 3, "no entry is dropped over faction alone");
+    check(snapshot.map_robots[0].faction == 0, "faction 7 normalises to unknown");
+    check(snapshot.map_robots[1].faction == 0, "an absent faction is unknown");
+    check(snapshot.map_robots[2].faction == 2, "a legal faction is preserved verbatim");
+    check(snapshot.map_invalid_entries == 1,
+          "only the out of range faction counts as invalid; absence is not corruption");
+}
+
 int main() {
     try {
         for (auto threshold : {-1, 0}) {
@@ -267,6 +437,14 @@ int main() {
         event_history_empty_returns_nothing();
         store_deduplicates_republished_events();
         store_keeps_distinct_events_sharing_a_millisecond();
+        store_tracks_blind_status_like_any_other_group();
+        store_replaces_map_robots_wholesale();
+        store_sorts_map_robots_by_id();
+        store_discards_map_entries_without_identity();
+        store_keeps_authoritative_self_position();
+        store_leaves_self_position_missing_without_authoritative_source();
+        store_demotes_duplicate_self_claims();
+        store_normalizes_unknown_faction();
         std::cout << "All domain checks passed (no assert, no sleep).\n";
         return 0;
     } catch (const std::exception& error) {

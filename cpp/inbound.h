@@ -13,5 +13,13 @@ using RobotModuleStatus = ModuleFields<std::optional>;
 using RobotPosition = PositionFields<std::optional>;
 using Event = EventFields<std::optional>;
 using RobotTelemetry = TelemetryFields<std::optional>;
+using BlindStatus = BlindFields<std::optional>;
+struct RobotPositionEntry : PositionFields<std::optional> {
+    std::optional<std::uint32_t> robot_id, faction;
+    std::optional<bool> is_self;
+};
+struct RobotPositionSet {
+    std::vector<RobotPositionEntry> entries;
+};
 
 }

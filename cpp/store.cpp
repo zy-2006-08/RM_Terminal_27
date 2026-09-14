@@ -1,5 +1,6 @@
 #include "store.h"
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace rm_terminal {
@@ -83,11 +84,74 @@ bool Store::apply(const inbound::RobotPosition& patch, std::optional<RobotId> so
 bool Store::apply(const inbound::RobotTelemetry& patch, std::optional<RobotId> source, MonotonicMs now) {
     return valid_source(source) && advance(now) && convert(state_.robots[*source].telemetry, patch, now);
 }
+bool Store::apply(const inbound::BlindStatus& patch, MonotonicMs now) {
+    return advance(now) && convert(state_.blind, patch, now);
+}
+bool Store::apply(const inbound::RobotPositionSet& patch, MonotonicMs now) {
+    if (!advance(now)) return false;
+    bool ok = true;
+
+    // Only one robot can be us. Extra claims are demoted rather than trusted,
+    // because picking arbitrarily would attach our own authoritative coordinates
+    // to somebody else's marker.
+    std::size_t self_claims = 0;
+    std::optional<std::uint32_t> self_id;
+    for (const auto& entry : patch.entries) {
+        if (!entry.robot_id || !entry.is_self.value_or(false)) continue;
+        ++self_claims;
+        if (!self_id || *entry.robot_id < *self_id) self_id = entry.robot_id;
+    }
+    if (self_claims > 1) {
+        state_.map_invalid_entries += self_claims - 1;
+        ok = false;
+    }
+
+    std::vector<MapRobot> robots;
+    robots.reserve(patch.entries.size());
+    for (const auto& entry : patch.entries) {
+        if (!entry.robot_id) {
+            ++state_.map_invalid_entries;
+            ok = false;
+            continue;
+        }
+        MapRobot robot;
+        robot.id = RobotId{*entry.robot_id};
+        // Never inferred from robot_id: the 2027 id encoding is unknown, so
+        // guessing a side would report an alliance with false confidence.
+        if (entry.faction) {
+            if (*entry.faction <= 2) {
+                robot.faction = *entry.faction;
+            } else {
+                ++state_.map_invalid_entries;
+                ok = false;
+            }
+        }
+        robot.is_self = self_id && *self_id == *entry.robot_id;
+        if (robot.is_self) {
+            // The single-robot path is the sole authority for our own coordinates.
+            // Coordinates carried in the set are dropped, so a simulator (or a
+            // spoofed publisher) cannot move our own marker. Absent authoritative
+            // data leaves the position Missing rather than falling back.
+            const auto existing = state_.robots.find(robot.id);
+            if (existing != state_.robots.end()) robot.position = existing->second.position;
+        } else if (!convert(robot.position, entry, now)) {
+            ++state_.map_invalid_entries;
+            ok = false;
+        }
+        robots.push_back(std::move(robot));
+    }
+    std::stable_sort(robots.begin(), robots.end(),
+                     [](const MapRobot& left, const MapRobot& right) { return left.id < right.id; });
+    state_.map_robots = std::move(robots);
+    return ok;
+}
 Snapshot Store::snapshot(MonotonicMs now) const {
     if (now < latest_) throw std::invalid_argument("snapshot precedes latest update");
     auto copy = state_;
     age(copy.game, now, threshold_);
     age(copy.event, now, threshold_);
+    age(copy.blind, now, threshold_);
+    for (auto& robot : copy.map_robots) age(robot.position, now, threshold_);
     for (auto& entry : copy.robots) {
         auto& robot = entry.second;
         age(robot.dynamic, now, threshold_);

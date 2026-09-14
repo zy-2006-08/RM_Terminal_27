@@ -13,6 +13,8 @@ public:
     bool apply(const inbound::RobotModuleStatus& patch, std::optional<RobotId> source, MonotonicMs now);
     bool apply(const inbound::RobotPosition& patch, std::optional<RobotId> source, MonotonicMs now);
     bool apply(const inbound::RobotTelemetry& patch, std::optional<RobotId> source, MonotonicMs now);
+    bool apply(const inbound::BlindStatus& patch, MonotonicMs now);
+    bool apply(const inbound::RobotPositionSet& patch, MonotonicMs now);
     Snapshot snapshot(MonotonicMs now) const;
 
 private:

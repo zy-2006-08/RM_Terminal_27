@@ -52,6 +52,13 @@ template<template<class> class F> struct PositionFields {
     F<double> x, y, yaw;
     auto fields() { return std::tie(x, y, yaw); }
 };
+template<template<class> class F> struct BlindFields {
+    F<bool> self_base_blinded;
+    F<std::uint64_t> blind_started_ms;
+    F<std::int32_t> blind_remaining_ms;
+    F<std::uint32_t> cause;
+    auto fields() { return std::tie(self_base_blinded, blind_started_ms, blind_remaining_ms, cause); }
+};
 template<template<class> class F> struct EventFields {
     F<std::uint64_t> timestamp_ms;
     F<std::uint32_t> level;
@@ -110,12 +117,28 @@ struct RobotState {
     PositionFields<Field> position;
     TelemetryFields<Field> telemetry;
 };
+
+// One robot as the tactical map needs it. `position` keeps the full Field
+// vocabulary so a missing coordinate stays distinguishable from a real origin,
+// which is what stops an unlocated robot from being drawn at the field corner.
+struct MapRobot {
+    RobotId id;
+    std::uint32_t faction = 0;
+    bool is_self = false;
+    PositionFields<Field> position;
+};
+
 struct Snapshot {
     GameFields<Field> game;
     // Retained alongside `events`: the existing single-event panel, convert()
     // overload, and domain tests all depend on this field.
     EventFields<Field> event;
     EventHistory events;
+    BlindFields<Field> blind;
+    // Sorted by ascending id and replaced wholesale on every position set, so
+    // the drawing order is stable across frames and the list stays bounded.
+    std::vector<MapRobot> map_robots;
+    std::size_t map_invalid_entries = 0;
     std::map<RobotId, RobotState> robots;
 };
 
