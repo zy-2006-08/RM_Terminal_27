@@ -1,5 +1,6 @@
 #include "dashboard.h"
 
+#include "logging.h"
 #include "presentation.h"
 
 #include <QFont>
@@ -31,6 +32,35 @@ QString level_name(std::uint32_t level) {
     case 3: return QStringLiteral("CRITICAL");
     default: return QStringLiteral("UNKNOWN");
     }
+}
+
+QString mode_name(UiMode mode) {
+    switch (mode) {
+    case UiMode::Info: return QStringLiteral("Info");
+    case UiMode::Video: return QStringLiteral("Video");
+    }
+    return QStringLiteral("Unknown");
+}
+
+QString reason_name(ModeReason reason) {
+    switch (reason) {
+    case ModeReason::Startup: return QStringLiteral("Startup");
+    case ModeReason::BlindAsserted: return QStringLiteral("BlindAsserted");
+    case ModeReason::BlindClearedHysteresis: return QStringLiteral("BlindClearedHysteresis");
+    case ModeReason::ForcedByCli: return QStringLiteral("ForcedByCli");
+    case ModeReason::BlindDataStale: return QStringLiteral("BlindDataStale");
+    case ModeReason::BlindSignalLost: return QStringLiteral("BlindSignalLost");
+    }
+    return QStringLiteral("Unknown");
+}
+
+QString freshness_name(Freshness freshness) {
+    switch (freshness) {
+    case Freshness::NeverReceived: return QStringLiteral("NeverReceived");
+    case Freshness::Fresh: return QStringLiteral("Fresh");
+    case Freshness::Stale: return QStringLiteral("Stale");
+    }
+    return QStringLiteral("Unknown");
 }
 
 // A field that is present but stale must not read as current, so every value
@@ -224,7 +254,9 @@ void VideoPane::paintEvent(QPaintEvent*) {
     painter.drawText(rect(), Qt::AlignCenter, status_);
 }
 
-Dashboard::Dashboard(QWidget* parent) : QWidget(parent) {
+Dashboard::Dashboard(const Config& config, QWidget* parent)
+    : QWidget(parent),
+      machine_(config.mode_exit_hysteresis_ms, config.blind_stale_fallback_ms) {
     auto* root = new QVBoxLayout(this);
     banner_ = new QLabel(QStringLiteral("只读模拟 · READ-ONLY SIMULATION SAFE · 无控制下发通道"), this);
     banner_->setStyleSheet(QStringLiteral(
@@ -276,7 +308,25 @@ Dashboard::Dashboard(QWidget* parent) : QWidget(parent) {
     root->addLayout(grid, 1);
 }
 
-void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video) {
+void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, MonotonicMs now) {
+    const bool blind_asserted =
+        snapshot.blind.self_base_blinded.value.value_or(false);
+    const ModeDecision decision =
+        machine_.step(blind_asserted, snapshot.blind.self_base_blinded.freshness, now);
+
+    // One record per actual transition, not per tick: a 250ms tick would write
+    // 240 lines a minute and bury the switches the operator needs to find.
+    if (decision.mode != logged_mode_) {
+        StructuredLog::write(
+            LogLevel::info, QStringLiteral("ui_mode_switch"),
+            {QStringLiteral("from=%1").arg(mode_name(logged_mode_)),
+             QStringLiteral("to=%1").arg(mode_name(decision.mode)),
+             QStringLiteral("reason=%1").arg(reason_name(decision.reason)),
+             QStringLiteral("blind_freshness=%1")
+                 .arg(freshness_name(snapshot.blind.self_base_blinded.freshness))});
+        logged_mode_ = decision.mode;
+    }
+
     game_->setText(game_panel_text(snapshot));
     robot_->setText(robot_panel_text(snapshot));
     event_->setText(event_panel_text(snapshot));

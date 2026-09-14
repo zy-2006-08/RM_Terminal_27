@@ -14,7 +14,16 @@ each field has independent freshness. Robot updates require an explicit source
 identity unless the message embeds one. Events and match state are global.
 
 Freshness uses caller-provided monotonic milliseconds, expires at age >= a
-positive threshold, and rejects backwards time. `domain_test` uses explicit
+positive threshold, and rejects backwards time. Every `MonotonicMs` in the
+process comes from `rm_terminal::monotonic_now()` (`cpp/clock.h`) — one
+`steady_clock` origin shared by MQTT intake, `Store::snapshot`, and the UI tick.
+Wall-clock time must never be used: `Store::snapshot` throws when handed an
+earlier instant, so an NTP correction backward would terminate the process
+mid-match, and a forward jump would let the mode exit window "complete" across
+a sleep during which no clear samples were observed. Two CTest cases enforce
+this: `monotonic_clock` asserts the clock is process-relative and never
+retreats, and `monotonic_clock_guard` fails the build if
+`currentMSecsSinceEpoch` reappears in `cpp/`. `domain_test` uses explicit
 checks rather than `assert`, so Release retains all semantic verification.
 It has no MQTT, UDP, CAN, UART, or other control transport. Platform-specific
 selection is limited to compile-time identity in `cpp/platform.h`; core
@@ -113,7 +122,15 @@ ts=<ISO8601 UTC with ms> level=<level> event=<token> key=value ...
 ```
 
 Event tokens: `startup`, `shutdown`, `reconnect_mqtt`, `reconnect_udp`,
-`readonly_block`, `decode_failure`, `stale_data`, `packet_loss`.
+`readonly_block`, `decode_failure`, `stale_data`, `packet_loss`,
+`ui_mode_switch`.
+
+`ui_mode_switch` carries `from`, `to`, `reason`, and `blind_freshness`, and is
+written only when the mode actually changes, not on every 250ms refresh tick.
+`reason` distinguishes `BlindAsserted`, `BlindClearedHysteresis`,
+`BlindDataStale`, `BlindSignalLost`, `ForcedByCli`, and `Startup`, so holding
+the video feed because blind telemetry died reads differently from a real
+assertion.
 
 The only log sink is the local file named by `log_destination`. Operator-facing
 banners (the read-only notice, argument errors) go to stderr through

@@ -1,6 +1,5 @@
 #include <QApplication>
 #include <QCoreApplication>
-#include <QDateTime>
 #include <QDebug>
 #include <QLabel>
 #include <QString>
@@ -8,6 +7,7 @@
 #include <QTimer>
 #include <cstdio>
 
+#include "clock.h"
 #include "config.h"
 #include "dashboard.h"
 #include "logging.h"
@@ -136,7 +136,7 @@ int main(int argc, char* argv[]) {
         }
         QTimer::singleShot(seconds * 1000, &app, &QCoreApplication::quit);
         const int result = app.exec();
-        const auto snapshot = store.snapshot(QDateTime::currentMSecsSinceEpoch());
+        const auto snapshot = store.snapshot(rm_terminal::monotonic_now());
         qInfo().noquote() << "diagnostic snapshot:" << snapshot.robots.size()
                           << "robot(s); game.stage=" << static_cast<int>(snapshot.game.current_stage.quality)
                           << "event.text=" << static_cast<int>(snapshot.event.text.quality);
@@ -181,18 +181,22 @@ int main(int argc, char* argv[]) {
              QStringLiteral("port=%1").arg(cfg.udp_port)});
     }
 
-    rm_terminal::Dashboard dashboard;
+    rm_terminal::Dashboard dashboard(cfg);
     dashboard.setWindowTitle("RM Terminal");
     dashboard.setMinimumSize(980, 620);
-    dashboard.update(store.snapshot(QDateTime::currentMSecsSinceEpoch()), &video);
+    const rm_terminal::MonotonicMs startup_now = rm_terminal::monotonic_now();
+    dashboard.update(store.snapshot(startup_now), &video, startup_now);
     dashboard.show();
 
     rm_terminal::StaleReporter reporter;
     QTimer freshness_timer;
     QObject::connect(&freshness_timer, &QTimer::timeout, [&store, &reporter, &dashboard, &video]() {
-        const auto snapshot = store.snapshot(QDateTime::currentMSecsSinceEpoch());
+        // One clock read per tick, shared by the snapshot and the mode machine:
+        // two reads would hand the machine an instant the snapshot never saw.
+        const rm_terminal::MonotonicMs now = rm_terminal::monotonic_now();
+        const auto snapshot = store.snapshot(now);
         reporter.inspect(snapshot);
-        dashboard.update(snapshot, &video);
+        dashboard.update(snapshot, &video, now);
     });
     freshness_timer.start(250);
 
