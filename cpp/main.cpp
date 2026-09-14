@@ -6,6 +6,7 @@
 #include <QStringList>
 #include <QTimer>
 #include <cstdio>
+#include <optional>
 
 #include "clock.h"
 #include "config.h"
@@ -15,6 +16,7 @@
 #include "platform.h"
 #include "presentation.h"
 #include "store.h"
+#include "ui_mode.h"
 #include "video_receiver.h"
 
 namespace {
@@ -92,8 +94,42 @@ int main(int argc, char* argv[]) {
         return rm_terminal::kExitBadArguments;
     }
 
+    std::optional<rm_terminal::UiMode> forced_mode;
+    const int force_mode_at = args.indexOf(QLatin1String("--force-mode"));
+    if (force_mode_at >= 0) {
+        if (force_mode_at + 1 >= args.size()) {
+            qCritical().noquote() << "Missing mode after --force-mode; expected info or video";
+            return rm_terminal::kExitBadArguments;
+        }
+        const QString requested = args.at(force_mode_at + 1);
+        if (requested == QLatin1String("info")) {
+            forced_mode = rm_terminal::UiMode::Info;
+        } else if (requested == QLatin1String("video")) {
+            forced_mode = rm_terminal::UiMode::Video;
+        } else {
+            qCritical().noquote() << "Invalid --force-mode value; expected info or video, got"
+                                  << requested;
+            return rm_terminal::kExitBadArguments;
+        }
+        args.removeAt(force_mode_at + 1);
+        args.removeAt(force_mode_at);
+    }
+    if (args.contains(QLatin1String("--force-mode"))) {
+        qCritical().noquote() << "Duplicate --force-mode is not supported";
+        return rm_terminal::kExitBadArguments;
+    }
+
     const bool safe_smoke = args.size() == 1 && args.at(0) == QLatin1String("--safe-smoke");
     const bool diagnostic = args.size() == 4 && args.at(0) == QLatin1String("--diagnostic");
+
+    // Rejected rather than ignored. Both of these modes are headless, so there is
+    // no layout to force; and because the flag was stripped above, staying silent
+    // would let an evidence-capture command appear to succeed while proving nothing.
+    if (forced_mode.has_value() && (safe_smoke || diagnostic)) {
+        qCritical().noquote()
+            << "--force-mode requires the GUI; it cannot combine with --safe-smoke or --diagnostic";
+        return rm_terminal::kExitBadArguments;
+    }
 
     if (safe_smoke) {
         QCoreApplication app(argc, argv);
@@ -146,7 +182,8 @@ int main(int argc, char* argv[]) {
 
     if (!args.isEmpty()) {
         qCritical().noquote() << "Unknown argument; supported: --safe-smoke, --config <path>,"
-                                 " --screenshot <path>, --diagnostic <host> <port> <seconds>";
+                                 " --screenshot <path>, --force-mode <info|video>,"
+                                 " --diagnostic <host> <port> <seconds>";
         return rm_terminal::kExitBadArguments;
     }
 
@@ -184,6 +221,10 @@ int main(int argc, char* argv[]) {
     rm_terminal::Dashboard dashboard(cfg);
     dashboard.setWindowTitle("RM Terminal");
     dashboard.setMinimumSize(980, 620);
+    // Applied before the first update() so the forced layout holds from the very
+    // first tick; injecting it afterwards would render one automatic frame first
+    // and put the wrong layout in a capture taken at a short delay.
+    if (forced_mode.has_value()) dashboard.forceMode(forced_mode);
     const rm_terminal::MonotonicMs startup_now = rm_terminal::monotonic_now();
     dashboard.update(store.snapshot(startup_now), &video, startup_now);
     dashboard.show();

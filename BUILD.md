@@ -90,6 +90,7 @@ Command-line flags:
 | `--safe-smoke` | Report the read-only safe state and exit without a window |
 | `--screenshot <path>` | Render the window to a PNG, then exit |
 | `--diagnostic <host> <port> <seconds>` | Bounded headless MQTT observation |
+| `--force-mode <info\|video>` | Debug/evidence only: pin the UI mode (see below) |
 
 `--screenshot` renders the widget itself with `QWidget::grab()` rather than
 capturing the screen, so it needs no recording permission, captures nothing but
@@ -100,6 +101,32 @@ carries the code the process actually returns, so a failed capture logs
 `RM_TERMINAL_CAPTURE_DELAY_MS` (default `600`) delays that capture. The video
 pane needs the decoder to spawn and complete one frame, so a screenshot meant to
 show video needs roughly `7000`; the default is fine for telemetry-only shots.
+
+`--force-mode <info|video>` exists **only for debugging and evidence capture**. It
+is not an operator feature: there is deliberately no keyboard shortcut, menu item,
+or button that changes the mode, because during a match the mode must follow the
+blind signal rather than anyone's preference. Normal runs pass no such flag and
+switch automatically.
+
+It pins the UI to one mode so a screenshot is deterministic instead of depending
+on when the blind signal happens to arrive:
+
+```bash
+QT_QPA_PLATFORM=offscreen RM_TERMINAL_CAPTURE_DELAY_MS=2500 \
+  build/macos/rm_terminal --force-mode video --screenshot /tmp/forced-video.png
+```
+
+Forcing does not falsify the log. The `ui_mode_switch` record reports
+`reason=ForcedByCli`, distinct from the `BlindAsserted` and
+`BlindClearedHysteresis` reasons the automatic path emits, so forced evidence is
+never mistaken for a real blind event. Because the log records transitions only,
+`--force-mode info` emits no record at all when Info is already the startup mode.
+
+The flag takes exactly one value, `info` or `video`. A missing value, an
+unrecognised value, a repeated flag, or combining it with `--safe-smoke` or
+`--diagnostic` all exit `2`; the last two are rejected rather than ignored because
+neither builds a window for the mode to apply to. `cpp/assert_bad_args.cmake`
+(CTest `reject_unknown_args`) covers each of those cases.
 
 ### Window
 
