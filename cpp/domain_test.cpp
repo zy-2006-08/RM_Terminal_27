@@ -20,6 +20,107 @@ struct SinkGuard {
     ~SinkGuard() { set_log_sink(nullptr); }
 };
 
+EventRecord make_event(std::uint64_t timestamp, std::uint32_t level, const char* text) {
+    return EventRecord{timestamp, level, std::string{text}, 0};
+}
+
+// recent() must return newest first. Reversed order would put the oldest alert at
+// the top of the panel, so the operator reads history as current.
+void event_history_orders_newest_first() {
+    EventHistory history(10);
+    history.push(make_event(1, 0, "first"));
+    history.push(make_event(2, 1, "second"));
+    history.push(make_event(3, 3, "third"));
+
+    const auto recent = history.recent(3);
+    check(recent.size() == 3, "recent returns everything when under capacity");
+    check(recent[0].text == "third", "newest record comes first");
+    check(recent[2].text == "first", "oldest record comes last");
+    check(history.size() == 3, "size counts stored records");
+    check(history.droppedCount() == 0, "nothing dropped under capacity");
+    check(history.recent(2).size() == 2, "recent honours the max argument");
+    check(history.recent(99).size() == 3, "recent clamps to what exists");
+}
+
+// Unbounded growth over a whole match is the failure being prevented, so the
+// ring must overwrite and report the loss rather than expand.
+void event_history_discards_oldest_when_full() {
+    EventHistory history(3);
+    for (std::uint64_t i = 1; i <= 5; ++i) {
+        history.push(make_event(i, 0, i == 1 ? "oldest" : "later"));
+    }
+    check(history.size() == 3, "size stops at capacity");
+    check(history.capacity() == 3, "capacity is fixed");
+    check(history.droppedCount() == 2, "dropped count accumulates overwrites");
+
+    const auto recent = history.recent(10);
+    check(recent.size() == 3, "only capacity worth of records survive");
+    check(recent[0].timestamp_ms == 5, "newest survivor is the last pushed");
+    check(recent[2].timestamp_ms == 3, "oldest survivor is capacity back");
+    for (const auto& record : recent) {
+        check(record.text != "oldest", "the evicted record is really gone");
+    }
+}
+
+// The domain layer must not interpret or clamp level values: an unknown severity
+// from a future protocol has to survive to the UI, not get silently rewritten.
+void event_history_preserves_unknown_levels() {
+    EventHistory history(4);
+    history.push(make_event(1, 0, "info"));
+    history.push(make_event(2, 3, "severe"));
+    history.push(make_event(3, 9, "future"));
+    const auto recent = history.recent(3);
+    check(recent[0].level == 9, "unknown level is preserved verbatim");
+    check(recent[1].level == 3, "severe level preserved");
+    check(recent[2].level == 0, "info level preserved");
+}
+
+void event_history_empty_returns_nothing() {
+    EventHistory history(5);
+    check(history.recent(3).empty(), "empty history returns no records");
+    check(history.size() == 0, "empty history has zero size");
+    check(history.droppedCount() == 0, "empty history dropped nothing");
+}
+
+// The simulator republishes at 5Hz. Without dedup a single alert would evict the
+// entire history within seconds.
+void store_deduplicates_republished_events() {
+    Store store(10, 20);
+    inbound::Event event;
+    event.timestamp_ms = 1000;
+    event.level = 3;
+    event.text = std::string{"blinded"};
+    for (int i = 0; i < 10; ++i) {
+        check(store.apply(event, i), "republished event is accepted");
+    }
+    const auto snapshot = store.snapshot(10);
+    check(snapshot.events.size() == 1, "republished identical event is stored once");
+    check(snapshot.event.text.value == std::string{"blinded"},
+          "the existing single-event field still tracks the latest event");
+}
+
+// Regression guard for the review finding: keying dedup on timestamp alone would
+// discard the second event here, and at the start of blinding that could be the
+// severe one.
+void store_keeps_distinct_events_sharing_a_millisecond() {
+    Store store(10, 20);
+    inbound::Event first;
+    first.timestamp_ms = 500;
+    first.level = 0;
+    first.text = std::string{"match resumed"};
+    check(store.apply(first, 0), "first event accepted");
+
+    inbound::Event second;
+    second.timestamp_ms = 500;
+    second.level = 3;
+    second.text = std::string{"base blinded"};
+    check(store.apply(second, 0), "second event in the same millisecond accepted");
+
+    const auto snapshot = store.snapshot(0);
+    check(snapshot.events.size() == 2, "same-millisecond distinct events are both kept");
+    check(snapshot.events.recent(1)[0].level == 3, "the severe event survived");
+}
+
 // Task 5 acceptance: a field aging into Stale must log once per TRANSITION, not
 // once per snapshot. The GUI inspects on a 250ms timer, so per-snapshot logging
 // would bury every other event under thousands of duplicates during a stall.
@@ -144,6 +245,12 @@ int main() {
         try { store.snapshot(9); } catch (const std::invalid_argument&) { rejected = true; }
         check(rejected, "backwards snapshot time rejected");
         stale_reporter_logs_once_per_transition();
+        event_history_orders_newest_first();
+        event_history_discards_oldest_when_full();
+        event_history_preserves_unknown_levels();
+        event_history_empty_returns_nothing();
+        store_deduplicates_republished_events();
+        store_keeps_distinct_events_sharing_a_millisecond();
         std::cout << "All domain checks passed (no assert, no sleep).\n";
         return 0;
     } catch (const std::exception& error) {

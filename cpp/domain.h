@@ -1,10 +1,12 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <optional>
 #include <string>
 #include <tuple>
+#include <vector>
 
 namespace rm_terminal {
 
@@ -72,6 +74,36 @@ template<template<class> class F> struct TelemetryFields {
         fire_permit, bbox_cx, bbox_cy, bbox_w, bbox_h); }
 };
 
+struct EventRecord {
+    std::uint64_t timestamp_ms;
+    std::uint32_t level;
+    std::string text;
+    MonotonicMs received_at;
+};
+
+// Ring buffer, bounded so a match-long run cannot grow without limit. Overwrites
+// the oldest record when full and counts the loss in droppedCount(), so the UI can
+// disclose truncation instead of implying the history is complete.
+class EventHistory {
+public:
+    explicit EventHistory(std::size_t capacity = 50);
+
+    void push(EventRecord record);
+    // Newest first. Pinned by test, because a reversed order silently puts the
+    // oldest alert at the top of an alert panel.
+    std::vector<EventRecord> recent(std::size_t max) const;
+
+    std::size_t size() const { return size_; }
+    std::size_t capacity() const { return buffer_.size(); }
+    std::size_t droppedCount() const { return dropped_; }
+
+private:
+    std::vector<EventRecord> buffer_;
+    std::size_t next_ = 0;
+    std::size_t size_ = 0;
+    std::size_t dropped_ = 0;
+};
+
 struct RobotState {
     DynamicFields<Field> dynamic;
     ModuleFields<Field> modules;
@@ -80,7 +112,10 @@ struct RobotState {
 };
 struct Snapshot {
     GameFields<Field> game;
+    // Retained alongside `events`: the existing single-event panel, convert()
+    // overload, and domain tests all depend on this field.
     EventFields<Field> event;
+    EventHistory events;
     std::map<RobotId, RobotState> robots;
 };
 
