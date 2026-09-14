@@ -329,6 +329,49 @@ void the_frame_source_is_read_exactly_once() {
           "apply_frame feeds both panes unconditionally, with no visibility short-circuit");
 }
 
+// The dump is the machine-readable half of the dual-mode evidence, so its contract
+// is a regression target: same input must yield the same bytes, and a pane the
+// stacked layout never showed must not publish the stale geometry() Qt left on it.
+void the_layout_dump_is_reproducible_and_hides_unlaid_geometry() {
+    Dashboard dashboard(test_config());
+    dashboard.resize(kWidth, kHeight);
+    drive_to_video(dashboard);
+
+    const std::string dump = dashboard.layoutDump();
+    check(dump == dashboard.layoutDump(),
+          "two dumps of one unchanged layout are byte-identical");
+
+    const QString text = QString::fromStdString(dump);
+    check(text.contains(QStringLiteral("\"mode\": \"Video\"")),
+          "the dump reports the mode actually on screen");
+
+    // Field order is fixed so a textual diff means the layout moved, not that the
+    // emitter reordered itself.
+    const int mode_at = text.indexOf(QStringLiteral("\"mode\""));
+    const int reason_at = text.indexOf(QStringLiteral("\"reason\""));
+    const int banner_at = text.indexOf(QStringLiteral("\"readonly_banner_visible\""));
+    const int index_at = text.indexOf(QStringLiteral("\"stacked_index\""));
+    const int window_at = text.indexOf(QStringLiteral("\"window\""));
+    const int panes_at = text.indexOf(QStringLiteral("\"panes\""));
+    check(mode_at < reason_at && reason_at < banner_at && banner_at < index_at &&
+              index_at < window_at && window_at < panes_at,
+          "the dump keeps its documented field order");
+
+    for (const char* name : {"map_pane", "info_video_pane", "video_full_pane", "game_panel",
+                             "robot_panel", "event_panel", "mode_banner", "readonly_banner"}) {
+        check(text.contains(QStringLiteral("\"name\": \"%1\"").arg(QLatin1String(name))),
+              (std::string("the dump covers ") + name).c_str());
+    }
+
+    // In video mode the map is on the hidden page: it must read as invisible with a
+    // zeroed box rather than the leftover size from whenever it was last laid out.
+    check(text.contains(QStringLiteral("{\"name\": \"map_pane\", \"visible\": false, \"x\": 0,"
+                                      " \"y\": 0, \"width\": 0, \"height\": 0}")),
+          "a pane on the hidden page reports zeroed geometry");
+    check(!find(dashboard, "mapPane")->isVisible(),
+          "that pane really is the hidden one, not merely reported so");
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -343,6 +386,7 @@ int main(int argc, char* argv[]) {
         a_critical_event_is_listed_and_coloured();
         both_panes_receive_one_identical_frame();
         the_frame_source_is_read_exactly_once();
+        the_layout_dump_is_reproducible_and_hides_unlaid_geometry();
     } catch (const std::exception& error) {
         std::cerr << "FAIL " << error.what() << '\n';
         return 1;

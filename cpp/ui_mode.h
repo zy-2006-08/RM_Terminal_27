@@ -43,8 +43,10 @@ public:
 
     ModeDecision step(bool blind_asserted, Freshness blind_freshness, MonotonicMs now);
 
-    UiMode mode() const { return mode_; }
-    ModeReason reason() const { return reason_; }
+    UiMode mode() const { return forced_.value_or(mode_); }
+    ModeReason reason() const {
+        return forced_.has_value() ? ModeReason::ForcedByCli : reason_;
+    }
     // Set while video is waiting out the exit window; empty otherwise.
     std::optional<MonotonicMs> pendingExitSince() const { return pending_exit_since_; }
 

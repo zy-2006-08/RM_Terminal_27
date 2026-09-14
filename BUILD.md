@@ -80,7 +80,7 @@ Exit codes, stable across tasks 1-6:
 | `2` | malformed command-line arguments |
 | `3` | transport start failure (MQTT intake) |
 | `4` | configuration or log-destination failure |
-| `5` | evidence capture failure (`--screenshot` could not write the PNG) |
+| `5` | evidence capture failure (`--screenshot` could not write the PNG, or `--dump-layout` could not write the JSON) |
 
 Command-line flags:
 
@@ -91,6 +91,7 @@ Command-line flags:
 | `--screenshot <path>` | Render the window to a PNG, then exit |
 | `--diagnostic <host> <port> <seconds>` | Bounded headless MQTT observation |
 | `--force-mode <info\|video>` | Debug/evidence only: pin the UI mode (see below) |
+| `--dump-layout <path>` | Debug/evidence only: write the layout as JSON (see below) |
 
 `--screenshot` renders the widget itself with `QWidget::grab()` rather than
 capturing the screen, so it needs no recording permission, captures nothing but
@@ -127,6 +128,32 @@ unrecognised value, a repeated flag, or combining it with `--safe-smoke` or
 `--diagnostic` all exit `2`; the last two are rejected rather than ignored because
 neither builds a window for the mode to apply to. `cpp/assert_bad_args.cmake`
 (CTest `reject_unknown_args`) covers each of those cases.
+
+`--dump-layout <path>` is likewise **only for debugging and evidence capture**, not
+an operator feature. It writes the on-screen layout as JSON at the same instant the
+screenshot is taken, so the two artifacts describe one moment. It exists because a
+PNG can only be judged by eye: the JSON makes "the map dominates in info mode" and
+"video fills the window in video mode" assertions a script can check.
+
+```bash
+QT_QPA_PLATFORM=offscreen RM_TERMINAL_CAPTURE_DELAY_MS=2500 \
+  build/macos/rm_terminal --force-mode video \
+    --screenshot /tmp/m-video.png --dump-layout /tmp/m-video.json
+```
+
+The dump reports `mode`, `reason`, `readonly_banner_visible`, `stacked_index`, the
+window box, and one `{name, visible, x, y, width, height}` entry per key pane, in a
+fixed order with integer values, so identical input yields a byte-identical file and
+any diff means the layout really moved. Panes the stacked layout is not showing
+report zeroed geometry: a widget that was never laid out has a stale `geometry()`
+that varies between otherwise identical runs.
+
+It carries layout only, never match data or field coordinates. Mixing telemetry in
+would make diffs fail randomly on values that have nothing to do with layout.
+
+Omitting the flag writes no file and costs nothing. A missing path, a repeated flag,
+or combining it with `--safe-smoke` or `--diagnostic` all exit `2`, and a path that
+cannot be written exits `5`.
 
 ### Window
 

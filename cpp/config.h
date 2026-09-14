@@ -10,7 +10,8 @@ namespace rm_terminal {
 //   2 malformed command-line arguments (asserted by cpp/assert_bad_args.cmake)
 //   3 transport start failure (MQTT intake)
 //   4 configuration or log-destination failure
-//   5 evidence capture failure (--screenshot could not write the PNG)
+//   5 evidence capture failure (--screenshot could not write the PNG, or
+//     --dump-layout could not write the JSON)
 constexpr int kExitSuccess = 0;
 constexpr int kExitBadArguments = 2;
 constexpr int kExitStartFailure = 3;

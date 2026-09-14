@@ -13,6 +13,7 @@
 #include <QWidget>
 #include <cstddef>
 #include <optional>
+#include <string>
 
 namespace rm_terminal {
 
@@ -82,6 +83,12 @@ public:
     UiMode mode() const { return machine_.mode(); }
     ModeReason reason() const { return machine_.reason(); }
     void forceMode(std::optional<UiMode> forced) { machine_.forceMode(forced); }
+
+    // Structured layout evidence: mode, reason, and the geometry of every pane that
+    // distinguishes the two layouts. Deliberately carries no match data or robot
+    // coordinates - it is evidence about the LAYOUT, and mixing live values in would
+    // make a byte-for-byte diff fail for reasons that have nothing to do with layout.
+    std::string layoutDump() const;
 
 private:
     // Two VideoPane instances, one per page, sharing the single resident

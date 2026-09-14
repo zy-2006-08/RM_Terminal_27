@@ -1,12 +1,14 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QDebug>
+#include <QFile>
 #include <QLabel>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
 #include <cstdio>
 #include <optional>
+#include <string>
 
 #include "clock.h"
 #include "config.h"
@@ -94,6 +96,22 @@ int main(int argc, char* argv[]) {
         return rm_terminal::kExitBadArguments;
     }
 
+    QString dump_layout_path;
+    const int dump_layout_at = args.indexOf(QLatin1String("--dump-layout"));
+    if (dump_layout_at >= 0) {
+        if (dump_layout_at + 1 >= args.size()) {
+            qCritical().noquote() << "Missing path after --dump-layout";
+            return rm_terminal::kExitBadArguments;
+        }
+        dump_layout_path = args.at(dump_layout_at + 1);
+        args.removeAt(dump_layout_at + 1);
+        args.removeAt(dump_layout_at);
+    }
+    if (args.contains(QLatin1String("--dump-layout"))) {
+        qCritical().noquote() << "Duplicate --dump-layout is not supported";
+        return rm_terminal::kExitBadArguments;
+    }
+
     std::optional<rm_terminal::UiMode> forced_mode;
     const int force_mode_at = args.indexOf(QLatin1String("--force-mode"));
     if (force_mode_at >= 0) {
@@ -128,6 +146,11 @@ int main(int argc, char* argv[]) {
     if (forced_mode.has_value() && (safe_smoke || diagnostic)) {
         qCritical().noquote()
             << "--force-mode requires the GUI; it cannot combine with --safe-smoke or --diagnostic";
+        return rm_terminal::kExitBadArguments;
+    }
+    if (!dump_layout_path.isEmpty() && (safe_smoke || diagnostic)) {
+        qCritical().noquote() << "--dump-layout requires the GUI; it cannot combine with"
+                                 " --safe-smoke or --diagnostic";
         return rm_terminal::kExitBadArguments;
     }
 
@@ -183,6 +206,7 @@ int main(int argc, char* argv[]) {
     if (!args.isEmpty()) {
         qCritical().noquote() << "Unknown argument; supported: --safe-smoke, --config <path>,"
                                  " --screenshot <path>, --force-mode <info|video>,"
+                                 " --dump-layout <path>,"
                                  " --diagnostic <host> <port> <seconds>";
         return rm_terminal::kExitBadArguments;
     }
@@ -245,7 +269,7 @@ int main(int argc, char* argv[]) {
     // screen: it needs no recording permission, captures nothing but this
     // window, and stays deterministic in the offscreen Qt platform plugin.
     int capture_status = rm_terminal::kExitSuccess;
-    if (!screenshot_path.isEmpty()) {
+    if (!screenshot_path.isEmpty() || !dump_layout_path.isEmpty()) {
         // Video needs longer than the widget itself: the decoder must spawn and
         // fill one frame, so capturing at 600ms would always show an empty pane.
         const int capture_delay_ms =
@@ -253,13 +277,30 @@ int main(int argc, char* argv[]) {
                 ? qEnvironmentVariableIntValue("RM_TERMINAL_CAPTURE_DELAY_MS")
                 : 600;
         QTimer::singleShot(capture_delay_ms, &app, [&]() {
-            const QPixmap frame = dashboard.grab();
-            if (frame.isNull() || !frame.save(screenshot_path, "PNG")) {
-                qCritical().noquote() << "screenshot failed:" << screenshot_path;
-                capture_status = rm_terminal::kExitEvidenceFailure;
-            } else {
-                qInfo().noquote() << "screenshot written:" << screenshot_path
-                                  << frame.width() << "x" << frame.height();
+            if (!screenshot_path.isEmpty()) {
+                const QPixmap frame = dashboard.grab();
+                if (frame.isNull() || !frame.save(screenshot_path, "PNG")) {
+                    qCritical().noquote() << "screenshot failed:" << screenshot_path;
+                    capture_status = rm_terminal::kExitEvidenceFailure;
+                } else {
+                    qInfo().noquote() << "screenshot written:" << screenshot_path
+                                      << frame.width() << "x" << frame.height();
+                }
+            }
+            // Same callback as the screenshot, deliberately: a dump taken from a
+            // separate timer could observe a different tick than the PNG, and the
+            // two artifacts are meant to describe one instant.
+            if (!dump_layout_path.isEmpty()) {
+                const std::string dump = dashboard.layoutDump();
+                QFile file(dump_layout_path);
+                if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+                    file.write(dump.c_str(), qint64(dump.size())) != qint64(dump.size())) {
+                    qCritical().noquote() << "layout dump failed:" << dump_layout_path;
+                    capture_status = rm_terminal::kExitEvidenceFailure;
+                } else {
+                    file.close();
+                    qInfo().noquote() << "layout dump written:" << dump_layout_path;
+                }
             }
             app.quit();
         });

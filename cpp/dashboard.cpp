@@ -9,8 +9,10 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QPainter>
+#include <QRect>
 #include <QScrollArea>
 #include <QStackedLayout>
+#include <QStringList>
 #include <QVBoxLayout>
 
 namespace rm_terminal {
@@ -532,6 +534,54 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
         info_video_pane_->setStatus(QStringLiteral("图传未启用"));
         video_full_pane_->setStatus(QStringLiteral("图传未启用"));
     }
+}
+
+std::string Dashboard::layoutDump() const {
+    const auto pane_entry = [](const QString& name, const QWidget* widget) {
+        const bool shown = widget->isVisible();
+        // A pane the stacked layout never showed was never laid out, so its geometry()
+        // is default/leftover junk that varies between identical runs.
+        const QRect box = shown ? widget->geometry() : QRect();
+        return QStringLiteral("    {\"name\": \"%1\", \"visible\": %2, \"x\": %3, \"y\": %4,"
+                              " \"width\": %5, \"height\": %6}")
+            .arg(name)
+            .arg(shown ? QStringLiteral("true") : QStringLiteral("false"))
+            .arg(box.x())
+            .arg(box.y())
+            .arg(box.width())
+            .arg(box.height());
+    };
+
+    // Fixed order, integers only: the whole point is that identical input yields a
+    // byte-identical file, so a diff means the layout really changed.
+    QStringList panes;
+    panes << pane_entry(QStringLiteral("map_pane"), map_)
+          << pane_entry(QStringLiteral("info_video_pane"), info_video_pane_)
+          << pane_entry(QStringLiteral("video_full_pane"), video_full_pane_)
+          << pane_entry(QStringLiteral("game_panel"), game_)
+          << pane_entry(QStringLiteral("robot_panel"), robot_)
+          << pane_entry(QStringLiteral("event_panel"), event_)
+          << pane_entry(QStringLiteral("mode_banner"), mode_banner_)
+          << pane_entry(QStringLiteral("readonly_banner"), banner_);
+
+    // The window box is included because the "video fills the screen" criterion is a
+    // ratio against it; without it that check would need a hard-coded size.
+    return QStringLiteral("{\n"
+                          "  \"mode\": \"%1\",\n"
+                          "  \"reason\": \"%2\",\n"
+                          "  \"readonly_banner_visible\": %3,\n"
+                          "  \"stacked_index\": %4,\n"
+                          "  \"window\": {\"width\": %5, \"height\": %6},\n"
+                          "  \"panes\": [\n%7\n  ]\n"
+                          "}\n")
+        .arg(mode_name(machine_.mode()))
+        .arg(reason_name(machine_.reason()))
+        .arg(banner_->isVisible() ? QStringLiteral("true") : QStringLiteral("false"))
+        .arg(stack_->currentIndex())
+        .arg(width())
+        .arg(height())
+        .arg(panes.join(QStringLiteral(",\n")))
+        .toStdString();
 }
 
 }

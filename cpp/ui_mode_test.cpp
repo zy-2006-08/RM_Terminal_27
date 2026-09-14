@@ -145,6 +145,28 @@ void forced_mode_overrides_and_releases() {
           "releasing force returns to the automatic conclusion");
 }
 
+// The accessors must agree with what step() returned. They are a second way to read
+// the same decision - the mode banner uses the return value while layout evidence
+// reads the accessors - and a disagreement means one of the two reports a mode the
+// screen is not actually showing.
+void forced_mode_is_visible_through_the_accessors() {
+    UiModeMachine m = make_machine();
+    m.forceMode(UiMode::Video);
+    const ModeDecision forced = m.step(false, Freshness::NeverReceived, 100);
+
+    check(m.mode() == forced.mode, "mode() agrees with the decision step() returned");
+    check(m.reason() == forced.reason, "reason() agrees with the decision step() returned");
+    check(m.mode() == UiMode::Video, "mode() reports the forced mode");
+    check(m.reason() == ModeReason::ForcedByCli, "reason() reports ForcedByCli");
+
+    // Releasing must not leave the forced view stuck behind.
+    m.forceMode(std::nullopt);
+    const ModeDecision released = m.step(false, Freshness::Fresh, 200);
+    check(m.mode() == released.mode, "mode() follows the automatic conclusion once released");
+    check(m.reason() == released.reason, "reason() follows the automatic conclusion once released");
+    check(m.reason() != ModeReason::ForcedByCli, "ForcedByCli does not outlive the override");
+}
+
 // (10) NTP steps and manual clock changes are routine on a competition laptop.
 // Going backwards must not advance hysteresis and must not crash.
 void backward_clock_does_not_advance_hysteresis() {
@@ -258,6 +280,7 @@ int main() {
         stale_blind_holds_video_with_distinct_reason();
         never_received_stays_in_info();
         forced_mode_overrides_and_releases();
+        forced_mode_is_visible_through_the_accessors();
         backward_clock_does_not_advance_hysteresis();
         boundary_holds_for_non_default_hysteresis();
         stale_voids_the_pending_window();
