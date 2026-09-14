@@ -39,16 +39,20 @@ target_link_libraries(terminal_presentation PUBLIC terminal_domain terminal_logg
 add_library(terminal_map cpp/map_pane.cpp cpp/map_pane.h)
 target_link_libraries(terminal_map PUBLIC terminal_presentation Qt6::Widgets)
 
+# A library rather than sources compiled straight into the executable, so the
+# offscreen layout test can link the real Dashboard instead of a reimplementation.
+add_library(terminal_dashboard cpp/dashboard.cpp cpp/dashboard.h)
+target_link_libraries(terminal_dashboard PUBLIC terminal_map terminal_video Qt6::Widgets)
+target_compile_definitions(terminal_dashboard PRIVATE QT_NO_KEYWORDS)
+
 add_executable(rm_terminal
     cpp/main.cpp
     cpp/platform.h
     cpp/mqtt_intake.cpp
     cpp/mqtt_intake.h
-    cpp/dashboard.cpp
-    cpp/dashboard.h
 )
 target_include_directories(rm_terminal PRIVATE ${MOSQUITTO_INCLUDE_DIR})
-target_link_libraries(rm_terminal PRIVATE terminal_map terminal_presentation terminal_video ${MOSQUITTO_LIBRARY} Qt6::Widgets)
+target_link_libraries(rm_terminal PRIVATE terminal_dashboard terminal_map terminal_presentation terminal_video ${MOSQUITTO_LIBRARY} Qt6::Widgets)
 target_compile_features(rm_terminal PRIVATE cxx_std_17)
 target_compile_definitions(rm_terminal PRIVATE QT_NO_KEYWORDS)
 
@@ -82,6 +86,13 @@ if(BUILD_TESTING)
     add_executable(field_map_test cpp/field_map_test.cpp)
     target_link_libraries(field_map_test PRIVATE terminal_presentation)
     add_test(NAME field_map_projection COMMAND field_map_test)
+    add_executable(dashboard_layout_test cpp/dashboard_layout_test.cpp)
+    target_link_libraries(dashboard_layout_test PRIVATE terminal_dashboard Qt6::Widgets)
+    target_compile_definitions(dashboard_layout_test PRIVATE
+        QT_NO_KEYWORDS
+        RM_TERMINAL_DASHBOARD_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/cpp/dashboard.cpp")
+    add_test(NAME dashboard_layout COMMAND dashboard_layout_test)
+    set_tests_properties(dashboard_layout PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
     add_executable(map_pane_test cpp/map_pane_test.cpp)
     target_link_libraries(map_pane_test PRIVATE terminal_map Qt6::Widgets)
     add_test(NAME map_pane_render COMMAND map_pane_test)

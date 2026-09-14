@@ -24,6 +24,16 @@ public:
     QJsonObject snapshot() const;
     quint16 port() const { return socket_.localPort(); }
     // BGR24 pixels, empty until the first frame completes.
+    //
+    // THREAD AFFINITY: every access to this class's state, including `latest_`,
+    // must happen on the thread that owns the instance. `latest_` has NO mutex.
+    // This is safe today only because there is no threading in cpp/ at all (no
+    // QThread / std::thread / moveToThread), so decoderOutput() and the
+    // dashboard's refresh tick both run on the Qt main thread. That is an absence
+    // of concurrency, NOT thread safety -- do not describe it as the latter.
+    // CONSTRAINT: if decoding ever moves to a worker thread, `latest_` must gain a
+    // mutex or be replaced by publishing an owned snapshot. A caller on another
+    // thread would otherwise race a QByteArray refcount and read a torn frame.
     QByteArray latestFrame() const { return latest_; }
     static constexpr int frameWidth() { return 320; }
     static constexpr int frameHeight() { return 180; }

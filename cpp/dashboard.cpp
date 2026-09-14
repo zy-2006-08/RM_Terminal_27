@@ -3,10 +3,14 @@
 #include "logging.h"
 #include "presentation.h"
 
+#include <QColor>
 #include <QFont>
 #include <QFrame>
 #include <QGridLayout>
+#include <QHBoxLayout>
 #include <QPainter>
+#include <QScrollArea>
+#include <QStackedLayout>
 #include <QVBoxLayout>
 
 namespace rm_terminal {
@@ -199,6 +203,56 @@ QString event_panel_text(const Snapshot& snapshot) {
     return line + mark(event.text);
 }
 
+QColor event_level_color(std::uint32_t level) {
+    switch (level) {
+    case 0: return QColor(198, 200, 206);
+    case 1: return QColor(127, 183, 255);
+    case 2: return QColor(240, 200, 90);
+    case 3: return QColor(255, 107, 107);
+    default: return QColor(198, 200, 206);
+    }
+}
+
+QString event_history_html(const Snapshot& snapshot, std::size_t max) {
+    const std::vector<EventRecord> records = snapshot.events.recent(max);
+    if (records.empty()) return QStringLiteral("<span>暂无赛事事件</span>");
+
+    QStringList rows;
+    for (const EventRecord& record : records) {
+        // Escaped because the text arrives from the MQTT feed: an unescaped '<'
+        // would be swallowed by the rich-text parser, so a hostile or merely
+        // malformed payload could hide or restyle the alert it is reporting.
+        const QString text = QString::fromStdString(record.text).toHtmlEscaped();
+        rows.append(QStringLiteral("<span style=\"color:%1\">[%2] %3</span>")
+                        .arg(event_level_color(record.level).name())
+                        .arg(level_name(record.level))
+                        .arg(text));
+    }
+
+    // Overwritten records are disclosed rather than dropped in silence, which
+    // would render a truncated history as a quiet match.
+    if (snapshot.events.droppedCount() > 0) {
+        rows.append(QStringLiteral("<span style=\"color:#8e8e94\">… 更早 %1 条已滚出缓冲</span>")
+                        .arg(snapshot.events.droppedCount()));
+    }
+    return rows.join(QStringLiteral("<br/>"));
+}
+
+QString video_overlay_countdown_text(const Snapshot& snapshot) {
+    return QStringLiteral("倒计时 %1").arg(clock_text(snapshot.game.stage_countdown_sec));
+}
+
+QString video_overlay_hp_text(const Snapshot& snapshot) {
+    for (const MapRobot& robot : snapshot.map_robots) {
+        if (!robot.is_self) continue;
+        const auto found = snapshot.robots.find(robot.id);
+        if (found == snapshot.robots.end()) break;
+        return QStringLiteral("血量 %1")
+            .arg(ratio(found->second.dynamic.current_hp, found->second.dynamic.max_hp));
+    }
+    return QStringLiteral("血量 --");
+}
+
 QString video_panel_text(const VideoReceiver* video) {
     if (!video) return QStringLiteral("图传未启用");
     const auto stats = video->snapshot();
@@ -254,6 +308,11 @@ void VideoPane::paintEvent(QPaintEvent*) {
     painter.drawText(rect(), Qt::AlignCenter, status_);
 }
 
+void apply_frame(VideoPane* thumbnail, VideoPane* full, const QImage& frame) {
+    thumbnail->setFrame(frame);
+    full->setFrame(frame);
+}
+
 Dashboard::Dashboard(const Config& config, QWidget* parent)
     : QWidget(parent),
       machine_(config.mode_exit_hysteresis_ms, config.blind_stale_fallback_ms) {
@@ -261,51 +320,142 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     banner_ = new QLabel(QStringLiteral("只读模拟 · READ-ONLY SIMULATION SAFE · 无控制下发通道"), this);
     banner_->setStyleSheet(QStringLiteral(
         "background:#173d17; color:#8ef58e; padding:6px; font-weight:bold;"));
+    banner_->setObjectName(QStringLiteral("readOnlyBanner"));
     root->addWidget(banner_);
 
-    auto* grid = new QGridLayout();
+    // Sits alongside the read-only banner and never replaces it: the read-only
+    // guarantee has to stay on screen in every mode.
+    mode_banner_ = new QLabel(this);
+    mode_banner_->setStyleSheet(QStringLiteral(
+        "background:#1b2333; color:#9ec5ff; padding:4px; font-weight:bold;"));
+    mode_banner_->setObjectName(QStringLiteral("modeBanner"));
+    root->addWidget(mode_banner_);
+
+    stack_ = new QStackedLayout();
+    info_page_ = new QWidget(this);
+    video_page_ = new QWidget(this);
+
+    auto* grid = new QGridLayout(info_page_);
     auto make_section = [this](const QString& title, QLabel** target) {
-        auto* box = new QFrame(this);
+        auto* box = new QFrame(info_page_);
         box->setFrameShape(QFrame::StyledPanel);
         auto* column = new QVBoxLayout(box);
         auto* heading = new QLabel(title, box);
         heading->setStyleSheet(QStringLiteral("color:#7fb7ff; font-weight:bold;"));
         column->addWidget(heading);
-        *target = new QLabel(QStringLiteral("--"), box);
+        *target = new QLabel(QStringLiteral("--"));
         QFont mono(QStringLiteral("Menlo"));
         mono.setStyleHint(QFont::Monospace);
-        mono.setPointSize(11);
+        // 9pt, not 11pt: at 11pt the robot panel's ~13 telemetry rows do not fit the
+        // right-hand column at 720p, so rows got sliced mid-glyph behind a scrollbar.
+        mono.setPointSize(9);
         (*target)->setFont(mono);
         (*target)->setTextInteractionFlags(Qt::TextSelectableByMouse);
         (*target)->setAlignment(Qt::AlignTop | Qt::AlignLeft);
-        column->addWidget(*target);
-        column->addStretch();
+
+        // Scrolled, not stretched: these panels are dense enough that their
+        // combined minimum height forced the info page to 896px, which silently
+        // overrode resize(1280,720) and would clip on a 720p operator screen.
+        auto* scroll = new QScrollArea(box);
+        scroll->setWidget(*target);
+        scroll->setWidgetResizable(true);
+        scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        scroll->setMinimumHeight(0);
+        scroll->setStyleSheet(QStringLiteral("background:transparent;"));
+        column->addWidget(scroll, 1);
         return box;
     };
 
-    grid->addWidget(make_section(QStringLiteral("赛事状态"), &game_), 0, 0);
-    grid->addWidget(make_section(QStringLiteral("机器人状态"), &robot_), 0, 1, 2, 1);
+    auto* map_box = new QFrame(info_page_);
+    map_box->setFrameShape(QFrame::StyledPanel);
+    auto* map_column = new QVBoxLayout(map_box);
+    auto* map_heading = new QLabel(QStringLiteral("战术地图"), map_box);
+    map_heading->setStyleSheet(QStringLiteral("color:#7fb7ff; font-weight:bold;"));
+    map_column->addWidget(map_heading);
+    map_ = new MapPane(map_box);
+    map_->setObjectName(QStringLiteral("mapPane"));
+    map_column->addWidget(map_, 1);
 
-    auto* video_box = new QFrame(this);
+    // The map owns the entire left column rather than sharing rows with the
+    // thumbnail box. Sharing rows pins it to its minimum height, because a
+    // fixed-size 320x180 pane and the map would compete for the same vertical
+    // space and grid stretch only distributes what is left over after minimums.
+    grid->addWidget(map_box, 0, 0, 3, 1);
+    grid->addWidget(make_section(QStringLiteral("赛事状态"), &game_), 0, 1);
+    grid->addWidget(make_section(QStringLiteral("机器人状态"), &robot_), 1, 1);
+
+    auto* video_box = new QFrame(info_page_);
     video_box->setFrameShape(QFrame::StyledPanel);
     auto* video_column = new QVBoxLayout(video_box);
     auto* video_heading = new QLabel(QStringLiteral("图传"), video_box);
     video_heading->setStyleSheet(QStringLiteral("color:#7fb7ff; font-weight:bold;"));
     video_column->addWidget(video_heading);
-    pane_ = new VideoPane(video_box);
-    video_column->addWidget(pane_, 1);
+    info_video_pane_ = new VideoPane(video_box);
+    info_video_pane_->setObjectName(QStringLiteral("infoVideoPane"));
+    // Capped at the decoder's own resolution: scaling a 320x180 frame up in the
+    // corner buys no detail and costs a resample every repaint.
+    info_video_pane_->setFixedSize(320, 180);
+    video_column->addWidget(info_video_pane_);
     video_stats_ = new QLabel(QStringLiteral("--"), video_box);
     QFont mono(QStringLiteral("Menlo"));
     mono.setStyleHint(QFont::Monospace);
     mono.setPointSize(10);
     video_stats_->setFont(mono);
     video_column->addWidget(video_stats_);
-    grid->addWidget(video_box, 1, 0);
+    grid->addWidget(video_box, 2, 1);
 
-    grid->addWidget(make_section(QStringLiteral("赛事事件"), &event_), 2, 0, 1, 2);
-    grid->setColumnStretch(0, 1);
-    grid->setColumnStretch(1, 1);
-    root->addLayout(grid, 1);
+    auto* event_box = new QFrame(info_page_);
+    event_box->setFrameShape(QFrame::StyledPanel);
+    auto* event_column = new QVBoxLayout(event_box);
+    auto* event_heading = new QLabel(QStringLiteral("赛事事件"), event_box);
+    event_heading->setStyleSheet(QStringLiteral("color:#7fb7ff; font-weight:bold;"));
+    event_column->addWidget(event_heading);
+    event_ = new QLabel(QStringLiteral("--"), event_box);
+    event_->setObjectName(QStringLiteral("eventPanel"));
+    event_->setTextFormat(Qt::RichText);
+    event_->setFont(mono);
+    event_->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    event_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    event_column->addWidget(event_);
+    event_column->addStretch();
+    grid->addWidget(event_box, 3, 0, 1, 2);
+
+    grid->setColumnStretch(0, 3);
+    grid->setColumnStretch(1, 2);
+    // Rows 0-2 carry the map column; the event row stays unstretched so the map
+    // keeps the growth rather than the text panel below it.
+    grid->setRowStretch(0, 3);
+    grid->setRowStretch(1, 3);
+    grid->setRowStretch(2, 1);
+    grid->setRowStretch(3, 0);
+
+    auto* video_layout = new QVBoxLayout(video_page_);
+    video_layout->setContentsMargins(0, 0, 0, 0);
+    auto* overlay = new QWidget(video_page_);
+    overlay->setStyleSheet(QStringLiteral("background:#101014;"));
+    auto* overlay_row = new QHBoxLayout(overlay);
+    overlay_row->setContentsMargins(8, 2, 8, 2);
+    // Countdown and HP stay on screen in video mode: during blinding they are the
+    // only match state left that the operator can still act on.
+    video_countdown_ = new QLabel(overlay);
+    video_countdown_->setStyleSheet(QStringLiteral("color:#e8e8ee; font-weight:bold;"));
+    video_countdown_->setObjectName(QStringLiteral("videoOverlayCountdown"));
+    video_hp_ = new QLabel(overlay);
+    video_hp_->setStyleSheet(QStringLiteral("color:#e8e8ee; font-weight:bold;"));
+    video_hp_->setObjectName(QStringLiteral("videoOverlayHp"));
+    overlay_row->addWidget(video_countdown_);
+    overlay_row->addStretch();
+    overlay_row->addWidget(video_hp_);
+    video_layout->addWidget(overlay);
+
+    video_full_pane_ = new VideoPane(video_page_);
+    video_full_pane_->setObjectName(QStringLiteral("videoFullPane"));
+    video_layout->addWidget(video_full_pane_, 1);
+
+    stack_->addWidget(info_page_);
+    stack_->addWidget(video_page_);
+    root->addLayout(stack_, 1);
 }
 
 void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, MonotonicMs now) {
@@ -327,19 +477,39 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
         logged_mode_ = decision.mode;
     }
 
+    stack_->setCurrentWidget(decision.mode == UiMode::Video ? video_page_ : info_page_);
+    mode_banner_->setText(QStringLiteral("模式 %1 · 原因 %2")
+                              .arg(mode_name(decision.mode))
+                              .arg(reason_name(decision.reason)));
+
     game_->setText(game_panel_text(snapshot));
     robot_->setText(robot_panel_text(snapshot));
-    event_->setText(event_panel_text(snapshot));
+    event_->setText(event_history_html(snapshot, kEventPanelRows));
     video_stats_->setText(video_panel_text(video));
+    map_->setRobots(snapshot.map_robots);
+    video_countdown_->setText(video_overlay_countdown_text(snapshot));
+    video_hp_->setText(video_overlay_hp_text(snapshot));
+
     if (video) {
+        // latestFrame() is called EXACTLY ONCE per tick. Calling it per pane could
+        // straddle a frame advance and leave the two pages showing different
+        // moments. The copy() is what detaches from the decoder buffer that
+        // frame_to_image only borrows; QImage is copy-on-write, so handing the same
+        // copy to both panes costs no second deep copy.
         const QByteArray frame = video->latestFrame();
-        pane_->setFrame(frame_to_image(frame, VideoReceiver::frameWidth(),
-                                      VideoReceiver::frameHeight())
-                            .copy());
-        pane_->setStatus(video->online() ? QStringLiteral("等待画面")
-                                         : QStringLiteral("图传 %1").arg(video->state()));
+        const QImage owned = frame_to_image(frame, VideoReceiver::frameWidth(),
+                                            VideoReceiver::frameHeight())
+                                 .copy();
+        apply_frame(info_video_pane_, video_full_pane_, owned);
+
+        const QString status = video->online()
+                                   ? QStringLiteral("等待画面")
+                                   : QStringLiteral("图传 %1").arg(video->state());
+        info_video_pane_->setStatus(status);
+        video_full_pane_->setStatus(status);
     } else {
-        pane_->setStatus(QStringLiteral("图传未启用"));
+        info_video_pane_->setStatus(QStringLiteral("图传未启用"));
+        video_full_pane_->setStatus(QStringLiteral("图传未启用"));
     }
 }
 
