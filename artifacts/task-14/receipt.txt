@@ -1,0 +1,278 @@
+TASK-14 RECEIPT
+===============
+Module-2 read-only control audit rerun, plus the two review-added checks
+(mqtt_intake before/after comparison, and runtime zero-publish observation).
+Every claim below is a command with its actual output, reproducible from this
+repository.
+
+control_from_terminal=0
+
+Host: macOS (arm64), Qt6 via Homebrew. Ubuntu: DEFERRED — no Ubuntu host,
+container, or cross-toolchain on this machine. No Ubuntu claim is made anywhere
+in this receipt.
+
+Binaries audited: build/macos/rm_terminal (Debug) and
+build/macos-release/rm_terminal (Release), both rebuilt immediately before the
+audit at commit 921bddc.
+
+-----------------------------------------------------------------------
+AUDIT 1 — no publish call in the C++ sources
+-----------------------------------------------------------------------
+  grep -rn "mosquitto_pub" cpp/
+  -> no hits (whole directory, tests included)
+VERDICT PASS. Nothing in cpp/ names a publish entry point at all.
+
+-----------------------------------------------------------------------
+AUDIT 2 — no publish symbol in the linked binaries
+-----------------------------------------------------------------------
+  nm -u build/macos/rm_terminal | grep -i publish          -> empty
+  nm -u build/macos-release/rm_terminal | grep -i publish   -> empty
+  nm -u build/macos/rm_terminal | grep -i writeDatagram     -> empty
+
+  nm -u build/macos/rm_terminal | grep -i mosquitto
+  _mosquitto_connect_async
+  _mosquitto_connect_callback_set
+  _mosquitto_destroy
+  _mosquitto_lib_cleanup
+  _mosquitto_lib_init
+  _mosquitto_loop_start
+  _mosquitto_loop_stop
+  _mosquitto_message_callback_set
+  _mosquitto_new
+  _mosquitto_subscribe
+VERDICT PASS. Ten mosquitto symbols, all connect/subscribe/loop/lifecycle.
+mosquitto_publish is absent from the link, so the terminal could not publish even
+if a call site were added without relinking. No writeDatagram, so no UDP send
+path either (the UDP port is bound for receive only).
+
+-----------------------------------------------------------------------
+AUDIT 3 — no CAN / UART / serial write
+-----------------------------------------------------------------------
+  grep -rniE "can_send|write\(fd|/dev/tty|serial|O_WRONLY" cpp/
+  -> 15 hits, ALL in cpp/intake_test.cpp, ALL from the substring "serial" inside
+     protobuf's SerializeAsString(). Filtered two ways to prove it:
+       ... | grep -v "_test.cpp"                 -> no hits in product code
+       ... | grep -viE "Serialize|SerializeAsString" -> no hits at all
+VERDICT PASS. No character-device path, no file-descriptor write, no CAN symbol.
+Recorded honestly: the plan's grep pattern produces false positives on this
+codebase because "serial" is a substring of SerializeAsString; the hits are the
+test suite serialising protobuf fixtures, not a serial port.
+
+-----------------------------------------------------------------------
+AUDIT 4 — CustomControl / CommonCommand have zero C++ references
+-----------------------------------------------------------------------
+  grep -rn "CustomControl\|CommonCommand" cpp/
+  -> 1 hit: cpp/intake_test.cpp:37
+     require(!decoder.accept("CustomControl", "", 10), "unknown topic");
+  grep -rn "CustomControl\|CommonCommand" cpp/ | grep -v "_test.cpp"
+  -> no hits in product code
+VERDICT PASS. The only mention is a test asserting the decoder REJECTS that
+topic. The messages exist in proto/rm_terminal.proto but are wired into no code
+path, and the terminal never subscribes to them either (see AUDIT 5).
+
+-----------------------------------------------------------------------
+AUDIT 5 — the simulator's legacy control loop was not extended
+-----------------------------------------------------------------------
+The plan cites sim/match_server.py:146-179. Those line numbers are STALE at
+HEAD: the file grew from 312 to 455 lines when the blind and multi-robot
+simulation was added, and 146-179 now lands in match-tick logic. Audited by
+marker instead of line number, which is what the plan actually intends:
+
+  awk '/^def _on_connect/,/^    match\.apply_command = apply_command/' \
+      <baseline 5437b0c> > /tmp/t14_ctrl_baseline.txt
+  awk '/^def _on_connect/,/^    match\.apply_command = apply_command/' \
+      sim/match_server.py > /tmp/t14_ctrl_head.txt
+  diff /tmp/t14_ctrl_baseline.txt /tmp/t14_ctrl_head.txt
+  -> empty; 39 lines on both sides
+
+VERDICT PASS. The control loop (_on_connect subscribe, _on_message handler for
+CustomControl/CommonCommand, and the apply_command body including the 0x03
+emergency stop) is BYTE-IDENTICAL to the module-1 baseline. Module 2 neither
+extended nor touched it.
+
+SCOPE DECLARATION, as the plan requires: that loop STILL EXISTS AND IS STILL
+EXECUTABLE. sim/match_server.py subscribes to CustomControl and CommonCommand and
+will mutate simulator state — chassis mode, auto-aim, gimbal recentre, and an
+emergency stop — if anything publishes those topics. It belongs to the SIMULATOR,
+not to the terminal. Module 2 does not extend it and nothing in module 2 publishes
+to it.
+This must not be conflated with the terminal's read-only property. "The simulator
+has a control subscriber" and "the terminal is read-only" are separate facts. The
+terminal's read-only property stands on its own terminal-side evidence — AUDIT 1
+(no source call), AUDIT 2 (no linked symbol), and AUDIT 6 (nothing observed on the
+wire) — and does not depend on the simulator's state in any way. A subscriber with
+no publisher is an unused listener, not a control path out of the terminal.
+
+-----------------------------------------------------------------------
+AUDIT 6 (review addition a2-i) — mqtt_intake.cpp before/after comparison
+-----------------------------------------------------------------------
+cpp/mqtt_intake.cpp is the only transport-layer file module 2 touched (todo 6).
+Full diff against the module-1 baseline: git diff 5437b0c HEAD -- cpp/mqtt_intake.cpp
+
+  Occurrence counts (grep -o, counting CALLS not lines — all subscribes sit on
+  one line, so grep -c would have misreported 1):
+                        baseline 5437b0c    HEAD 921bddc
+    mosquitto_subscribe        6                 8
+    mosquitto_publish          0                 0
+
+  The two added subscriptions are BlindStatus and RobotPositionSet. Full
+  subscribed set at HEAD: GameStatus, RobotDynamicStatus, RobotModuleStatus,
+  RobotPosition, Event, RobotTelemetry, BlindStatus, RobotPositionSet.
+  The rest of the diff is non-transport: QDateTime replaced by clock.h /
+  monotonic_now() (the wall-clock ban), nothing else.
+
+VERDICT PASS. The change is purely additive on the SUBSCRIBE side and adds no
+publish capability whatsoever.
+CORRECTION to the plan text: it states mqtt_intake has "六次" (six)
+mosquitto_subscribe calls. That was true at the module-1 baseline; at HEAD it is
+eight, because todo 6 added the two topics above. The publish count is the claim
+that matters, and it is 0 on both sides.
+
+-----------------------------------------------------------------------
+AUDIT 7 (review addition a2-ii) — runtime zero-publish observation
+-----------------------------------------------------------------------
+Static greps prove the source does not write a publish. Only a live capture
+proves nothing was actually sent. A wildcard subscriber watched the entire broker
+for the whole run, started BEFORE any publisher so the window has no blind spot:
+
+  mosquitto_sub -h 127.0.0.1 -p 3333 -t '#' -v > wire.log
+  then: sim/match_server.py, sim/video_sender.py, and
+        QT_QPA_PLATFORM=offscreen rm_terminal --config <per-run conf>
+  observed 50s, which crosses the +40s blind assertion
+
+  wire-readonly.log   223565 bytes
+  Topic tally on the wire:
+    RobotTelemetry      2565
+    RobotDynamicStatus   513
+    GameStatus           257
+    BlindStatus          257
+    RobotPositionSet      52
+    RobotPosition         52
+    RobotModuleStatus     52
+    Event                 44
+  Inbound families seen: 8 / 8
+
+  CONTROL TOPIC CHECK
+    grep -ac '^CustomControl' wire-readonly.log  -> 0
+    grep -ac '^CommonCommand' wire-readonly.log  -> 0
+
+WHY THIS IS NOT VACUOUS (the failure mode that made module 1's first attempt
+worthless was asserting "no control seen" against a silent wire). The terminal
+demonstrably CONSUMED and DECODED telemetry inside the same window:
+  native-readonly.log:
+    ts=2026-09-14T21:33:04.149Z event=startup mode=terminal platform=macOS
+        mqtt_host=127.0.0.1 mqtt_port=3333 udp_port=3334 stale_window_ms=500
+    ts=2026-09-14T21:33:44.209Z event=ui_mode_switch from=Info to=Video
+        reason=BlindAsserted blind_freshness=Fresh
+  terminal stdout: "MQTT subscribed (readonly)"
+That ui_mode_switch record with blind_freshness=Fresh is only reachable by
+decoding a live BlindStatus message: the mode machine ignores anything that is not
+Fresh. So the terminal was actively parsing robot and match telemetry during the
+exact window in which zero control publishes were observed.
+
+VERDICT PASS. control_from_terminal=0, observed on the wire, with the terminal
+proven active rather than idle.
+
+-----------------------------------------------------------------------
+FAULT INJECTION — proof the audit is not a no-op
+-----------------------------------------------------------------------
+Per the plan: add a mosquitto_publish call site that is never invoked, rebuild,
+and confirm the audit FAILS. Added to cpp/mqtt_intake.cpp with external linkage
+(a static/unused function could be optimised away, which would have made the
+injection itself vacuous):
+
+  void diag_t14_publish_probe(mosquitto* c) {
+      mosquitto_publish(c, nullptr, "DIAG-T14", 0, nullptr, 0, false); }
+
+  After rebuild:
+    nm -u build/macos/rm_terminal | grep -i publish
+    -> _mosquitto_publish            AUDIT 2 CORRECTLY FAILS
+    grep -rn "mosquitto_pub" cpp/ | grep -v _test.cpp
+    -> cpp/mqtt_intake.cpp:16 ...    AUDIT 1 CORRECTLY FAILS
+
+Both audits detect a call site that is merely PRESENT, never called — which is the
+exact threat model (a publish path linked in but not yet wired to a button).
+
+RESTORATION, verified rather than assumed:
+    cmp /tmp/t14_mqtt_intake_backup.cpp cpp/mqtt_intake.cpp  -> identical
+    grep -rn "DIAG-T14" cpp/                                 -> no matches
+    git status --short                                       -> clean
+  Rebuilt, then re-ran both audits on the FRESH binary:
+    grep -rn "mosquitto_pub" cpp/ | grep -v _test.cpp  -> empty
+    nm -u build/macos/rm_terminal | grep -i publish     -> empty
+    nm -u ... | grep -i mosquitto -> the same 10 subscribe-side symbols as above
+A restore is not proven until the binary is rebuilt; a stale injected binary
+previously made a restored tree look broken during todo 12.
+
+-----------------------------------------------------------------------
+BUILD.md DOCUMENTATION (part b)
+-----------------------------------------------------------------------
+New "## 双模式行为 (dual-mode behaviour)": when the terminal switches by itself,
+  immediate entry on assertion, the 3s exit hysteresis and why flicker demands it,
+  re-assertion cancelling the exit window, stale-holds-video, the
+  blind_stale_fallback_ms terminating condition, and the resident-decoder property.
+New "## 调试与证据采集 (debug and evidence capture)": --screenshot,
+  RM_TERMINAL_CAPTURE_DELAY_MS, --force-mode and --dump-layout, opening with an
+  explicit statement that none of it is an operator entry point and that there is
+  deliberately no shortcut, menu, or button that changes the mode. The
+  Configuration flag table now links here instead of carrying the prose, which
+  closes the item todo 12 deferred (both flags previously sat under
+  ## Configuration).
+New "### Mode regression test": scripts/verify_mode_regression.sh usage, what it
+  asserts, its ~65s cost, the RM_TERMINAL_INTEGRATION_TESTS=ON + ctest -L
+  integration invocation, why registration is opt-in rather than label-only, and
+  its refusal to run beside a second match_server.
+New "## 平台验证状态 (platform verification status)": a macOS/Ubuntu table with
+  Ubuntu marked DEFERRED for build, CTest and dynamic run, plus prose stating no
+  Ubuntu evidence exists and every artifact was produced on macOS.
+Protobuf regeneration was already documented (## Protobuf generation, C++ via the
+  terminal_proto target, Python via protoc --python_out) together with the
+  LOCAL SIMULATION disclaimer for BlindStatus / RobotPositionSet /
+  RobotPositionEntry and the ban on adding any terminal-to-robot message; verified
+  present and left as-is.
+
+Plan acceptance greps:
+  grep -c "force-mode" BUILD.md   -> 6   (>= 1)
+  grep -c "dump-layout" BUILD.md  -> 5   (>= 1)
+  section owning every one of those hits -> "## 调试与证据采集 (debug and evidence
+    capture)", so the heading contains both 调试 and 证据
+  grep -i "ubuntu" BUILD.md -> hits at the Ubuntu command section and the platform
+    status table, context DEFERRED
+  four config keys present: mode_exit_hysteresis_ms (2), event_history_capacity (1),
+    map_enabled (1), blind_stale_fallback_ms (3), the last documenting default
+    15000 and that 0 disables the fallback with its consequence spelled out
+
+-----------------------------------------------------------------------
+FULL VERIFICATION SWEEP
+-----------------------------------------------------------------------
+  Debug   build build/macos                  -> exit 0, 0 warnings, 0 errors
+  Debug   ctest -LE integration              -> exit 0, 12/12, 1.71s
+  Release build build/macos-release          -> exit 0, 0 warnings, 0 errors
+  Release ctest -LE integration              -> exit 0, 12/12, 1.50s
+  Debug   ctest -L integration (option ON)   -> exit 0, 1/1, 62.94s
+          entry +40.15s, video duration 15.00s, exactly 2 transitions, 0 flaps
+No product code was modified by this todo. The only source change is BUILD.md;
+the fault injection was reverted byte-for-byte and rebuilt.
+
+-----------------------------------------------------------------------
+ARTIFACTS
+-----------------------------------------------------------------------
+  artifacts/task-14/receipt.txt          this file
+  artifacts/task-14/wire-readonly.log    223565 bytes, full-broker capture
+  artifacts/task-14/native-readonly.log  terminal structured log for that window
+  artifacts/task-14/sim-readonly.log     simulator stdout for that window
+  /tmp/t14_final_integration.log         final ctest -L integration -V output
+artifacts/task-6/ is untouched; module-1 evidence is a historical baseline and was
+only read, never rewritten.
+
+-----------------------------------------------------------------------
+STATUS
+-----------------------------------------------------------------------
+Module-2 read-only audit: PASS on all seven checks, control_from_terminal=0,
+proven both statically and on the wire, with the audit itself proven non-vacuous
+by fault injection.
+Ubuntu: DEFERRED, not passing.
+The new protocol fields are LOCAL SIMULATION vocabulary and are not claimed as any
+2027 official contract.
+Plan items F1-F4 are audited separately. F5 (human acceptance) requires the user's
+own review of the two modes and cannot be self-certified.

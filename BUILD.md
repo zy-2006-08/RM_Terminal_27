@@ -93,67 +93,9 @@ Command-line flags:
 | `--force-mode <info\|video>` | Debug/evidence only: pin the UI mode (see below) |
 | `--dump-layout <path>` | Debug/evidence only: write the layout as JSON (see below) |
 
-`--screenshot` renders the widget itself with `QWidget::grab()` rather than
-capturing the screen, so it needs no recording permission, captures nothing but
-this window, and works under `QT_QPA_PLATFORM=offscreen`. The `shutdown` record
-carries the code the process actually returns, so a failed capture logs
-`exit=5`, not `exit=0`.
-
-`RM_TERMINAL_CAPTURE_DELAY_MS` (default `600`) delays that capture. The video
-pane needs the decoder to spawn and complete one frame, so a screenshot meant to
-show video needs roughly `7000`; the default is fine for telemetry-only shots.
-
-`--force-mode <info|video>` exists **only for debugging and evidence capture**. It
-is not an operator feature: there is deliberately no keyboard shortcut, menu item,
-or button that changes the mode, because during a match the mode must follow the
-blind signal rather than anyone's preference. Normal runs pass no such flag and
-switch automatically.
-
-It pins the UI to one mode so a screenshot is deterministic instead of depending
-on when the blind signal happens to arrive:
-
-```bash
-QT_QPA_PLATFORM=offscreen RM_TERMINAL_CAPTURE_DELAY_MS=2500 \
-  build/macos/rm_terminal --force-mode video --screenshot /tmp/forced-video.png
-```
-
-Forcing does not falsify the log. The `ui_mode_switch` record reports
-`reason=ForcedByCli`, distinct from the `BlindAsserted` and
-`BlindClearedHysteresis` reasons the automatic path emits, so forced evidence is
-never mistaken for a real blind event. Because the log records transitions only,
-`--force-mode info` emits no record at all when Info is already the startup mode.
-
-The flag takes exactly one value, `info` or `video`. A missing value, an
-unrecognised value, a repeated flag, or combining it with `--safe-smoke` or
-`--diagnostic` all exit `2`; the last two are rejected rather than ignored because
-neither builds a window for the mode to apply to. `cpp/assert_bad_args.cmake`
-(CTest `reject_unknown_args`) covers each of those cases.
-
-`--dump-layout <path>` is likewise **only for debugging and evidence capture**, not
-an operator feature. It writes the on-screen layout as JSON at the same instant the
-screenshot is taken, so the two artifacts describe one moment. It exists because a
-PNG can only be judged by eye: the JSON makes "the map dominates in info mode" and
-"video fills the window in video mode" assertions a script can check.
-
-```bash
-QT_QPA_PLATFORM=offscreen RM_TERMINAL_CAPTURE_DELAY_MS=2500 \
-  build/macos/rm_terminal --force-mode video \
-    --screenshot /tmp/m-video.png --dump-layout /tmp/m-video.json
-```
-
-The dump reports `mode`, `reason`, `readonly_banner_visible`, `stacked_index`, the
-window box, and one `{name, visible, x, y, width, height}` entry per key pane, in a
-fixed order with integer values, so identical input yields a byte-identical file and
-any diff means the layout really moved. Panes the stacked layout is not showing
-report zeroed geometry: a widget that was never laid out has a stale `geometry()`
-that varies between otherwise identical runs.
-
-It carries layout only, never match data or field coordinates. Mixing telemetry in
-would make diffs fail randomly on values that have nothing to do with layout.
-
-Omitting the flag writes no file and costs nothing. A missing path, a repeated flag,
-or combining it with `--safe-smoke` or `--diagnostic` all exit `2`, and a path that
-cannot be written exits `5`.
+`--screenshot`, `--force-mode` and `--dump-layout` are capture and debugging
+tools, not operator features. They are documented together under
+[调试与证据采集](#调试与证据采集-debug-and-evidence-capture) below.
 
 ### Window
 
@@ -190,6 +132,128 @@ The only log sink is the local file named by `log_destination`. Operator-facing
 banners (the read-only notice, argument errors) go to stderr through
 `qInfo`/`qCritical`, which is a separate mechanism. The read-only terminal never
 opens a network log sink, because that would give it an egress path.
+
+## 双模式行为 (dual-mode behaviour)
+
+The window has two resident modes and switches between them by itself. Info mode
+shows the tactical map as the primary area with video as a thumbnail; video mode
+gives the video feed the window and hides the map.
+
+The switch is driven by the simulated `BlindStatus` signal, never by an operator:
+
+- Blind asserted (fresh reading, value true) enters video mode immediately. Losing
+  the picture late is worse than entering early, so there is no entry delay.
+- Blind cleared requires `mode_exit_hysteresis_ms` (default `3000`) of continuous
+  clear readings before returning to info mode. Without that delay a signal that
+  flickers around the threshold would flip the whole layout several times a second.
+- A re-assertion during the exit window cancels it, so the full window restarts
+  rather than resuming a partial one.
+- Stale blind telemetry HOLDS video mode rather than dropping it, and time measured
+  while the data was untrustworthy is not credited toward leaving. If staleness
+  lasts `blind_stale_fallback_ms` (default `15000`) the terminal returns to info
+  with `reason=BlindSignalLost`, so a dead publisher cannot pin it fullscreen
+  forever. Setting that key to `0` disables the fallback entirely, which means the
+  terminal will stay in video mode indefinitely once the blind feed dies.
+
+Both modes keep the read-only banner, and the decoder stays resident across
+switches: the video pane is never reparented and `VideoReceiver` is never stopped,
+so `decoded_frames` keeps climbing instead of restarting from zero.
+
+## 调试与证据采集 (debug and evidence capture)
+
+Everything in this section exists for debugging and evidence capture. None of it is
+an operator entry point: there is deliberately no keyboard shortcut, menu item, or
+button that changes the mode, because during a match the mode must follow the blind
+signal rather than anyone's preference. Normal runs pass none of these flags.
+
+`--screenshot <path>` renders the widget itself with `QWidget::grab()` rather than
+capturing the screen, so it needs no recording permission, captures nothing but
+this window, and works under `QT_QPA_PLATFORM=offscreen`. The `shutdown` record
+carries the code the process actually returns, so a failed capture logs `exit=5`,
+not `exit=0`.
+
+`RM_TERMINAL_CAPTURE_DELAY_MS` (default `600`) delays that capture. The video pane
+needs the decoder to spawn and complete one frame, so a screenshot meant to show
+video needs roughly `7000`; the default is fine for telemetry-only shots.
+
+`--force-mode <info|video>` pins the UI to one mode so a capture is deterministic
+instead of depending on when the blind signal happens to arrive:
+
+```bash
+QT_QPA_PLATFORM=offscreen RM_TERMINAL_CAPTURE_DELAY_MS=2500 \
+  build/macos/rm_terminal --force-mode video --screenshot /tmp/forced-video.png
+```
+
+Forcing does not falsify the log. The `ui_mode_switch` record reports
+`reason=ForcedByCli`, distinct from the `BlindAsserted` and
+`BlindClearedHysteresis` reasons the automatic path emits, so forced evidence is
+never mistaken for a real blind event. Because the log records transitions only,
+`--force-mode info` emits no record at all when Info is already the startup mode.
+
+The flag takes exactly one value, `info` or `video`. A missing value, an
+unrecognised value, a repeated flag, or combining it with `--safe-smoke` or
+`--diagnostic` all exit `2`; the last two are rejected rather than ignored because
+neither builds a window for the mode to apply to. `cpp/assert_bad_args.cmake`
+(CTest `reject_unknown_args`) covers each of those cases.
+
+`--dump-layout <path>` writes the on-screen layout as JSON at the same instant the
+screenshot is taken, so the two artifacts describe one moment. It exists because a
+PNG can only be judged by eye: the JSON makes "the map dominates in info mode" and
+"video fills the window in video mode" assertions a script can check.
+
+```bash
+QT_QPA_PLATFORM=offscreen RM_TERMINAL_CAPTURE_DELAY_MS=2500 \
+  build/macos/rm_terminal --force-mode video \
+    --screenshot /tmp/m-video.png --dump-layout /tmp/m-video.json
+```
+
+The dump reports `mode`, `reason`, `readonly_banner_visible`, `stacked_index`, the
+window box, and one `{name, visible, x, y, width, height}` entry per key pane, in a
+fixed order with integer values, so identical input yields a byte-identical file and
+any diff means the layout really moved. Panes the stacked layout is not showing
+report zeroed geometry: a widget that was never laid out has a stale `geometry()`
+that varies between otherwise identical runs.
+
+It carries layout only, never match data or field coordinates. Mixing telemetry in
+would make diffs fail randomly on values that have nothing to do with layout.
+
+Omitting the flag writes no file and costs nothing. A missing path, a repeated flag,
+or combining it with `--safe-smoke` or `--diagnostic` all exit `2`, and a path that
+cannot be written exits `5`.
+
+### Mode regression test
+
+`scripts/verify_mode_regression.sh` proves the wired system honours the switching
+rules above, which `ui_mode_test` cannot: a unit-green state machine fed the wrong
+clock or the wrong freshness still flaps. The script starts its own broker (only if
+none is listening), match server and video sender, runs the terminal offscreen
+against a per-run log, then asserts that the run produced exactly two transitions —
+`Info -> Video (BlindAsserted)` then `Video -> Info (BlindClearedHysteresis)` — with
+entry near +40s and a gap of the 12s blind window plus the 3s exit hysteresis. It
+prints an actual-vs-expected table and exits non-zero on any failure.
+
+```sh
+bash scripts/verify_mode_regression.sh
+```
+
+It needs about 65 seconds of wall clock, because it has to observe the blind window
+and the hysteresis that follows it. To run it through CTest, enable it explicitly:
+
+```sh
+cmake -S . -B build/macos -DRM_TERMINAL_INTEGRATION_TESTS=ON
+ctest --test-dir build/macos -L integration --output-on-failure
+```
+
+Registration is opt-in rather than label-only on purpose. A CTest label selects
+(`-L`) and excludes (`-LE`) but does **not** make a registered test skip by default,
+so labelling alone would have taken a plain `ctest` run from about 1 second to over
+a minute. With the option off (the default) `ctest` runs 12 fast tests; with it on,
+`-L integration` selects this one and `-LE integration` excludes it.
+
+The script refuses to run if another `match_server.py` is already publishing, since
+a second blind timeline at a different phase manufactures extra transitions and
+would report flapping the terminal never caused. It signals only the processes it
+started itself, and leaves a pre-existing broker running.
 
 ## Protobuf generation
 
@@ -271,3 +335,17 @@ The Ubuntu commands above are the deployment-candidate path only; Ubuntu
 execution is unverified in this environment. The smoke mode creates a
 `QCoreApplication`, reports the read-only safe state, and exits without opening
 a window or network transport.
+
+## 平台验证状态 (platform verification status)
+
+| Platform | Build | CTest | Dynamic run (simulator, dual mode, video) |
+| --- | --- | --- | --- |
+| macOS (arm64, Homebrew Qt6) | verified | verified, Debug and Release | verified |
+| Ubuntu | **DEFERRED** | **DEFERRED** | **DEFERRED** |
+
+Ubuntu verification is DEFERRED: no Ubuntu host, container, or cross-toolchain is
+available on the QA machine, so nothing in this repository demonstrates an Ubuntu
+build, test run, or dynamic run. The Ubuntu commands are a deployment candidate to
+be executed later, and no statement here may be read as an Ubuntu pass. Every
+timing number, screenshot, and receipt in `artifacts/` and `.omo/evidence/` was
+produced on macOS.
