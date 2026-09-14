@@ -20,6 +20,21 @@ struct SinkGuard {
     ~SinkGuard() { set_log_sink(nullptr); }
 };
 
+// Pins every value against core/constants.py:80-86. The simulator sends mode 2,
+// which the old table rendered as "独立" while it authoritatively means
+// "底盘跟随云台" - a wrong readout, so these are asserted value by value rather
+// than eyeballed on a screenshot.
+void chassis_names_match_authoritative_constants() {
+    check(chassis_name(0) == QStringLiteral("停机"), "chassis 0 is 停机");
+    check(chassis_name(1) == QStringLiteral("手动驾驶"), "chassis 1 is 手动驾驶");
+    check(chassis_name(2) == QStringLiteral("底盘跟随云台"), "chassis 2 is 底盘跟随云台");
+    check(chassis_name(3) == QStringLiteral("小陀螺"), "chassis 3 is 小陀螺");
+    check(chassis_name(4) == QStringLiteral("自瞄模式"), "chassis 4 is 自瞄模式");
+    check(chassis_name(5) == QStringLiteral("未知"), "chassis 5 falls back to 未知");
+    check(chassis_name(9) == QStringLiteral("未知"), "chassis 9 falls back to 未知");
+    check(chassis_name(2) != QStringLiteral("独立"), "the old wrong name for mode 2 is gone");
+}
+
 EventRecord make_event(std::uint64_t timestamp, std::uint32_t level, const char* text) {
     return EventRecord{timestamp, level, std::string{text}, 0};
 }
@@ -245,6 +260,7 @@ int main() {
         try { store.snapshot(9); } catch (const std::invalid_argument&) { rejected = true; }
         check(rejected, "backwards snapshot time rejected");
         stale_reporter_logs_once_per_transition();
+        chassis_names_match_authoritative_constants();
         event_history_orders_newest_first();
         event_history_discards_oldest_when_full();
         event_history_preserves_unknown_levels();

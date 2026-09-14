@@ -14,6 +14,22 @@ QString freshness_text(Freshness freshness) {
     }
     return QStringLiteral("unknown");
 }
+// Value-by-value mirror of core/constants.py:80-86 CHASSIS_MODES (authoritative,
+// aligned to the 2026 protocol). Python is the source of truth; if these ever
+// disagree, fix this table, never constants.py.
+//   0 停机          1 手动驾驶      2 底盘跟随云台
+//   3 小陀螺        4 自瞄模式      other 未知
+QString chassis_name(std::uint32_t mode) {
+    switch (mode) {
+    case 0: return QStringLiteral("停机");
+    case 1: return QStringLiteral("手动驾驶");
+    case 2: return QStringLiteral("底盘跟随云台");
+    case 3: return QStringLiteral("小陀螺");
+    case 4: return QStringLiteral("自瞄模式");
+    default: return QStringLiteral("未知");
+    }
+}
+
 QString quality_text(Quality quality) {
     switch (quality) {
     case Quality::Missing: return QStringLiteral("missing");

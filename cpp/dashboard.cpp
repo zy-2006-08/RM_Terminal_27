@@ -23,15 +23,6 @@ QString stage_name(std::uint32_t stage) {
     }
 }
 
-QString chassis_name(std::uint32_t mode) {
-    switch (mode) {
-    case 0: return QStringLiteral("跟随");
-    case 1: return QStringLiteral("小陀螺");
-    case 2: return QStringLiteral("独立");
-    default: return QStringLiteral("未知");
-    }
-}
-
 QString level_name(std::uint32_t level) {
     switch (level) {
     case 0: return QStringLiteral("INFO");

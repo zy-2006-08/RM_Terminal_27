@@ -10,6 +10,11 @@ QString freshness_text(Freshness freshness);
 QString quality_text(Quality quality);
 QString snapshot_text(const Snapshot& snapshot);
 
+// Authoritative source: core/constants.py:80-86 CHASSIS_MODES. Lives here rather
+// than in dashboard.cpp so CTest can pin the values; drift between the Python and
+// C++ names is a wrong readout on the operator's screen, not a cosmetic issue.
+QString chassis_name(std::uint32_t mode);
+
 // Reports fields that aged into Stale since the previous call, so a field that
 // stays stale logs once per transition rather than once per snapshot.
 class StaleReporter {
