@@ -1,0 +1,48 @@
+Native CMake target only: rm_terminal; legacy Python launcher excluded.
+
+=== native pass 1 ===
+-- Could NOT find WrapVulkanHeaders (missing: Vulkan_INCLUDE_DIR) 
+-- Configuring done (0.2s)
+-- Generating done (0.0s)
+-- Build files have been written to: /Users/zy/RMGF/terminal/build/macos
+[100%] Built target rm_terminal
+Test project /Users/zy/RMGF/terminal/build/macos
+    Start 1: safe_start
+1/1 Test #1: safe_start .......................   Passed    0.03 sec
+
+100% tests passed out of 1
+
+Total Test time (real) =   0.04 sec
+RM terminal: READ-ONLY SIMULATION SAFE; platform= macOS
+
+=== native pass 2 ===
+-- Could NOT find WrapVulkanHeaders (missing: Vulkan_INCLUDE_DIR) 
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /Users/zy/RMGF/terminal/build/macos
+[100%] Built target rm_terminal
+Test project /Users/zy/RMGF/terminal/build/macos
+    Start 1: safe_start
+1/1 Test #1: safe_start .......................   Passed    0.01 sec
+
+100% tests passed out of 1
+
+Total Test time (real) =   0.01 sec
+RM terminal: READ-ONLY SIMULATION SAFE; platform= macOS
+
+=== native pass 3 ===
+-- Could NOT find WrapVulkanHeaders (missing: Vulkan_INCLUDE_DIR) 
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /Users/zy/RMGF/terminal/build/macos
+[100%] Built target rm_terminal
+Test project /Users/zy/RMGF/terminal/build/macos
+    Start 1: safe_start
+1/1 Test #1: safe_start .......................   Passed    0.01 sec
+
+100% tests passed out of 1
+
+Total Test time (real) =   0.01 sec
+RM terminal: READ-ONLY SIMULATION SAFE; platform= macOS
+
+Cleanup: no lingering rm_terminal process.

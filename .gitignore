@@ -1,0 +1,25 @@
+# Build trees (regenerable via cmake; see BUILD.md)
+build/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Local runtime config; rm_terminal.conf.sample is tracked as the template
+rm_terminal.conf
+
+# Runtime logs (log_destination default; appends across restarts)
+rm_terminal.log
+*.log.[0-9]*
+
+# macOS
+.DS_Store
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+
+# Local virtualenv, if ever created inside the tree (run.sh expects ../venv)
+venv/
+.venv/

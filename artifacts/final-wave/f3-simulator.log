@@ -1,0 +1,34 @@
+[server] 模拟赛事引擎启动 -> mqtt://127.0.0.1:3333，Ctrl-C 退出[server] MQTT 已连接 (Success)，订阅终端下行指令
+
+Exception in thread paho-mqtt-client-sim-server-3:
+Traceback (most recent call last):
+  File "/opt/homebrew/Cellar/python@3.12/3.12.14/Frameworks/Python.framework/Versions/3.12/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/opt/homebrew/Cellar/python@3.12/3.12.14/Frameworks/Python.framework/Versions/3.12/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/zy/RMGF/venv/lib/python3.12/site-packages/paho/mqtt/client.py", line 4523, in _thread_main
+    self.loop_forever(retry_first_connection=True)
+  File "/Users/zy/RMGF/venv/lib/python3.12/site-packages/paho/mqtt/client.py", line 2297, in loop_forever
+    rc = self._loop(timeout)
+         ^^^^^^^^^^^^^^^^^^^
+  File "/Users/zy/RMGF/venv/lib/python3.12/site-packages/paho/mqtt/client.py", line 1686, in _loop
+    rc = self.loop_read()
+         ^^^^^^^^^^^^^^^^
+  File "/Users/zy/RMGF/venv/lib/python3.12/site-packages/paho/mqtt/client.py", line 2100, in loop_read
+    rc = self._packet_read()
+         ^^^^^^^^^^^^^^^^^^^
+  File "/Users/zy/RMGF/venv/lib/python3.12/site-packages/paho/mqtt/client.py", line 3142, in _packet_read
+    rc = self._packet_handle()
+         ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/zy/RMGF/venv/lib/python3.12/site-packages/paho/mqtt/client.py", line 3808, in _packet_handle
+    return self._handle_publish()
+           ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/zy/RMGF/venv/lib/python3.12/site-packages/paho/mqtt/client.py", line 4145, in _handle_publish
+    self._handle_on_message(message)
+  File "/Users/zy/RMGF/venv/lib/python3.12/site-packages/paho/mqtt/client.py", line 4501, in _handle_on_message
+    on_message(self, self._userdata, message)
+  File "/Users/zy/RMGF/terminal/sim/match_server.py", line 149, in _on_message
+    m.ParseFromString(message.payload)
+google.protobuf.message.DecodeError: Error parsing message with type 'rm.CustomControl': Wire format was corrupt
+[server] 阶段=3 剩余=4s HP=400 热量=0 弹量=150 锁定=否
+[server] 阶段=4 剩余=419s HP=400 热量=0 弹量=150 锁定=否

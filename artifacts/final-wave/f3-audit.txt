@@ -1,0 +1,81 @@
+F3 CONTROL-SAFETY AUDIT
+=======================
+Verdict: APPROVE.
+
+Scope: the native C++ module-1 terminal AND the legacy Python terminal that
+lives in the same repository. Both are covered because `./run.sh` launches the
+legacy one, so auditing only the native target would leave a real control path
+reachable from a single command.
+
+Host: macOS. Reproduce with:
+  python3 artifacts/final-wave/f3_control_safety.py     # native, 9 checks
+  python3 artifacts/final-wave/legacy_control_block.py  # legacy, 4 checks
+
+FINDING (fixed in this pass, user decision "B")
+  The legacy Python terminal had LIVE control publishes wired to UI buttons and
+  keyboard shortcuts: emergency stop, gimbal reset, auto-aim toggle, and chassis
+  mode, via `core/mqtt_link.py` -> `.publish("CustomControl"/"CommonCommand")`.
+  `ui/main_window.py` bound them at lines 295, 311, 339, 344, 351; `run.sh:48`
+  starts that terminal directly. This contradicted the plan's "no real robot
+  control" constraint even though it was outside the native CMake build.
+  Fix: both send functions are now hard-blocked at the lowest level. They emit a
+  `[readonly_block]` line to stderr, increment a counter, return False, and
+  publish nothing. Blocking the two senders rather than the call sites means
+  every button and shortcut is covered by construction, including any future one.
+  `grep -nE '\.publish\(' core/mqtt_link.py` now returns no hits, and no other
+  non-simulator Python file publishes at all.
+
+NATIVE TERMINAL: 9/9 checks, failures=0, verdict PASS
+  Binary-level proof (stronger than grep, since it reflects what actually linked):
+    nm -u build/debug/rm_terminal | grep mosquitto
+      -> connect_async, connect_callback_set, destroy, lib_cleanup, lib_init,
+         loop_start, loop_stop, message_callback_set, new, subscribe
+      -> mosquitto_publish is ABSENT from the binary entirely.
+    nm -u ... | grep -iE 'writeDatagram|can_send|uart|tcgetattr|ioctl' -> no hits.
+  Static: `grep -rniE 'mosquitto_publish|can_send|uart_write' cpp/` exits 1.
+    No QTcpSocket, QNetworkAccessManager, or QSslSocket anywhere in cpp/.
+    QUdpSocket is bind + readyRead only; there is no writeDatagram call.
+    The only CustomControl mention in cpp/ is intake_test.cpp:37 asserting the
+    topic is REJECTED.
+  Dynamic, while consuming live telemetry (6/6 inbound families, 675
+  RobotTelemetry messages observed): 4 forged control messages and 3 malformed
+  inbound payloads were injected. A wildcard subscriber counted exactly
+  CustomControl=2 and CommonCommand=2, matching what the audit itself injected,
+  so the terminal contributed ZERO. The terminal stayed alive, decoded real robot
+  state, rejected both malformed inbound payloads, and shut down with exit=0.
+  `lsof` on the live PID showed 0 serial/CAN character devices open.
+  Note on method: the terminal subscribes to the six inbound families only, so
+  control topics never reach it and produce no rejection record. The expected
+  rejection count is therefore 2 (the malformed INBOUND payloads), not 7. An
+  earlier draft asserted 4 and failed; that was an audit bug, not a terminal bug.
+
+LEGACY TERMINAL: 4/4 checks, failures=0, verdict PASS
+  A real broker was started and every control entry point the UI is wired to was
+  invoked directly: EMERGENCY_STOP, RESET_GIMBAL, TOGGLE_AUTOAIM,
+  SET_CHASSIS_MODE, plus a generic CommonCommand.
+    all five calls returned False
+    5/5 attempts reported a [readonly_block] line
+    zero CustomControl/CommonCommand messages on the wire
+  Static absence of `.publish(` alone would NOT have proven this, because the
+  buttons still call the senders; the wire count is what makes it conclusive.
+  `ui.main_window`, `core.mqtt_link`, and `main` still import cleanly, so the
+  legacy UI is blocked, not broken.
+
+NO REGRESSION
+  Native acceptance regression re-run after the legacy change:
+    failures=0, 46 structured records, 0 grammar violations,
+    Debug and Release CTest 6/6, orphan_processes=0, verdict PASS.
+
+RESIDUAL RISK
+  - The block is a software guard in one file. It is not a build-level exclusion,
+    so a future edit could re-enable publishing. There is no automated test in
+    CTest guarding it; the guard is proven by
+    artifacts/final-wave/legacy_control_block.py, which must be re-run manually.
+  - The legacy terminal still SUBSCRIBES to telemetry and renders control-shaped
+    buttons; pressing them now does nothing but log a refusal. The buttons were
+    left in place rather than removed to keep this change minimal and reviewable.
+  - sim/match_server.py and sim/video_sender.py still publish, which is correct:
+    they are the simulated data SOURCE, not the terminal.
+  - Ubuntu is UNVERIFIED, so this audit's dynamic results are macOS-only. The
+    static and binary evidence is platform-independent in nature but was
+    collected from a macOS build.

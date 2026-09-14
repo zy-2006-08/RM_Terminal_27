@@ -1,0 +1,4 @@
+native_exit=127
+simulator_cleaned=1
+broker_cleaned=1
+bounded integration command: macOS host lacks timeout; no processes launched by native command.

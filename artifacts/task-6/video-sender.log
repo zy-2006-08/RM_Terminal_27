@@ -1,0 +1,2 @@
+[video_sender] 372 帧 -> udp://127.0.0.1:3334  fps=20.0 loss=0.0% 循环播放，Ctrl-C 退出
+[video_sender] 已发 60 帧 806 包，丢弃 0

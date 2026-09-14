@@ -1,0 +1,119 @@
+syntax = "proto3";
+
+// 参照 RoboMaster 2026 通信协议 V2.0.0 第 2 章「自定义客户端协议」的消息定义。
+// RM2027 正式协议尚未发布，此处仅用于本地模拟与终端框架验证。
+// topic 名与 message 名一致，与 2026 协议的约定相同。
+
+package rm;
+
+// ---------------------------------------------------------------
+// 服务器 -> 终端：比赛全局状态（2026 协议 2.2.3 GameStatus，5Hz）
+// ---------------------------------------------------------------
+message GameStatus {
+  optional uint32 current_round      = 1;   // 当前局号，从 1 开始
+  optional uint32 total_rounds       = 2;   // 总局数
+  optional uint32 red_score          = 3;   // 红方得分
+  optional uint32 blue_score         = 4;   // 蓝方得分
+  optional uint32 current_stage      = 5;   // 0未开始 1准备 2自检 3倒计时 4比赛中 5结算
+  optional int32  stage_countdown_sec = 6;  // 当前阶段剩余时间（秒）
+  optional int32  stage_elapsed_sec  = 7;   // 当前阶段已过时间（秒）
+  optional bool   is_paused          = 8;   // 是否暂停
+  optional uint32 winner             = 9;   // 0平局 1红胜 2蓝胜，非结算阶段为 255
+  optional uint32 end_reason         = 10;  // 非结算阶段为 255
+}
+
+// ---------------------------------------------------------------
+// 服务器 -> 终端：机器人实时数据（对应 2026 协议 RobotDynamicStatus，10Hz）
+// ---------------------------------------------------------------
+message RobotDynamicStatus {
+  optional uint32 robot_id           = 1;   // 附录二 ID 编号
+  optional uint32 current_hp         = 2;
+  optional uint32 max_hp             = 3;
+  optional uint32 shooter_heat_17mm  = 4;
+  optional uint32 shooter_heat_limit = 5;
+  optional float  bullet_speed       = 6;   // m/s
+  optional uint32 remaining_ammo     = 7;   // 允许发弹量
+  optional uint32 coin               = 8;   // 剩余金币
+  optional float  chassis_power      = 9;   // W
+  optional float  buffer_energy      = 10;  // J
+}
+
+// ---------------------------------------------------------------
+// 服务器 -> 终端：机器人各模块在线状态
+// （2026 协议 2.2.12 RobotModuleStatus：0离线 1在线 2安装不规范视为离线）
+// ---------------------------------------------------------------
+message RobotModuleStatus {
+  optional uint32 power_manager       = 1;
+  optional uint32 rfid                = 2;
+  optional uint32 light_strip         = 3;
+  optional uint32 small_shooter       = 4;
+  optional uint32 big_shooter         = 5;
+  optional uint32 uwb                 = 6;
+  optional uint32 armor               = 7;
+  optional uint32 video_transmission  = 8;
+  optional uint32 capacitor           = 9;
+  optional uint32 main_controller     = 10;
+  optional uint32 laser_detection_module = 11;
+}
+
+// ---------------------------------------------------------------
+// 服务器 -> 终端：机器人坐标与朝向（2026 协议 2.2.13 RobotPosition，1Hz）
+// ---------------------------------------------------------------
+message RobotPosition {
+  optional float x   = 1;
+  optional float y   = 2;
+  optional float yaw = 3;
+}
+
+// ---------------------------------------------------------------
+// 服务器 -> 终端：全局事件通知（2026 协议 Event，触发式）
+// ---------------------------------------------------------------
+message Event {
+  optional uint64 timestamp_ms = 1;
+  optional uint32 level        = 2;   // 0信息 1提示 2警告 3严重
+  optional string text         = 3;
+}
+
+// ---------------------------------------------------------------
+// 终端 -> 机器人：最大 30 字节自定义数据
+// （2026 协议 2.2.2 CustomControl，经图传链路以 0x0311 下发，75Hz）
+// ---------------------------------------------------------------
+message CustomControl {
+  optional bytes data = 1;
+}
+
+// ---------------------------------------------------------------
+// 终端 -> 服务器：常用赛事指令（2026 协议 CommonCommand，最高 10Hz）
+// ---------------------------------------------------------------
+message CommonCommand {
+  optional uint32 command_id = 1;
+  optional uint32 param      = 2;
+}
+
+// ---------------------------------------------------------------
+// 机器人 -> 终端：机器人自定义上传数据流
+// （2026 协议 CustomByteBlock，机器人端对应 0x0310，最大 300 字节，50Hz）
+// 这里用结构化字段承载电控/视觉状态，实际比赛需按正式协议打包。
+// ---------------------------------------------------------------
+message RobotTelemetry {
+  optional uint32 sequence        = 1;
+  optional uint64 timestamp_us    = 2;
+  optional float  gimbal_yaw      = 3;   // deg
+  optional float  gimbal_pitch    = 4;   // deg
+  optional uint32 chassis_mode    = 5;   // 见 core/constants.py CHASSIS_MODES
+  optional bool   vision_online   = 6;   // 机器人端视觉进程心跳
+  optional bool   autoaim_enabled = 7;   // 自瞄是否启用
+  optional bool   target_locked   = 8;   // 是否锁定目标
+  optional uint32 target_id       = 9;   // 目标机器人 ID
+  optional float  target_distance = 10;  // m
+  optional float  target_yaw_err  = 11;  // deg
+  optional float  target_pitch_err = 12; // deg
+  optional float  confidence      = 13;  // 0~1
+  optional float  friction_rpm    = 14;  // 摩擦轮转速
+  optional bool   fire_permit     = 15;  // 允许发射
+  // 工业相机像素坐标系下的目标框（1920x1080），仅用于终端叠加显示
+  optional float  bbox_cx         = 16;
+  optional float  bbox_cy         = 17;
+  optional float  bbox_w          = 18;
+  optional float  bbox_h          = 19;
+}

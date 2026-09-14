@@ -1,0 +1,9 @@
+Task 4 verification (macOS host; Ubuntu unverified)
+Baseline: build/debug ctest before edits: 4/4 passed
+Debug: cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug; cmake --build build/debug; ctest --test-dir build/debug --output-on-failure => 5/5 passed
+Release: cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release; cmake --build build/release; ctest --test-dir build/release --output-on-failure => 5/5 passed
+E2E: port=39134 receiver_pid=??? sender_pid=??? ffmpeg=/opt/homebrew/bin/ffmpeg asset=assets/sim_feed.h265 loss=2% jitter=1ms
+E2E result: packets=1089 completed=62 decoded=true; shutdown decoder_exit=255 observable and nonfatal
+Cleanup: sender=0 receiver=0; no processes left running; UDP port released
+Fault coverage: malformed <8-byte and stale partial covered by native named regression; duplicate/out-of-order covered; loss/jitter exercised by simulator
+Restart recovery: stop path is implemented and clean, but separate live restart assertion was not completed

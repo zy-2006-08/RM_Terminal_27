@@ -1,0 +1,13 @@
+Test project /Users/zy/RMGF/terminal/build/release
+    Start 1: intake_contract
+1/4 Test #1: intake_contract ..................   Passed    0.02 sec
+    Start 2: domain_state
+2/4 Test #2: domain_state .....................   Passed    0.02 sec
+    Start 3: reject_unknown_args
+3/4 Test #3: reject_unknown_args ..............   Passed    0.14 sec
+    Start 4: safe_start
+4/4 Test #4: safe_start .......................   Passed    0.03 sec
+
+100% tests passed out of 4
+
+Total Test time (real) =   0.21 sec

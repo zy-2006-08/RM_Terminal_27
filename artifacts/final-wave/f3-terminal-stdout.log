@@ -1,0 +1,4 @@
+MQTT subscribed (readonly)
+ignored malformed, stale, invalid, or unknown MQTT message: GameStatus
+ignored malformed, stale, invalid, or unknown MQTT message: RobotTelemetry
+diagnostic snapshot: 1 robot(s); game.stage= 1 event.text= 1

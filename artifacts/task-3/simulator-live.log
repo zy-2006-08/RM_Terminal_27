@@ -1,0 +1,2 @@
+[server] 模拟赛事引擎启动 -> mqtt://127.0.0.1:3333，Ctrl-C 退出[server] MQTT 已连接 (Success)，订阅终端下行指令
+

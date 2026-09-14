@@ -1,0 +1,72 @@
+marker=repeated_cycles
+  [ok] cycle 1 exit 0
+  [ok] cycle 1 banner present
+  [ok] cycle 2 exit 0
+  [ok] cycle 2 banner present
+  [ok] cycle 3 exit 0
+  [ok] cycle 3 banner present
+  [ok] cycle 4 exit 0
+  [ok] cycle 4 banner present
+  [ok] cycle 5 exit 0
+  [ok] cycle 5 banner present
+  [ok] every line matches the record grammar
+  [ok] 5 startup records
+  [ok] 5 shutdown records
+  [ok] 5 readonly_block records
+  [ok] first record is startup
+  [ok] last record is shutdown
+  [ok] restart appends rather than truncating
+  [ok] timestamps are monotonically ordered
+marker=cycles cycles=5 records=15
+marker=config_precedence
+  [ok] flag beats env exit 0
+  [ok] --config wins over RM_TERMINAL_CONFIG
+  [ok] env exit 0
+  [ok] RM_TERMINAL_CONFIG wins over ./rm_terminal.conf
+  [ok] cwd config exit 0
+  [ok] ./rm_terminal.conf used when nothing else is given
+  [ok] missing config exit 0
+  [ok] built-in defaults apply with no config file
+marker=precedence tiers=4
+marker=malformed_config
+  [ok] mqtt_port=abc exits 4
+  [ok] mqtt_port=abc names the offending key
+  [ok] mqtt_port=abc prints nothing on stdout
+  [ok] mqtt_port=0 exits 4
+  [ok] mqtt_port=0 names the offending key
+  [ok] mqtt_port=0 prints nothing on stdout
+  [ok] stale_window_ms=-5 exits 4
+  [ok] stale_window_ms=-5 names the offending key
+  [ok] stale_window_ms=-5 prints nothing on stdout
+  [ok] log_level=verbose exits 4
+  [ok] log_level=verbose names the offending key
+  [ok] log_level=verbose prints nothing on stdout
+  [ok] mqtt_host= exits 4
+  [ok] mqtt_host= names the offending key
+  [ok] mqtt_host= prints nothing on stdout
+  [ok] bogus=1 exits 4
+  [ok] bogus=1 names the offending key
+  [ok] bogus=1 prints nothing on stdout
+  [ok] mqtt_port exits 4
+  [ok] mqtt_port names the offending key
+  [ok] mqtt_port prints nothing on stdout
+marker=malformed cases=7
+marker=exit_codes
+  [ok] safe-smoke exits 0
+  [ok] unknown argument exits 2
+  [ok] bad-argument stderr is bounded under 256 bytes
+  [ok] bad argument does not print the safe banner
+  [ok] invalid diagnostic port exits 2
+marker=exit_codes verified=4
+marker=log_level_filter
+  [ok] quiet run exits 0
+  [ok] info startup filtered at error level
+  [ok] warning readonly_block filtered at error level
+marker=filter records=0
+marker=unwritable_destination
+  [ok] unwritable log destination exits 4
+  [ok] unwritable destination reports a log error
+marker=unwritable verified=1
+marker=cleanup orphan_processes=0
+marker=summary failures=0 elapsed_s=1.1
+marker=verdict PASS

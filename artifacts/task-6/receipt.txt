@@ -1,0 +1,172 @@
+TASK-6 RECEIPT
+==============
+Module-1 acceptance evidence package: build/start instructions, a normal
+screenshot, MQTT loss, MQTT reconnect, malformed messages, UDP video and UDP
+drop, and a read-only proof. Every number below is greppable from
+`acceptance-run.log` in this directory or reproducible with the REPRODUCE
+commands.
+
+Host: macOS. Ubuntu: UNVERIFIED (no Ubuntu host, container, or cross-toolchain
+available on this machine). No Ubuntu claim is made anywhere in this receipt.
+
+ONE COMMAND REGENERATES EVERYTHING
+  python3 artifacts/task-6/acceptance_harness.py
+  Result: 30 checks, failures=0, orphan_processes=0, elapsed_s=38.5,
+          marker=verdict PASS.
+  The harness aborts with marker=abort if any prerequisite (mosquitto, the venv
+  python, ffmpeg's H.265 asset, BUILD.md) is missing; it never skips silently.
+
+BUILD AND START INSTRUCTIONS
+  BUILD.md documents the macOS commands, the Ubuntu deployment-candidate path,
+  every config key with defaults, the 4-tier precedence order, the exit-code
+  contract, the command-line flags, and the log-record grammar. Updated in this
+  task to add exit code 5 and the `--screenshot` flag, which previously existed
+  in the binary but were undocumented.
+
+EVIDENCE BY ACCEPTANCE POINT
+  normal operation   screenshot-normal.png (420x150) shows stage=4 quality=valid
+                     freshness=fresh robots=1, plus the read-only banner.
+                     All 6 inbound families seen on the wire (6/6).
+                     wire-normal.log 50237 bytes. Exit 0.
+  mqtt down          screenshot-mqtt-down.png shows stage=missing
+                     freshness=never_received robots=0 and still carries the
+                     read-only banner. Exit 0, so an absent broker degrades
+                     instead of crashing. reconnect_mqtt and readonly_block
+                     both logged; run still logs shutdown.
+  mqtt reconnect     native-reconnect.log contains "MQTT subscribed (readonly)"
+                     TWICE: once against the first broker, once after the broker
+                     is killed and restarted. The terminal process survived the
+                     outage (poll() is None).
+  malformed message  native-malformed.log reports "ignored malformed, stale,
+                     invalid, or unknown MQTT message" for GameStatus and
+                     RobotTelemetry. The terminal stayed alive afterwards.
+                     Payloads include a NUL-prefixed binary blob and an unknown
+                     topic.
+  udp video          video-normal.log reports decoded_frames=57 from the real
+                     H.265 asset over UDP, so the decode path genuinely ran.
+  udp drop           video-events.log records reconnect_udp state=disconnected
+                     with silent_ms and port after the sender is stopped.
+  read-only proof    See READ-ONLY BOUNDARY below.
+  logs and tests     23 structured records across 6 log files, 0 grammar
+                     violations. Debug and Release CTest both 6/6.
+
+READ-ONLY BOUNDARY (the most important claim in this module)
+  Dynamic proof, with the terminal actively CONSUMING telemetry: a wildcard
+  subscriber (`mosquitto_sub -t '#' -v`) watches the whole broker while the
+  simulator publishes and the terminal observes for 10 seconds.
+    wire-readonly.log      41462 bytes
+    inbound families seen  6/6 (GameStatus, RobotDynamicStatus,
+                           RobotModuleStatus, RobotPosition, Event,
+                           RobotTelemetry)
+    CustomControl seen     0
+    CommonCommand seen     0
+    native-readonly.log    "diagnostic snapshot: 1 robot(s); game.stage= 1
+                           event.text= 1"
+  The last two lines are what make this proof meaningful: the terminal decoded
+  real robot state during the same window in which zero control publishes were
+  observed. A silent terminal on a silent wire would prove nothing.
+  Static proof:
+    grep -rniE 'mosquitto_publish|can_send|uart_write' cpp/   # exit 1, no hits
+  Captured in readonly-static-scan.log. No CAN/UART write, no control-topic
+  publish, no gimbal/chassis/launcher/auto-aim logic. Malformed and unknown
+  inbound messages are rejected without any outbound side effect.
+  Binary-level confirmation, added after this package was first written:
+    nm -u build/debug/rm_terminal | grep mosquitto
+  lists init/connect/subscribe/loop/destroy only. mosquitto_publish is absent
+  from the linked binary, so the native terminal cannot publish even if a call
+  site were added without relinking.
+  SCOPE CORRECTION: this section covers the native CMake target only. The legacy
+  Python terminal in the same repo (`./run.sh`) DID have live control publishes
+  wired to UI buttons. They are now hard-blocked in core/mqtt_link.py and proven
+  dead on the wire; see artifacts/final-wave/f3-audit.txt and legacy-run.log.
+
+DEFECTS FOUND AND FIXED IN THIS PASS
+  All four were found by reading the code and the harness against the actual
+  binaries BEFORE the first full run, not by watching it fail.
+  1. Log contradicted exit status. `aboutToQuit` logged a hard-coded exit=0
+     while a failed capture returned 5, so the evidence package could contain a
+     record that disagreed with the process result. The handler now logs the
+     code actually returned. Both paths verified: success logs exit=0, and a
+     capture into an unwritable directory returns 5 and logs exit=5.
+  2. Harness would have crashed. The malformed payload "\x00\x01\x02broken" was
+     passed as an argv string; Python rejects embedded NUL bytes with
+     ValueError, which would have aborted the whole run. Binary payloads now go
+     through stdin via `mosquitto_pub -s`.
+  3. Reconnect check was a false pass. It waited for the substring "MQTT
+     subscribed (readonly)", which the FIRST subscribe already wrote, so the
+     check passed without any reconnect happening. It now requires a second
+     occurrence.
+  4. Read-only proof was vacuous. The scenario never started the simulator, so
+     "no control publish observed" passed against a 0-byte wire. It now runs the
+     simulator and asserts the terminal consumed telemetry while being watched.
+  Also fixed: two runs wrote to the same gui-stdout.log, so the mqtt-down run
+  overwrote the normal run's evidence; and the inbound-family check used a
+  substring test against binary protobuf payloads, which could match by
+  accident. Topic matching is now anchored at line start.
+
+WHY THE HARNESS WAITS 11 SECONDS IN THE NORMAL SCENARIO
+  sim/match_server.py returns stage 1 then stage 3 for the first 10 seconds of
+  elapsed time, and `tick_10hz` returns early outside stage 4, so `Event` is
+  effectively unpublishable before then. Without the wait, the 6/6 family
+  assertion fails for a timing reason rather than a defect. This is a property
+  of the simulator's match schedule, not of the terminal.
+
+NO REGRESSION IN TASK-5 EVIDENCE
+  The shutdown-logging change alters lifecycle semantics, so both task-5
+  harnesses were re-run after it:
+    lifecycle_harness.py  failures=0, orphan_processes=0, verdict PASS
+    events_harness.py     failures=0, orphan_processes=0, verdict PASS
+  Debug and Release were both rebuilt; Release relinked with no warnings.
+
+REPRODUCE
+  cmake --build build/debug && cmake --build build/release
+  python3 artifacts/task-6/acceptance_harness.py
+  python3 artifacts/task-5/lifecycle_harness.py
+  python3 artifacts/task-5/events_harness.py
+  Screenshots are viewable directly: artifacts/task-6/screenshot-normal.png and
+  artifacts/task-6/screenshot-mqtt-down.png.
+
+KNOWN LIMITATIONS
+  - Ubuntu is UNVERIFIED. BUILD.md lists the equivalent commands, but nothing in
+    this package demonstrates an Ubuntu build or run. Plan item F2 must stay
+    open until it is executed on a real Ubuntu host.
+  - RESOLVED: the GUI now constructs a VideoReceiver and renders decoded frames.
+    screenshot-dashboard.png shows the video pane with 196 decoded frames and
+    2946 packets at 0 loss, so live video is proven from the windowed terminal
+    itself, not only from `video_diagnostic`. The GUI binds the UDP port for
+    receive only; it still never calls writeDatagram. It does spawn ffmpeg and
+    write H.265 to that child's stdin, which is local decoding, not an outbound
+    robot path. Re-verified after the change: nm -u shows no mosquitto_publish,
+    no writeDatagram, no CAN/UART symbols, and f3_control_safety.py still reports
+    control_from_terminal=0 with 0 serial/CAN character devices open.
+  - The screenshots are captured under QT_QPA_PLATFORM=offscreen with
+    `QWidget::grab()`. This is deliberate (no recording permission, no desktop
+    content leaked, deterministic in CI) but it is not a photograph of a real
+    desktop window, and the offscreen platform substitutes a fallback font.
+  - RESOLVED: the task-2 placeholder QLabel is replaced by a Dashboard that shows
+    game state, full per-robot telemetry, the video pane, and match events. It is
+    a functional read-only window, not a designed competition UI; layout and
+    visual design remain module-2 work.
+  - MQTT reconnect is proven by killing and restarting the broker under a
+    headless `--diagnostic` run. The windowed GUI path shares the same
+    MqttIntake, but its reconnect was not separately screenshotted.
+  - The harness binds fixed loopback ports (MQTT 3333, UDP 3334). A stale
+    listener on either port makes it fail rather than silently pass; check with
+    `lsof -iTCP:3333 -sTCP:LISTEN`.
+  - `Event` coverage depends on the simulator's randomised match ticks. The
+    11-second wait makes it reliable in practice, not provably deterministic.
+  - The legacy Python control block is a software guard in one file, not a
+    build-level exclusion. No CTest case guards it; re-prove it by running
+    artifacts/final-wave/legacy_control_block.py. The legacy UI still renders
+    control-shaped buttons that now only log a refusal.
+
+STATUS
+  Module-1 acceptance evidence is complete on macOS and awaiting user review.
+  Plan items F1 (macOS regression) and F3 (control-safety audit) are CLOSED:
+  F1 by artifacts/final-wave/f1-acceptance.log, F3 by f3-audit.txt plus
+  f3-run.log and legacy-run.log. F2 (Ubuntu) is UNVERIFIED by the user's
+  decision to defer it and must not be read as passing. F4 requires the user's
+  explicit approval and is not self-certifiable.
+  Last full regression re-run after the legacy control block landed:
+  failures=0, 46 structured records, 0 grammar violations, Debug and Release
+  CTest 6/6, orphan_processes=0, verdict PASS.

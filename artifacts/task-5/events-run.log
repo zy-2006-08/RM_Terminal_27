@@ -1,0 +1,31 @@
+marker=decode_failure
+  [ok] every decode record matches the grammar
+  [ok] missing ffmpeg exits 3
+  [ok] missing ffmpeg emits decode_failure
+  [ok] decode_failure is logged at error level
+  [ok] decode_failure names the reason
+marker=decode_failure records=1 rc=3
+marker=packet_loss
+  [ok] every loss record matches the grammar
+  [ok] 10 percent loss emits packet_loss
+  [ok] packet_loss is rate limited (6 in 6s)
+  [ok] packet_loss is logged at warning level
+  [ok] packet_loss reports a cumulative counter
+marker=packet_loss records=6 window_s=6
+marker=reconnect_udp
+  [ok] every reconnect record matches the grammar
+  [ok] sender stop emits reconnect_udp
+  [ok] reconnect_udp reports the disconnected state
+  [ok] reconnect_udp reports the silence duration
+marker=reconnect_udp records=1
+marker=reconnect_mqtt
+  [ok] every mqtt record matches the grammar
+  [ok] unreachable broker exits 3
+  [ok] unreachable broker emits reconnect_mqtt
+  [ok] reconnect_mqtt is logged at error level
+  [ok] reconnect_mqtt names the host
+  [ok] a failed transport still logs shutdown
+marker=reconnect_mqtt records=1 rc=3
+marker=cleanup orphan_processes=0
+marker=summary failures=0 elapsed_s=14.5
+marker=verdict PASS

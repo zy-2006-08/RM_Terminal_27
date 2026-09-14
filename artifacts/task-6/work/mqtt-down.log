@@ -1,0 +1,20 @@
+ts=2026-09-14T13:35:34.163Z level=info event=startup mode=terminal platform=macOS mqtt_host=127.0.0.1 mqtt_port=3333 udp_port=3334 stale_window_ms=500
+ts=2026-09-14T13:35:34.164Z level=warning event=reconnect_mqtt state=unavailable host=127.0.0.1 port=3333
+ts=2026-09-14T13:35:34.164Z level=warning event=readonly_block reason=mqtt_unavailable transport=none
+ts=2026-09-14T13:35:34.859Z level=info event=shutdown mode=terminal exit=0
+ts=2026-09-14T13:38:17.106Z level=info event=startup mode=terminal platform=macOS mqtt_host=127.0.0.1 mqtt_port=3333 udp_port=3334 stale_window_ms=500
+ts=2026-09-14T13:38:17.107Z level=warning event=reconnect_mqtt state=unavailable host=127.0.0.1 port=3333
+ts=2026-09-14T13:38:17.107Z level=warning event=readonly_block reason=mqtt_unavailable transport=none
+ts=2026-09-14T13:38:17.807Z level=info event=shutdown mode=terminal exit=0
+ts=2026-09-14T13:51:02.191Z level=info event=startup mode=terminal platform=macOS mqtt_host=127.0.0.1 mqtt_port=3333 udp_port=3334 stale_window_ms=500
+ts=2026-09-14T13:51:02.192Z level=warning event=reconnect_mqtt state=unavailable host=127.0.0.1 port=3333
+ts=2026-09-14T13:51:02.192Z level=warning event=readonly_block reason=mqtt_unavailable transport=none
+ts=2026-09-14T13:51:02.890Z level=info event=shutdown mode=terminal exit=0
+ts=2026-09-14T14:16:23.260Z level=info event=startup mode=terminal platform=macOS mqtt_host=127.0.0.1 mqtt_port=3333 udp_port=3334 stale_window_ms=500
+ts=2026-09-14T14:16:23.261Z level=warning event=reconnect_mqtt state=unavailable host=127.0.0.1 port=3333
+ts=2026-09-14T14:16:23.261Z level=warning event=readonly_block reason=mqtt_unavailable transport=none
+ts=2026-09-14T14:16:23.954Z level=info event=shutdown mode=terminal exit=0
+ts=2026-09-14T14:36:17.100Z level=info event=startup mode=terminal platform=macOS mqtt_host=127.0.0.1 mqtt_port=3333 udp_port=3334 stale_window_ms=500
+ts=2026-09-14T14:36:17.101Z level=warning event=reconnect_mqtt state=unavailable host=127.0.0.1 port=3333
+ts=2026-09-14T14:36:17.101Z level=warning event=readonly_block reason=mqtt_unavailable transport=none
+ts=2026-09-14T14:36:17.836Z level=info event=shutdown mode=terminal exit=0

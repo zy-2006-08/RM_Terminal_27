@@ -1,0 +1,7 @@
+marker=legacy_control_block
+  [ok] driver exercised every control entry point (rc=0)
+  [ok] every control call returned False (blocked)
+  [ok] each blocked attempt was reported (5/5)
+  [ok] zero control messages on the wire (saw none)
+marker=legacy_summary failures=0
+marker=legacy_verdict PASS

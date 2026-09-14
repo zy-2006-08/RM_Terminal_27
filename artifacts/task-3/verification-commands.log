@@ -1,0 +1,18 @@
+task 3 verification commands and results
+
+cmake -S . -B build/task3-debug-fresh -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+cmake --build build/task3-debug-fresh --parallel 2
+ctest --test-dir build/task3-debug-fresh --output-on-failure
+result: build PASS; 4/4 tests PASS; 1.63 sec
+
+cmake -S . -B build/task3-release-fresh -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+cmake --build build/task3-release-fresh --parallel 2
+ctest --test-dir build/task3-release-fresh --output-on-failure
+result: build PASS; 4/4 tests PASS; 1.47 sec
+
+../venv/bin/python artifacts/task-3/run_integration.py | tee artifacts/task-3/integration-result.log
+result: exit=0; six_topics=PASS; malformed_recovery=PASS; reconnect_recovery=PASS; native_publish=0
+
+owned process cleanup: broker, simulator, native diagnostic, subscriber stopped in finally; no remaining owned processes after run.
+
+lsp_diagnostics cpp/main.cpp: clang standalone reported false Qt include/configuration errors because no root compile_commands configuration is installed; authoritative CMake Debug/Release compilation and CTest both passed.

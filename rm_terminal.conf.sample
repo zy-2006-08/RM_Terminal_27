@@ -1,0 +1,36 @@
+# RM Terminal read-only simulation configuration (sample).
+#
+# Copy to rm_terminal.conf, or point at it explicitly:
+#   build/debug/rm_terminal --config path/to/rm_terminal.conf
+#   RM_TERMINAL_CONFIG=path/to/rm_terminal.conf build/debug/rm_terminal
+#
+# Precedence, highest first:
+#   1. --config <path>
+#   2. RM_TERMINAL_CONFIG
+#   3. ./rm_terminal.conf
+#   4. built-in defaults shown below
+#
+# A missing file is not an error; the defaults below are used. A file that
+# exists but has an unknown key, an empty value, a non-positive integer, or an
+# unknown log level fails loudly with exit code 4.
+#
+# Syntax: key=value, one per line. Blank lines and lines starting with # are
+# ignored. Whitespace around keys and values is trimmed.
+
+# MQTT broker host for the local simulator.
+mqtt_host=127.0.0.1
+
+# MQTT broker port. 2026 protocol baseline is 3333.
+mqtt_port=3333
+
+# H.265 video UDP listen port. 2026 protocol baseline is 3334.
+udp_port=3334
+
+# Field freshness window in milliseconds; a field older than this reports stale.
+stale_window_ms=500
+
+# Minimum level written to the log: debug, info, warning, or error.
+log_level=info
+
+# Log file path. Records append across restarts.
+log_destination=rm_terminal.log

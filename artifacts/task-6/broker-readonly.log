@@ -1,0 +1,27 @@
+1789396590: Info: running mosquitto as user: zy.
+1789396590: mosquitto version 2.1.2 starting
+1789396590: Using default config.
+1789396590: Bridge support available.
+1789396590: Persistence support available.
+1789396590: TLS support available.
+1789396590: TLS-PSK support available.
+1789396590: Websockets support available.
+1789396590: Starting in local only mode. Connections will only be possible from clients running on this machine.
+1789396590: Create a configuration file which defines a listener to allow remote access.
+1789396590: For more details see https://mosquitto.org/documentation/authentication-methods/
+1789396590: Opening ipv4 listen socket on port 3333.
+1789396590: Opening ipv6 listen socket on port 3333.
+1789396590: mosquitto version 2.1.2 running
+1789396591: New connection from 127.0.0.1:49250 on port 3333.
+1789396591: New client connected from 127.0.0.1:49250 as auto-D70DC466-628C-EAAF-B12B-62039FB3F3DA (p4, c1, k60).
+1789396591: New connection from 127.0.0.1:49251 on port 3333.
+1789396591: New client connected from 127.0.0.1:49251 as rm-terminal-readonly (p4, c1, k30).
+1789396591: New connection from 127.0.0.1:49252 on port 3333.
+1789396591: New client connected from 127.0.0.1:49252 as sim-server-3 (p4, c1, k30).
+1789396601: Client rm-terminal-readonly [127.0.0.1:49251] disconnected: connection closed by client.
+1789396601: Client rm-terminal-readonly [127.0.0.1:49251] disconnected: connection closed by client.
+1789396601: Client sim-server-3 [127.0.0.1:49252] disconnected: connection closed by client.
+1789396601: Client sim-server-3 [127.0.0.1:49252] disconnected: connection closed by client.
+1789396601: Client auto-D70DC466-628C-EAAF-B12B-62039FB3F3DA [127.0.0.1:49250] disconnected.
+1789396601: Client auto-D70DC466-628C-EAAF-B12B-62039FB3F3DA [127.0.0.1:49250] disconnected: connection closed by client.
+1789396602: mosquitto version 2.1.2 terminating

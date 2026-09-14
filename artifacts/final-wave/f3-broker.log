@@ -1,0 +1,55 @@
+1789396627: Info: running mosquitto as user: zy.
+1789396627: mosquitto version 2.1.2 starting
+1789396627: Using default config.
+1789396627: Bridge support available.
+1789396627: Persistence support available.
+1789396627: TLS support available.
+1789396627: TLS-PSK support available.
+1789396627: Websockets support available.
+1789396627: Starting in local only mode. Connections will only be possible from clients running on this machine.
+1789396627: Create a configuration file which defines a listener to allow remote access.
+1789396627: For more details see https://mosquitto.org/documentation/authentication-methods/
+1789396627: Opening ipv4 listen socket on port 3333.
+1789396627: Opening ipv6 listen socket on port 3333.
+1789396627: mosquitto version 2.1.2 running
+1789396628: New connection from 127.0.0.1:49261 on port 3333.
+1789396628: New client connected from 127.0.0.1:49261 as auto-B8015D54-F063-006E-96D9-87261EBC353E (p4, c1, k60).
+1789396628: New connection from 127.0.0.1:49263 on port 3333.
+1789396628: New client connected from 127.0.0.1:49263 as rm-terminal-readonly (p4, c1, k30).
+1789396628: New connection from 127.0.0.1:49264 on port 3333.
+1789396628: New client connected from 127.0.0.1:49264 as sim-server-3 (p4, c1, k30).
+1789396628: New connection from 127.0.0.1:49267 on port 3333.
+1789396628: New client connected from 127.0.0.1:49267 as auto-709EEF8B-FC23-B53B-946F-CD912BDA8080 (p4, c1, k60).
+1789396628: Client auto-709EEF8B-FC23-B53B-946F-CD912BDA8080 [127.0.0.1:49267] disconnected.
+1789396628: Client auto-709EEF8B-FC23-B53B-946F-CD912BDA8080 [127.0.0.1:49267] disconnected: connection closed by client.
+1789396628: New connection from 127.0.0.1:49268 on port 3333.
+1789396628: New client connected from 127.0.0.1:49268 as auto-87C2B9A7-3752-9A0A-50D0-88F1A743225A (p4, c1, k60).
+1789396628: Client auto-87C2B9A7-3752-9A0A-50D0-88F1A743225A [127.0.0.1:49268] disconnected.
+1789396628: Client auto-87C2B9A7-3752-9A0A-50D0-88F1A743225A [127.0.0.1:49268] disconnected: connection closed by client.
+1789396628: New connection from 127.0.0.1:49269 on port 3333.
+1789396628: New client connected from 127.0.0.1:49269 as auto-831FCD6E-2AAD-1106-D2EA-BAEB4ADD5233 (p4, c1, k60).
+1789396628: Client auto-831FCD6E-2AAD-1106-D2EA-BAEB4ADD5233 [127.0.0.1:49269] disconnected.
+1789396628: Client auto-831FCD6E-2AAD-1106-D2EA-BAEB4ADD5233 [127.0.0.1:49269] disconnected: connection closed by client.
+1789396628: New connection from 127.0.0.1:49270 on port 3333.
+1789396628: New client connected from 127.0.0.1:49270 as auto-651D52EE-2B6E-FD63-896D-714E5D30817D (p4, c1, k60).
+1789396628: Client auto-651D52EE-2B6E-FD63-896D-714E5D30817D [127.0.0.1:49270] disconnected.
+1789396628: Client auto-651D52EE-2B6E-FD63-896D-714E5D30817D [127.0.0.1:49270] disconnected: connection closed by client.
+1789396629: New connection from 127.0.0.1:49271 on port 3333.
+1789396629: New client connected from 127.0.0.1:49271 as auto-CDD505B0-EB1C-0649-748F-EF9290A2B84D (p4, c1, k60).
+1789396629: Client auto-CDD505B0-EB1C-0649-748F-EF9290A2B84D [127.0.0.1:49271] disconnected.
+1789396629: Client auto-CDD505B0-EB1C-0649-748F-EF9290A2B84D [127.0.0.1:49271] disconnected: connection closed by client.
+1789396629: New connection from 127.0.0.1:49272 on port 3333.
+1789396629: New client connected from 127.0.0.1:49272 as auto-B1DECFBD-3783-8B4A-DFA4-E424A0A49C6F (p4, c1, k60).
+1789396629: Client auto-B1DECFBD-3783-8B4A-DFA4-E424A0A49C6F [127.0.0.1:49272] disconnected.
+1789396629: Client auto-B1DECFBD-3783-8B4A-DFA4-E424A0A49C6F [127.0.0.1:49272] disconnected: connection closed by client.
+1789396629: New connection from 127.0.0.1:49273 on port 3333.
+1789396629: New client connected from 127.0.0.1:49273 as auto-53020057-858D-5A51-A7DE-02DE7C4098A8 (p4, c1, k60).
+1789396629: Client auto-53020057-858D-5A51-A7DE-02DE7C4098A8 [127.0.0.1:49273] disconnected.
+1789396629: Client auto-53020057-858D-5A51-A7DE-02DE7C4098A8 [127.0.0.1:49273] disconnected: connection closed by client.
+1789396641: Client rm-terminal-readonly [127.0.0.1:49263] disconnected: connection closed by client.
+1789396641: Client rm-terminal-readonly [127.0.0.1:49263] disconnected: connection closed by client.
+1789396641: Client sim-server-3 [127.0.0.1:49264] disconnected: connection closed by client.
+1789396641: Client sim-server-3 [127.0.0.1:49264] disconnected: connection closed by client.
+1789396642: Client auto-B8015D54-F063-006E-96D9-87261EBC353E [127.0.0.1:49261] disconnected.
+1789396642: Client auto-B8015D54-F063-006E-96D9-87261EBC353E [127.0.0.1:49261] disconnected: connection closed by client.
+1789396642: mosquitto version 2.1.2 terminating

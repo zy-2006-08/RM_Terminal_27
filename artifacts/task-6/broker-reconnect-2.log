@@ -1,0 +1,19 @@
+1789396580: Info: running mosquitto as user: zy.
+1789396580: mosquitto version 2.1.2 starting
+1789396580: Using default config.
+1789396580: Bridge support available.
+1789396580: Persistence support available.
+1789396580: TLS support available.
+1789396580: TLS-PSK support available.
+1789396580: Websockets support available.
+1789396580: Starting in local only mode. Connections will only be possible from clients running on this machine.
+1789396580: Create a configuration file which defines a listener to allow remote access.
+1789396580: For more details see https://mosquitto.org/documentation/authentication-methods/
+1789396580: Opening ipv4 listen socket on port 3333.
+1789396580: Opening ipv6 listen socket on port 3333.
+1789396580: mosquitto version 2.1.2 running
+1789396580: New connection from 127.0.0.1:49245 on port 3333.
+1789396580: New client connected from 127.0.0.1:49245 as rm-terminal-readonly (p4, c1, k30).
+1789396580: Client rm-terminal-readonly [127.0.0.1:49245] disconnected: connection closed by client.
+1789396580: Client rm-terminal-readonly [127.0.0.1:49245] disconnected: connection closed by client.
+1789396580: mosquitto version 2.1.2 terminating

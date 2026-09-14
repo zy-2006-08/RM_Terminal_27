@@ -1,0 +1,159 @@
+TASK-5 RECEIPT
+==============
+Structured logging, external configuration, and application lifecycle.
+Every number below is greppable from `lifecycle-run.log` or `events-run.log`
+in this directory, or reproducible with the commands in REPRODUCE.
+
+Host: macOS. Ubuntu: UNVERIFIED (no Ubuntu host or cross-toolchain available).
+
+BUILD AND TESTS
+  Debug   : cold CMake configure + build, ZERO warnings, CTest 6/6 passed.
+  Release : cold CMake configure + build, ZERO warnings, CTest 6/6 passed.
+  Verified by deleting both trees and rebuilding from scratch, because an
+  incremental build relinks nothing and therefore hides linker warnings:
+    rm -rf build/debug build/release
+    cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug && cmake --build build/debug
+    cmake --build build/debug 2>&1 | grep -inE 'warning|error'   # prints nothing
+  New test: `domain_state` now covers StaleReporter transition semantics.
+  Runtime : lifecycle_harness.py ~1.1s, events_harness.py ~14.5s. Both exit 0.
+            events_harness.py drives real UDP traffic and ffmpeg, so allow
+            2 minutes; a 5-minute expiry indicates an environment problem.
+
+CORRECTION TO THE TASK-4 RECEIPT
+  The task-4 receipt states that CMake configure emits a third-party
+  "Could NOT find WrapVulkanHeaders (missing: Vulkan_INCLUDE_DIR)" warning.
+  That does NOT reproduce on a cold configure of either build type on this
+  host, so this receipt does not repeat the claim. The only warning that ever
+  appeared was the duplicate-library linker warning, now fixed (see DEFECT).
+
+DEFECT FOUND AND FIXED IN THIS PASS
+  `ld: warning: ignoring duplicate libraries: 'libterminal_proto.a'`
+  Cause: rm_terminal listed terminal_proto and terminal_logging explicitly
+  even though both already arrive transitively through terminal_presentation
+  (-> terminal_domain -> terminal_proto, all PUBLIC), so the archive landed on
+  the link line twice. Fixed by linking only the direct dependency:
+    target_link_libraries(rm_terminal PRIVATE terminal_presentation
+                          ${MOSQUITTO_LIBRARY} Qt6::Widgets)
+  Transitive linkage confirmed intact:
+    otool -L build/debug/rm_terminal | grep -iE 'mosquitto|QtWidgets|QtCore'
+  The build is now warning-free in both configurations.
+
+SEVEN EVENT CLASSES, EACH WITH RE-RUNNABLE EVIDENCE
+  The plan requires timestamped records for startup, shutdown, reconnect,
+  decode failure, stale data, packet loss, and read-only block. Where the
+  evidence lives:
+    startup        lifecycle-run.log   5 records over 5 restarts
+    shutdown       lifecycle-run.log   5 records over 5 restarts
+    readonly_block lifecycle-run.log   5 records over 5 restarts
+    reconnect_mqtt events-run.log      1 record, rc=3, unreachable broker
+    reconnect_udp  events-run.log      1 record, state=disconnected + silent_ms
+    decode_failure events-run.log      1 record, reason=ffmpeg_not_found, rc=3
+    packet_loss    events-run.log      6 records under 10% loss over 6s
+    stale_data     CTest `domain_state`, deterministic, no sockets required
+  Confirm with:
+    grep -E 'marker=(reconnect_mqtt|reconnect_udp|decode_failure|packet_loss)' events-run.log
+    grep -E '\[ok\] 5 (startup|shutdown|readonly_block) records' lifecycle-run.log
+  Both harnesses write the terminal's own log files into a temp directory that
+  they delete on exit, so the committed logs contain the ASSERTIONS over those
+  records rather than the raw `event=` lines. Re-run a harness to regenerate
+  them, or point log_destination at a path you keep:
+    ./build/debug/rm_terminal --config <conf with log_destination=/tmp/x.log> --safe-smoke
+    grep -c 'event=startup' /tmp/x.log
+  Note on method: earlier ad-hoc probes for the last four classes were deleted
+  after use, which left those acceptance points unproven. They are now covered
+  by committed harnesses and a CTest test, so they can be re-run on demand.
+
+RECORD GRAMMAR
+  ts=<ISO8601 UTC with ms> level=<debug|info|warning|error> event=<token> k=v ...
+  Both harnesses assert every emitted line against that grammar, not just the
+  lines they care about. lifecycle-run.log asserts it once across all 15 records;
+  events-run.log asserts it once per scenario, so 4 hits:
+    grep -cE 'matches the (record )?grammar' lifecycle-run.log events-run.log
+  Timestamps are asserted monotonically ordered across 5 restarts, and restarts
+  append rather than truncate.
+
+LIFECYCLE (lifecycle-run.log: 57 checks, 0 failures, verdict PASS)
+  repeated_cycles    5 consecutive start/exit cycles, each exit 0 with the
+                     read-only banner; 15 records total, first=startup,
+                     last=shutdown, appended not truncated.
+  config_precedence  4 tiers proven in order:
+                     --config > RM_TERMINAL_CONFIG > ./rm_terminal.conf > defaults
+  malformed_config   7 cases, each exit 4, each naming the offending key, each
+                     printing nothing on stdout: mqtt_port=abc, mqtt_port=0,
+                     stale_window_ms=-5, log_level=verbose, mqtt_host=,
+                     bogus=1, and a line with no '='.
+  log_level_filter   at log_level=error, info startup and warning readonly_block
+                     are both suppressed (records=0).
+  unwritable_dest    unwritable log_destination exits 4 and reports a log error
+                     rather than starting without logging.
+  cleanup            orphan_processes=0
+
+EXIT-CODE CONTRACT (unchanged from tasks 1-4, re-asserted here)
+  0 success
+  2 malformed command-line arguments; stderr bounded (<=256 bytes), no banner
+  3 transport start failure
+  4 configuration or log-destination failure
+  A MISSING config file is deliberately NOT an error: defaults apply and the
+  process starts, so a fresh checkout runs with no config file. A config file
+  that EXISTS but does not parse is always a loud exit 4.
+
+CONFIGURATION
+  Keys and defaults are documented in BUILD.md and rm_terminal.conf.sample:
+    mqtt_host=127.0.0.1  mqtt_port=3333  udp_port=3334
+    stale_window_ms=500  log_level=info  log_destination=rm_terminal.log
+  Defaults mirror the 2026 local-simulation baseline so the native terminal and
+  the Python simulator agree with no config file present. No source edit is
+  required to change any of them, which is the task-5 acceptance criterion.
+
+STALE-DATA SEMANTICS
+  A field aging into Stale logs once per TRANSITION, not once per snapshot. The
+  GUI inspects on a 250ms timer, so per-snapshot logging would bury every other
+  event during a stall. `domain_state` asserts: NeverReceived is not reported as
+  stale, a fresh field is not reported, the transition logs exactly one record
+  naming the group and stale count, repeated inspections of an unchanged stale
+  set stay silent, and a group going stale later logs a new transition.
+
+PACKET-LOSS SAMPLING
+  packet_loss is capped at one record per second. Under 10% loss over a 6-second
+  window the harness observed 6 records and asserts <= 7, proving the cap holds;
+  without it a lossy 20fps stream would emit thousands of records per second.
+
+CONCURRENCY
+  The file mutex and the sink mutex are separate. The composition-root sink calls
+  back into StructuredLog::write and QMutex is not recursive, so holding the file
+  mutex across the sink invocation would self-deadlock. config_test covers the
+  sink path, double-open, double-close, and post-close writes.
+
+READ-ONLY BOUNDARY
+  Re-audited after this task's edits. No CAN/UART write, no MQTT CustomControl
+  or CommonCommand publish, no gimbal/chassis/launcher/auto-aim logic.
+  The logger has NO network sink: its only destination is a local file, which is
+  why `--log` takes a path and not a host. Operator banners go to stderr via
+  qInfo/qCritical. Verify with:
+    grep -rniE 'mosquitto_publish|can_send|uart_write' cpp/          # no hits
+    grep -rniE 'QTcpSocket|QUdpSocket|QNetworkAccessManager' cpp/logging.cpp
+  The only matches for control-shaped names in cpp/ are inbound read-only
+  telemetry field names and one test asserting the CustomControl topic is
+  REJECTED (cpp/intake_test.cpp).
+
+REPRODUCE
+  rm -rf build/debug build/release
+  cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug && cmake --build build/debug
+  ctest --test-dir build/debug --output-on-failure
+  cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release && cmake --build build/release
+  ctest --test-dir build/release --output-on-failure
+  python3 artifacts/task-5/lifecycle_harness.py
+  python3 artifacts/task-5/events_harness.py
+
+KNOWN LIMITATIONS
+  - Ubuntu is unverified on this host. BUILD.md documents the equivalent
+    commands; no Ubuntu claim is made anywhere in this receipt.
+  - events_harness.py requires ffmpeg on PATH and the bundled H.265 asset. It
+    binds ports 39311-39313 and 39399 on loopback and skips nothing silently:
+    a missing binary or asset aborts with marker=abort.
+  - reconnect_mqtt is proven via the start-failure path (no broker reachable).
+    Reconnection after an established session drops is exercised by the task-3
+    broker-restart evidence, not re-proven here.
+  - The GUI path does not yet construct a VideoReceiver, so udp_port is
+    configured and logged but the live video events are proven through
+    video_diagnostic rather than the windowed terminal.

@@ -1,0 +1,48 @@
+=== F1 ACCEPTANCE REGRESSION (fresh trees) ===
+marker=normal_operation
+  [ok] simulator publishes inbound telemetry
+  [ok] terminal starts against a live broker and exits 0
+  [ok] normal screenshot written
+  [ok] terminal reports a read-only subscription
+  [ok] all six inbound families observed on the wire (6/6, missing=[])
+  [ok] normal run logs startup
+  [ok] normal run logs shutdown
+  [ok] a healthy broker logs no reconnect_mqtt
+marker=normal topics=6 records=7
+marker=mqtt_down
+  [ok] terminal survives an absent broker and exits 0
+  [ok] mqtt-down screenshot written
+  [ok] absent broker logs reconnect_mqtt
+  [ok] absent broker logs readonly_block
+  [ok] mqtt-down run still logs shutdown
+marker=mqtt_down records=12
+marker=mqtt_reconnect
+  [ok] terminal subscribes to the live broker
+  [ok] terminal resubscribes after the broker restarts
+  [ok] terminal survived the broker outage
+marker=mqtt_reconnect verified=1
+marker=malformed_message
+  [ok] terminal subscribed before the malformed publish
+  [ok] malformed payload is reported and ignored
+  [ok] terminal stayed alive after malformed input
+marker=malformed_message verified=1
+marker=udp_video
+  [ok] H.265 frames decoded from the UDP stream (max=58)
+  [ok] stopping the sender logs reconnect_udp
+marker=udp_video decoded_max=58 records=3
+marker=readonly_proof
+  [ok] terminal subscribed for the read-only observation window
+  [ok] terminal consumed live telemetry while observed (6/6 families)
+  [ok] terminal decoded robot state during the read-only window
+  [ok] no CustomControl publish observed on the wire
+  [ok] no CommonCommand publish observed on the wire
+  [ok] no publish/CAN/UART write call exists in cpp/
+marker=readonly_proof control_publishes=0
+marker=logs_and_tests
+  [ok] every structured record matches the grammar (34 records)
+  [ok] debug CTest suite passes
+  [ok] release CTest suite passes
+marker=logs_and_tests records=34 violations=0
+marker=cleanup orphan_processes=0
+marker=summary failures=0 elapsed_s=38.4
+marker=verdict PASS

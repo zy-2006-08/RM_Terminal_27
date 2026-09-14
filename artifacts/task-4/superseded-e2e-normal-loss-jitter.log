@@ -1,0 +1,16 @@
+port=39134
+receiver_pid=36684
+sender_pid=36692
+receiver:
+packets= 1089 completed= 62 decoded= true failure= "decoder_exit=255"
+
+sender:
+[video_sender] 372 帧 -> udp://127.0.0.1:39134  fps=30.0 loss=2.0% 循环播放，Ctrl-C 退出
+[video_sender] 已发 60 帧 792 包，丢弃 14
+
+[video_sender] 结束：1179 包已发送，22 包主动丢弃
+
+Malformed packet injection: protocol unit regression covers <8-byte datagram and stale partial frame.
+Duplicate/out-of-order: named native regression passes.
+Restart recovery: diagnostic stop path closes UDP socket and terminates/kills decoder within bounded timeout; live restart harness pending because normal receiver run did not complete successfully.
+Ubuntu: unverified; execution performed on macOS only.

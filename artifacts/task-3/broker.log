@@ -1,0 +1,15 @@
+1789362748: Info: running mosquitto as user: zy.
+1789362748: mosquitto version 2.1.2 starting
+1789362748: Using default config.
+1789362748: Bridge support available.
+1789362748: Persistence support available.
+1789362748: TLS support available.
+1789362748: TLS-PSK support available.
+1789362748: Websockets support available.
+1789362748: Starting in local only mode. Connections will only be possible from clients running on this machine.
+1789362748: Create a configuration file which defines a listener to allow remote access.
+1789362748: For more details see https://mosquitto.org/documentation/authentication-methods/
+1789362748: Opening ipv4 listen socket on port 3333.
+1789362748: Opening ipv6 listen socket on port 3333.
+1789362748: mosquitto version 2.1.2 running
+1789362751: mosquitto version 2.1.2 terminating

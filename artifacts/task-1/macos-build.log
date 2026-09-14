@@ -1,0 +1,29 @@
+-- The CXX compiler identification is AppleClang 21.0.0.21000101
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE
+-- Performing Test HAVE_STDATOMIC
+-- Performing Test HAVE_STDATOMIC - Success
+-- Found WrapAtomic: TRUE
+-- Found OpenGL: /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/OpenGL.framework
+-- Found WrapOpenGL: TRUE
+-- Could NOT find WrapVulkanHeaders (missing: Vulkan_INCLUDE_DIR) 
+-- Configuring done (1.2s)
+-- Generating done (0.0s)
+-- Build files have been written to: /Users/zy/RMGF/terminal/build/macos
+[ 50%] Building CXX object CMakeFiles/rm_terminal.dir/cpp/main.cpp.o
+[100%] Linking CXX executable rm_terminal
+[100%] Built target rm_terminal
+Test project /Users/zy/RMGF/terminal/build/macos
+    Start 1: safe_start
+1/1 Test #1: safe_start .......................   Passed    4.64 sec
+
+100% tests passed out of 1
+
+Total Test time (real) =   4.65 sec
+RM terminal: READ-ONLY SIMULATION SAFE; platform= macOS

@@ -1,0 +1,34 @@
+$ ../venv/bin/python -m tests.test_reassembly
+[RUN ] test_duplicates_ignored
+  重复包被忽略 4 个
+[PASS] test_duplicates_ignored
+
+[RUN ] test_frame_id_wraparound
+  帧号 65535 -> 0 回绕正常
+[PASS] test_frame_id_wraparound
+
+[RUN ] test_in_order_roundtrip
+  完整还原 40000 字节
+[PASS] test_in_order_roundtrip
+
+[RUN ] test_missing_fragment_drops_frame
+  缺片帧被丢弃，丢帧率 50.0%
+[PASS] test_missing_fragment_drops_frame
+
+[RUN ] test_out_of_order
+  乱序还原成功，乱序计数 0
+[PASS] test_out_of_order
+
+[RUN ] test_packet_size_within_limit
+  分片数 36，最大包 1400 字节
+[PASS] test_packet_size_within_limit
+
+[RUN ] test_random_packet_loss
+  3% 丢包下：完整 42 帧，丢弃 17 帧，丢帧率 28.8%
+[PASS] test_random_packet_loss
+
+[RUN ] test_stale_timeout
+  超时丢帧 1 帧
+[PASS] test_stale_timeout
+
+全部 8 项测试通过

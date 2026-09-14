@@ -1,0 +1,15 @@
++zsh:1> cmake -S . -B build/macos
+-- Could NOT find WrapVulkanHeaders (missing: Vulkan_INCLUDE_DIR) 
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /Users/zy/RMGF/terminal/build/macos
++zsh:1> cmake --build build/macos --target domain_test
+[ 50%] Building CXX object CMakeFiles/domain_test.dir/cpp/domain_test.cpp.o
+/Users/zy/RMGF/terminal/cpp/domain_test.cpp:1:10: fatal error: 'store.h' file not found
+    1 | #include "store.h"
+      |          ^~~~~~~~~
+1 error generated.
+make[3]: *** [CMakeFiles/domain_test.dir/cpp/domain_test.cpp.o] Error 1
+make[2]: *** [CMakeFiles/domain_test.dir/all] Error 2
+make[1]: *** [CMakeFiles/domain_test.dir/rule] Error 2
+make: *** [domain_test] Error 2

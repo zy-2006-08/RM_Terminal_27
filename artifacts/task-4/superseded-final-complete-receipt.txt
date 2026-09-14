@@ -1,0 +1,11 @@
+FINAL TASK-4 RECEIPT
+Host: macOS; Ubuntu: unverified
+Debug CMake/build + CTest: 5/5 passed
+Release CMake/build + CTest: 5/5 passed
+Normal/restart harness: Debug diagnostic port 39156, receiver pid 43201; FFmpeg processes 43202,43219,43227; simulator asset assets/sim_feed.h265; 2% loss/1ms jitter then 10% loss/1ms jitter; completed=108; decoded_frames=11; decoder_failures=0; recoveries=3; healthy snapshots failure="" and state online/waiting.
+Missing ffmpeg: release diagnostic rc=3, failure=ffmpeg_not_found.
+Invalid bind: 192.0.2.1, rc=3, failure=udp_bind_failed.
+Truncated H.265 via UDP: port 39159, pid 43333, one valid 128-byte protocol frame carrying truncated asset bytes; completed=1; decoded_frames=0; decoder_failures=0; failure=""; bounded nonfatal handling.
+Malformed UDP: port 39158, malformed=1, process remained alive through bounded run.
+Impossible fragment index and stale partial: named native video_protocol test passed.
+Cleanup: all harness children reaped; pgrep found no ffmpeg/video_sender/video_diagnostic processes.

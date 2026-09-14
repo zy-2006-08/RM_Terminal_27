@@ -1,0 +1,22 @@
++zsh:1> cmake -S . -B build/macos
+-- Could NOT find WrapVulkanHeaders (missing: Vulkan_INCLUDE_DIR) 
+-- Configuring done (0.3s)
+-- Generating done (0.0s)
+-- Build files have been written to: /Users/zy/RMGF/terminal/build/macos
++zsh:1> cmake --build build/macos
+[ 50%] Built target rm_terminal
+[100%] Built target telemetry_test
++zsh:1> ctest --test-dir build/macos --output-on-failure
+Test project /Users/zy/RMGF/terminal/build/macos
+    Start 1: telemetry_state
+1/3 Test #1: telemetry_state ..................   Passed    0.05 sec
+    Start 2: reject_unknown_args
+2/3 Test #2: reject_unknown_args ..............   Passed    0.07 sec
+    Start 3: safe_start
+3/3 Test #3: safe_start .......................   Passed    0.01 sec
+
+100% tests passed out of 3
+
+Total Test time (real) =   0.13 sec
++zsh:1> build/macos/rm_terminal --safe-smoke
+RM terminal: READ-ONLY SIMULATION SAFE; platform= macOS

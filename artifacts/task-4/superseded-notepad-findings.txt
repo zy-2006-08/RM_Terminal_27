@@ -1,0 +1,16 @@
+Task 4 findings: native reassembly preserves 8-byte BE header, 1392 payload, 0.30s timeout, cache 8, wrap-safe IDs.
+FFmpeg is discovered by configurable executable argument; no macOS-only path is required.
+Normal simulator run decoded 62 frames on macOS.
+Ubuntu remains unverified.
+Task-4 final findings: stderr is observable via decoder_stderr_bytes but no longer poisons healthy playback.
+Debug and Release both pass 5/5 CTest.
+Invalid bind address reliably exercises UDP bind failure on macOS.
+Normal simulator decode and sender restart produced completed frames before/after restart.
+Remaining blockers: loss/restart can enter decoder_no_frame_timeout; dedicated truncated H.265 payload injection is missing.
+Ubuntu remains unverified.
+Final task-4 acceptance passed on macOS.
+Recoverable no-frame starvation increments recoveries and clears failure after restart; fatal startup/process/write/backpressure errors remain failures.
+FFmpeg stderr is observable but does not poison healthy playback.
+Truncated H.265 was injected through UDP reassembly and survived nonfatally.
+Debug and Release CTest both 5/5.
+Ubuntu execution remains unverified.

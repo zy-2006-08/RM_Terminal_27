@@ -1,0 +1,5 @@
+ts=2026-09-14T13:35:38.776Z level=info event=startup mode=diagnostic platform=macOS mqtt_host=127.0.0.1 mqtt_port=3333 udp_port=3334 stale_window_ms=500
+ts=2026-09-14T13:38:21.687Z level=info event=startup mode=diagnostic platform=macOS mqtt_host=127.0.0.1 mqtt_port=3333 udp_port=3334 stale_window_ms=500
+ts=2026-09-14T13:51:06.778Z level=info event=startup mode=diagnostic platform=macOS mqtt_host=127.0.0.1 mqtt_port=3333 udp_port=3334 stale_window_ms=500
+ts=2026-09-14T14:16:27.881Z level=info event=startup mode=diagnostic platform=macOS mqtt_host=127.0.0.1 mqtt_port=3333 udp_port=3334 stale_window_ms=500
+ts=2026-09-14T14:36:21.762Z level=info event=startup mode=diagnostic platform=macOS mqtt_host=127.0.0.1 mqtt_port=3333 udp_port=3334 stale_window_ms=500

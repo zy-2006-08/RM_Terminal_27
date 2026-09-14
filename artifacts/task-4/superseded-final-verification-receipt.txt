@@ -1,0 +1,13 @@
+Final task-4 verification: NOT DONECLAIM
+Debug: build/debug CMake/build + CTest => 5/5 passed
+Release: build/release CMake/build + CTest => 5/5 passed
+FFmpeg: /opt/homebrew/bin/ffmpeg
+Normal/restart: port=39146, receiver pid=41171, FFmpeg pids=41172/41181/41190/41198; simulator 2%% loss then 10%% loss, 1ms jitter; completed=95, decoded_frames=4, healthy snapshots had failure="" and state=online.
+Missing FFmpeg: deterministic ffmpeg_not_found, rc=3.
+Bind failure: deterministic invalid address 192.0.2.1, udp_bind_failed, rc=3.
+Malformed: UDP b"bad" counted malformed=1 and process remained alive.
+Stale: reassembly unit test covers legal partial expiry at 0.30s.
+Cleanup: all harness processes exited; no ffmpeg/video_sender/video_diagnostic processes remain.
+BLOCKER 1: heavy loss/restart run eventually reached decoder_no_frame_timeout and decoder_failures=3; acceptance requires recovery without a decoder failure state.
+BLOCKER 2: dedicated truncated-H.265 injection was not completed; the recorded truncated scenario supplied no UDP H.265 bytes and therefore only tested idle decoder shutdown.
+Ubuntu: unverified; all execution on macOS.

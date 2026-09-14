@@ -1,0 +1,6 @@
+command: ../venv/bin/python artifacts/task-3/run_integration.py | tee artifacts/task-3/integration-result.log
+result: exit=0
+six_topics=PASS
+malformed_recovery=PASS
+reconnect_recovery=PASS
+native_publish=0

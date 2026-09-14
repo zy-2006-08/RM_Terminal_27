@@ -1,0 +1,10 @@
+asset_nals=384 access_units=372 irap_keyframes=0 access_units_with_parameter_sets=12
+clean_full_decode_frames=360
+reassembly_semantics loss=0.02 seed=11 complete_access_units=291 ceiling_decoded=15
+reassembly_semantics loss=0.02 seed=12 complete_access_units=289 ceiling_decoded=27
+reassembly_semantics loss=0.02 seed=13 complete_access_units=298 ceiling_decoded=42
+reassembly_semantics loss=0.10 seed=11 complete_access_units=97 ceiling_decoded=1
+reassembly_semantics loss=0.10 seed=12 complete_access_units=111 ceiling_decoded=1
+reassembly_semantics loss=0.10 seed=13 complete_access_units=101 ceiling_decoded=1
+byte_truncation_semantics loss=0.02 seed=11 decoded=286 note=not_achievable_by_correct_reassembly
+byte_truncation_semantics loss=0.10 seed=11 decoded=94 note=not_achievable_by_correct_reassembly

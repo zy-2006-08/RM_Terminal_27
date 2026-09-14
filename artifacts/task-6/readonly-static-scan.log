@@ -1,0 +1,2 @@
+grep -rniE 'mosquitto_publish|can_send|uart_write' cpp/
+exit=1 (1 = no match, which is the required result)

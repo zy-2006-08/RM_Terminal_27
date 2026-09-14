@@ -1,0 +1,8 @@
+Task-1 cleanup receipt
+2026-09-14
+safe smoke exited 0
+CTest completed with 1/1 tests passing
+No rm_terminal process remained after QA
+No server, port, or temporary QA resource was started
+Legacy Python launcher and simulation modules were not started or evaluated by
+the native CMake checks.

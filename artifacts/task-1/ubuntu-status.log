@@ -1,0 +1,5 @@
+
+Ubuntu verification status: UNVERIFIED.
+The QA host is macOS and no Ubuntu container or cross-toolchain is configured.
+No Ubuntu command was executed and no Ubuntu success is claimed.
+Equivalent commands are documented in BUILD.md.

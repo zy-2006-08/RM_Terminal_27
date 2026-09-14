@@ -1,0 +1,12 @@
+ts=2026-09-14T13:35:33.227Z level=info event=startup mode=terminal platform=macOS mqtt_host=127.0.0.1 mqtt_port=3333 udp_port=3334 stale_window_ms=500
+ts=2026-09-14T13:35:33.846Z level=warning event=stale_data groups=event:3 robots=1
+ts=2026-09-14T13:35:33.924Z level=info event=shutdown mode=terminal exit=0
+ts=2026-09-14T13:38:16.160Z level=info event=startup mode=terminal platform=macOS mqtt_host=127.0.0.1 mqtt_port=3333 udp_port=3334 stale_window_ms=500
+ts=2026-09-14T13:38:16.878Z level=info event=shutdown mode=terminal exit=0
+ts=2026-09-14T13:51:01.213Z level=info event=startup mode=terminal platform=macOS mqtt_host=127.0.0.1 mqtt_port=3333 udp_port=3334 stale_window_ms=500
+ts=2026-09-14T13:51:01.947Z level=info event=shutdown mode=terminal exit=0
+ts=2026-09-14T14:16:22.297Z level=info event=startup mode=terminal platform=macOS mqtt_host=127.0.0.1 mqtt_port=3333 udp_port=3334 stale_window_ms=500
+ts=2026-09-14T14:16:22.899Z level=warning event=stale_data groups=event:3 robots=1
+ts=2026-09-14T14:16:23.017Z level=info event=shutdown mode=terminal exit=0
+ts=2026-09-14T14:36:16.064Z level=info event=startup mode=terminal platform=macOS mqtt_host=127.0.0.1 mqtt_port=3333 udp_port=3334 stale_window_ms=500
+ts=2026-09-14T14:36:16.841Z level=info event=shutdown mode=terminal exit=0

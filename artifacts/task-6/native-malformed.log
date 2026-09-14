@@ -1,0 +1,3 @@
+MQTT subscribed (readonly)
+ignored malformed, stale, invalid, or unknown MQTT message: GameStatus
+ignored malformed, stale, invalid, or unknown MQTT message: RobotTelemetry

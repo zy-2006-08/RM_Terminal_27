@@ -1,0 +1,12 @@
+marker=f3_dynamic_control_safety
+  [ok] terminal subscribed before hostile injection
+  [ok] terminal alive after all hostile input
+  [ok] CustomControl: 2 on wire == 2 injected (0 from terminal)
+  [ok] CommonCommand: 2 on wire == 2 injected (0 from terminal)
+  [ok] terminal was consuming live telemetry during the audit (6/6)
+  [ok] malformed inbound payloads rejected (2/2); control topics never reach the terminal because it does not subscribe to them
+  [ok] terminal decoded real robot state
+  [ok] no serial/CAN character device opened (0 matches)
+  [ok] terminal shut down cleanly after hostile input
+marker=f3_summary failures=0 control_from_terminal=0 rejections=2
+marker=f3_verdict PASS

@@ -1,0 +1,13 @@
+F1 COLD REGRESSION 2026-09-14T13:50:13Z
+--- cold configure+build Debug ---
+build_exit=0
+warn_err_lines=0
+100% tests passed out of 6
+
+Total Test time (real) =   2.10 sec
+--- cold configure+build Release ---
+build_exit=0
+warn_err_lines=0
+100% tests passed out of 6
+
+Total Test time (real) =   0.81 sec

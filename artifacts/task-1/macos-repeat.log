@@ -1,0 +1,13 @@
+-- Could NOT find WrapVulkanHeaders (missing: Vulkan_INCLUDE_DIR) 
+-- Configuring done (0.2s)
+-- Generating done (0.0s)
+-- Build files have been written to: /Users/zy/RMGF/terminal/build/macos
+[100%] Built target rm_terminal
+Test project /Users/zy/RMGF/terminal/build/macos
+    Start 1: safe_start
+1/1 Test #1: safe_start .......................   Passed    0.07 sec
+
+100% tests passed out of 1
+
+Total Test time (real) =   0.07 sec
+RM terminal: READ-ONLY SIMULATION SAFE; platform= macOS

@@ -1,0 +1,23 @@
+1789371539: Info: running mosquitto as user: zy.
+1789371539: mosquitto version 2.1.2 starting
+1789371539: Using default config.
+1789371539: Bridge support available.
+1789371539: Persistence support available.
+1789371539: TLS support available.
+1789371539: TLS-PSK support available.
+1789371539: Websockets support available.
+1789371539: Starting in local only mode. Connections will only be possible from clients running on this machine.
+1789371539: Create a configuration file which defines a listener to allow remote access.
+1789371539: For more details see https://mosquitto.org/documentation/authentication-methods/
+1789371539: Opening ipv4 listen socket on port 3333.
+1789371539: Opening ipv6 listen socket on port 3333.
+1789371539: mosquitto version 2.1.2 running
+1789371540: New connection from 127.0.0.1:63447 on port 3333.
+1789371540: New client connected from 127.0.0.1:63447 as rm-terminal-readonly (p4, c1, k30).
+1789371540: New connection from 127.0.0.1:63448 on port 3333.
+1789371540: New client connected from 127.0.0.1:63448 as auto-A88AF5F3-7135-4614-7718-4D2EEE6DCA4D (p4, c1, k60).
+1789371540: Client rm-terminal-readonly [127.0.0.1:63447] disconnected: connection closed by client.
+1789371540: Client rm-terminal-readonly [127.0.0.1:63447] disconnected: connection closed by client.
+1789371540: Client auto-A88AF5F3-7135-4614-7718-4D2EEE6DCA4D [127.0.0.1:63448] disconnected.
+1789371540: Client auto-A88AF5F3-7135-4614-7718-4D2EEE6DCA4D [127.0.0.1:63448] disconnected: connection closed by client.
+1789371540: mosquitto version 2.1.2 terminating

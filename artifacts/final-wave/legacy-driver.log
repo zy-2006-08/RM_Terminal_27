@@ -1,0 +1,11 @@
+DRIVER EMERGENCY_STOP returned=False
+DRIVER RESET_GIMBAL returned=False
+DRIVER TOGGLE_AUTOAIM returned=False
+DRIVER SET_CHASSIS_MODE returned=False
+DRIVER COMMON_COMMAND returned=False
+DRIVER any_true= False
+[readonly_block] 拒绝控制下发 topic=CustomControl command_id=3 param=1 attempts=1
+[readonly_block] 拒绝控制下发 topic=CustomControl command_id=4 param=1 attempts=2
+[readonly_block] 拒绝控制下发 topic=CustomControl command_id=2 param=1 attempts=3
+[readonly_block] 拒绝控制下发 topic=CustomControl command_id=1 param=1 attempts=4
+[readonly_block] 拒绝控制下发 topic=CommonCommand command_id=99 param=1 attempts=5

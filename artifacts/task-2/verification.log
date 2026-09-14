@@ -1,0 +1,37 @@
+corrected_probe timestamp=2026-09-14T03:37:29Z
+[ 50%] Built target rm_terminal
+[100%] Built target telemetry_test
+Test project /Users/zy/RMGF/terminal/build/macos
+    Start 1: telemetry_state
+1/3 Test #1: telemetry_state ..................   Passed    0.02 sec
+    Start 2: reject_unknown_args
+2/3 Test #2: reject_unknown_args ..............   Passed    0.06 sec
+    Start 3: safe_start
+3/3 Test #3: safe_start .......................   Passed    0.01 sec
+
+100% tests passed out of 3
+
+Total Test time (real) =   0.10 sec
+
+telemetry_test:
+presentation: sequence=0 battery=0 quality=invalid freshness=never_received
+presentation: sequence=0 battery=0 quality=invalid freshness=fresh
+presentation: sequence=0 battery=0 quality=invalid freshness=stale
+
+CMake malformed-argument matrix (tokenized):
+-- unknown: exit=2; stdout empty; stderr=Unknown argument; only --safe-smoke is supported
+
+-- extra: exit=2; stdout empty; stderr=Unknown argument; only --safe-smoke is supported
+
+-- duplicate: exit=2; stdout empty; stderr=Unknown argument; only --safe-smoke is supported
+
+-- positional: exit=2; stdout empty; stderr=Unknown argument; only --safe-smoke is supported
+
+-- empty: exit=2; stdout empty; stderr=Unknown argument; only --safe-smoke is supported
+
+
+safe-smoke:
+RM terminal: READ-ONLY SIMULATION SAFE; platform= macOS
+
+cleanup=verified no temporary probe files remain
+ubuntu=unverified

@@ -1,0 +1,25 @@
+1789395762: Info: running mosquitto as user: zy.
+1789395762: mosquitto version 2.1.2 starting
+1789395762: Using default config.
+1789395762: Bridge support available.
+1789395762: Persistence support available.
+1789395762: TLS support available.
+1789395762: TLS-PSK support available.
+1789395762: Websockets support available.
+1789395762: Starting in local only mode. Connections will only be possible from clients running on this machine.
+1789395762: Create a configuration file which defines a listener to allow remote access.
+1789395762: For more details see https://mosquitto.org/documentation/authentication-methods/
+1789395762: Opening ipv4 listen socket on port 3333.
+1789395762: Opening ipv6 listen socket on port 3333.
+1789395762: mosquitto version 2.1.2 running
+1789395763: New connection from 127.0.0.1:65527 on port 3333.
+1789395763: New client connected from 127.0.0.1:65527 as auto-04C0F9C1-0B7D-2B57-074C-0FAB72FC0640 (p4, c1, k60).
+1789395764: New connection from 127.0.0.1:65530 on port 3333.
+1789395765: Client 127.0.0.1 [127.0.0.1:65530] disconnected: connection closed by client.
+1789395765: Client 127.0.0.1 [127.0.0.1:65530] disconnected: connection closed by client.
+1789395765: New connection from 127.0.0.1:65531 on port 3333.
+1789395765: New client connected from 127.0.0.1:65531 as rm-terminal (p4, c1, k15).
+1789395768: Client rm-terminal [127.0.0.1:65531] disconnected.
+1789395769: Client auto-04C0F9C1-0B7D-2B57-074C-0FAB72FC0640 [127.0.0.1:65527] disconnected.
+1789395769: Client auto-04C0F9C1-0B7D-2B57-074C-0FAB72FC0640 [127.0.0.1:65527] disconnected: connection closed by client.
+1789395769: mosquitto version 2.1.2 terminating
