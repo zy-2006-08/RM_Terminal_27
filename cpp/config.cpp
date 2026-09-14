@@ -17,6 +17,44 @@ bool parse_integer(const QString& value, const QString& key, int line, int* resu
     *result = parsed;
     return true;
 }
+
+// Deliberate exception to parse_integer's `> 0` rule: blind_stale_fallback_ms
+// accepts 0, which DISABLES the stale-blind fallback so the UI never leaves
+// info mode merely because blind telemetry went stale. An operator who does not
+// trust the fallback needs a way to switch it off; rejecting 0 would force them
+// to fake a huge timeout instead. Negative values remain invalid.
+bool parse_non_negative_integer(const QString& value, const QString& key, int line, int* result,
+                                QString* error) {
+    bool ok = false;
+    const int parsed = value.toInt(&ok);
+    if (!ok || parsed < 0) {
+        if (error) {
+            *error = QStringLiteral("line %1: invalid %2=%3; expected non-negative integer "
+                                    "(0 disables the fallback)")
+                         .arg(line).arg(key, value);
+        }
+        return false;
+    }
+    *result = parsed;
+    return true;
+}
+
+bool parse_boolean(const QString& value, const QString& key, int line, bool* result,
+                   QString* error) {
+    if (value == QLatin1String("true")) {
+        *result = true;
+        return true;
+    }
+    if (value == QLatin1String("false")) {
+        *result = false;
+        return true;
+    }
+    if (error) {
+        *error = QStringLiteral("line %1: invalid %2=%3; expected true or false")
+                     .arg(line).arg(key, value);
+    }
+    return false;
+}
 }
 
 bool parse_log_level(const QString& name, LogLevel* out) {
@@ -64,6 +102,21 @@ bool load_config(const QString& path, Config* config, QString* error) {
             if (!parse_integer(value, key, line, &config->udp_port, error)) return false;
         } else if (key == QLatin1String("stale_window_ms")) {
             if (!parse_integer(value, key, line, &config->stale_window_ms, error)) return false;
+        } else if (key == QLatin1String("mode_exit_hysteresis_ms")) {
+            if (!parse_integer(value, key, line, &config->mode_exit_hysteresis_ms, error)) {
+                return false;
+            }
+        } else if (key == QLatin1String("event_history_capacity")) {
+            if (!parse_integer(value, key, line, &config->event_history_capacity, error)) {
+                return false;
+            }
+        } else if (key == QLatin1String("blind_stale_fallback_ms")) {
+            if (!parse_non_negative_integer(value, key, line, &config->blind_stale_fallback_ms,
+                                            error)) {
+                return false;
+            }
+        } else if (key == QLatin1String("map_enabled")) {
+            if (!parse_boolean(value, key, line, &config->map_enabled, error)) return false;
         } else if (key == QLatin1String("log_level")) {
             if (!parse_log_level(value, &config->log_level)) {
                 if (error) {

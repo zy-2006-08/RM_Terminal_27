@@ -12,7 +12,8 @@
 #
 # A missing file is not an error; the defaults below are used. A file that
 # exists but has an unknown key, an empty value, a non-positive integer, or an
-# unknown log level fails loudly with exit code 4.
+# unknown log level fails loudly with exit code 4. The single exception is
+# blind_stale_fallback_ms, which also accepts 0; see its comment below.
 #
 # Syntax: key=value, one per line. Blank lines and lines starting with # are
 # ignored. Whitespace around keys and values is trimmed.
@@ -34,3 +35,20 @@ log_level=info
 
 # Log file path. Records append across restarts.
 log_destination=rm_terminal.log
+
+# How long blind telemetry must read clear before the UI leaves video mode.
+# Guards against flapping back to the map during brief clear samples.
+mode_exit_hysteresis_ms=3000
+
+# Bounded event history size. Oldest records are dropped once full, so a long
+# match cannot grow this without limit.
+event_history_capacity=50
+
+# Delay before stale blind telemetry alone forces the video fallback.
+# 0 DISABLES the fallback entirely: the UI then never switches to video merely
+# because blind data went stale, only when blind is positively asserted. This is
+# the one integer key that accepts 0; -1 is still rejected.
+blind_stale_fallback_ms=15000
+
+# Draw the tactical map pane in info mode: true or false.
+map_enabled=true

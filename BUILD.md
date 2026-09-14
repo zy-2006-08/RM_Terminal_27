@@ -41,6 +41,15 @@ required to change them. Copy `rm_terminal.conf.sample` and edit it.
 | `stale_window_ms` | `500` | Field freshness window; older fields report stale |
 | `log_level` | `info` | Minimum level written: `debug`, `info`, `warning`, `error` |
 | `log_destination` | `rm_terminal.log` | Log file path; records append across restarts |
+| `mode_exit_hysteresis_ms` | `3000` | Consecutive clear time before leaving video mode |
+| `event_history_capacity` | `50` | Bounded event ring size; oldest records drop first |
+| `blind_stale_fallback_ms` | `15000` | Stale-blind fallback delay; **`0` disables it** |
+| `map_enabled` | `true` | Draw the tactical map pane: `true` or `false` |
+
+Every integer key rejects zero and negatives except `blind_stale_fallback_ms`,
+which accepts `0` to mean "never fall back to video just because blind telemetry
+went stale". `-1` is still rejected. An unknown key is a hard failure with exit
+code 4 naming the key and its line number; it is never silently ignored.
 
 Precedence, highest first:
 
@@ -131,6 +140,34 @@ reports `has_x() == false` while a real origin reports `has_x() == true` with
 No terminal-to-robot or terminal-to-server message may be added. `CustomControl`
 and `CommonCommand` exist in the proto but are deliberately never wired into any
 code path; `intake_test` asserts the decoder rejects those topics.
+
+## Running the Python simulator
+
+`sim/match_server.py` needs `protobuf` and `paho-mqtt`, which the native build
+does not provide. A bare `python3` will fail with `ModuleNotFoundError: google`:
+
+```sh
+python3 -m venv .venv
+.venv/bin/pip install protobuf paho-mqtt
+.venv/bin/python -u sim/match_server.py
+```
+
+`.venv/` is gitignored. Use `-u`: without it Python block-buffers stdout when
+redirected to a file, so the blind-timeline lines are lost when the process is
+signalled, and the reproducibility check below has nothing to compare.
+
+The simulator publishes a deterministic blind timeline (`_BLIND_SCHEDULE`) keyed
+to match-internal elapsed time, so two runs are byte-identical:
+
+```sh
+.venv/bin/python -u sim/match_server.py > /tmp/run1.log 2>&1
+# after 60s, repeat into /tmp/run2.log, then:
+diff <(grep 致盲 /tmp/run1.log) <(grep 致盲 /tmp/run2.log)
+```
+
+Before trusting any live rate measurement, confirm no stale simulator is already
+publishing: `ps aux | grep [m]atch_server`. Two simulators on one broker double
+every topic's observed rate and make a correct 5Hz sender look wrong.
 
 ## macOS
 

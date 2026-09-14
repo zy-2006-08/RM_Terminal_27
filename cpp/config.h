@@ -30,6 +30,11 @@ struct Config {
     int mqtt_port = 3333;
     int udp_port = 3334;
     int stale_window_ms = 500;
+    int mode_exit_hysteresis_ms = 3000;
+    int event_history_capacity = 50;
+    // 0 disables the stale-blind fallback entirely; see load_config in config.cpp.
+    int blind_stale_fallback_ms = 15000;
+    bool map_enabled = true;
     LogLevel log_level = LogLevel::info;
 };
 

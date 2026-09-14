@@ -57,6 +57,10 @@ void missing_file_uses_documented_defaults(const QTemporaryDir& dir) {
     check(cfg.udp_port == 3334, "default udp_port");
     check(cfg.stale_window_ms == 500, "default stale_window_ms");
     check(cfg.log_level == rm_terminal::LogLevel::info, "default log_level");
+    check(cfg.mode_exit_hysteresis_ms == 3000, "default mode_exit_hysteresis_ms");
+    check(cfg.event_history_capacity == 50, "default event_history_capacity");
+    check(cfg.map_enabled, "default map_enabled");
+    check(cfg.blind_stale_fallback_ms == 15000, "default blind_stale_fallback_ms");
 }
 
 void every_key_is_honoured(const QTemporaryDir& dir) {
@@ -69,7 +73,11 @@ void every_key_is_honoured(const QTemporaryDir& dir) {
                                          "udp_port=5555\n"
                                          "stale_window_ms=700\n"
                                          "log_level=debug\n"
-                                         "log_destination=custom.log\n")),
+                                         "log_destination=custom.log\n"
+                                         "mode_exit_hysteresis_ms=4500\n"
+                                         "event_history_capacity=120\n"
+                                         "map_enabled=false\n"
+                                         "blind_stale_fallback_ms=9000\n")),
           "write full config");
     // When: the config is loaded.
     rm_terminal::Config cfg;
@@ -83,6 +91,51 @@ void every_key_is_honoured(const QTemporaryDir& dir) {
     check(cfg.stale_window_ms == 700, "override stale_window_ms");
     check(cfg.log_level == rm_terminal::LogLevel::debug, "override log_level");
     check(cfg.log_destination == QLatin1String("custom.log"), "override log_destination");
+    check(cfg.mode_exit_hysteresis_ms == 4500, "override mode_exit_hysteresis_ms");
+    check(cfg.event_history_capacity == 120, "override event_history_capacity");
+    check(!cfg.map_enabled, "override map_enabled");
+    check(cfg.blind_stale_fallback_ms == 9000, "override blind_stale_fallback_ms");
+}
+
+// blind_stale_fallback_ms is the ONE key that accepts 0. Zero means "never fall
+// back to Video on stale blind data", which is a legitimate operator choice, so
+// the validator must use >= 0 here while every other integer key demands > 0.
+void blind_stale_fallback_accepts_zero_as_disabled(const QTemporaryDir& dir) {
+    // Given: a config disabling the stale fallback with an explicit zero.
+    const QString path = dir.filePath(QStringLiteral("fallback_zero.conf"));
+    check(write_file(path, QStringLiteral("blind_stale_fallback_ms=0\n")), "write zero fallback");
+    // When: the config is loaded.
+    rm_terminal::Config cfg;
+    QString error;
+    const bool ok = rm_terminal::load_config(path, &cfg, &error);
+    // Then: zero is accepted verbatim and means the fallback is disabled.
+    check(ok, "blind_stale_fallback_ms=0 is legal");
+    check(error.isEmpty(), "blind_stale_fallback_ms=0 sets no error");
+    check(cfg.blind_stale_fallback_ms == 0, "blind_stale_fallback_ms=0 is stored as 0");
+}
+
+void map_enabled_accepts_both_booleans(const QTemporaryDir& dir) {
+    struct Case {
+        const char* name;
+        const char* body;
+        bool expected;
+    };
+    // Given: the two accepted spellings of the boolean key.
+    const Case cases[] = {
+        {"map_true", "map_enabled=true\n", true},
+        {"map_false", "map_enabled=false\n", false},
+    };
+    for (const Case& item : cases) {
+        const QString path = dir.filePath(QString::fromLatin1(item.name) + QStringLiteral(".conf"));
+        check(write_file(path, QString::fromLatin1(item.body)), item.name);
+        // When: the config is loaded.
+        rm_terminal::Config cfg;
+        QString error;
+        const bool ok = rm_terminal::load_config(path, &cfg, &error);
+        // Then: the flag reflects the file and no error is raised.
+        check(ok, item.name);
+        check(cfg.map_enabled == item.expected, item.name);
+    }
 }
 
 void malformed_config_fails_with_named_key(const QTemporaryDir& dir) {
@@ -100,6 +153,13 @@ void malformed_config_fails_with_named_key(const QTemporaryDir& dir) {
         {"negative_window", "stale_window_ms=-5\n", "stale_window_ms"},
         {"bad_level", "log_level=verbose\n", "log_level"},
         {"empty_value", "mqtt_host=\n", "mqtt_host"},
+        {"non_numeric_hysteresis", "mode_exit_hysteresis_ms=abc\n", "mode_exit_hysteresis_ms"},
+        {"zero_hysteresis", "mode_exit_hysteresis_ms=0\n", "mode_exit_hysteresis_ms"},
+        {"negative_capacity", "event_history_capacity=-1\n", "event_history_capacity"},
+        {"zero_capacity", "event_history_capacity=0\n", "event_history_capacity"},
+        {"negative_fallback", "blind_stale_fallback_ms=-1\n", "blind_stale_fallback_ms"},
+        {"non_numeric_fallback", "blind_stale_fallback_ms=soon\n", "blind_stale_fallback_ms"},
+        {"non_boolean_map", "map_enabled=yes\n", "map_enabled"},
     };
     for (const Case& item : cases) {
         const QString path = dir.filePath(QString::fromLatin1(item.name) + QStringLiteral(".conf"));
@@ -251,6 +311,8 @@ int main(int argc, char* argv[]) {
 
     missing_file_uses_documented_defaults(dir);
     every_key_is_honoured(dir);
+    blind_stale_fallback_accepts_zero_as_disabled(dir);
+    map_enabled_accepts_both_booleans(dir);
     malformed_config_fails_with_named_key(dir);
     record_format_is_greppable(dir);
     level_filtering_drops_quiet_records(dir);

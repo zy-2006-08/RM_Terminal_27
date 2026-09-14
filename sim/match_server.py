@@ -8,6 +8,14 @@
     Event              触发式
     RobotTelemetry     50Hz（机器人 -> 终端，对应 0x0310）
 同时订阅终端下行的 CustomControl / CommonCommand 并打印，验证双向链路。
+
+【本地模拟词汇，非正式协议】RM2027 至今未发布正式协议，其中**没有**任何
+「基地致盲」状态字段，也**没有**多机器人位置集合。下列两路数据完全是本文件
+编造出来给终端联调用的：
+    BlindStatus        5Hz   —— 编造的致盲状态，时刻表见 _BLIND_SCHEDULE
+    RobotPositionSet   1Hz   —— 编造的 6 台车位置（自身 + 2 友军 + 3 敌方）
+任何人不得把这两个消息的字段当成 2027 正式协议依据。真机接入时必须整段替换。
+自身坐标是唯一的例外：它复用既有 RobotPosition 轨迹，不另行编造。
 """
 
 from __future__ import annotations
@@ -30,6 +38,7 @@ from core.constants import (
     MQTT_PORT,
     SELF_ROBOT_ID,
     SERVER_HOST,
+    T_BLIND_STATUS,
     T_COMMON_COMMAND,
     T_CUSTOM_CONTROL,
     T_EVENT,
@@ -37,6 +46,7 @@ from core.constants import (
     T_ROBOT_DYNAMIC,
     T_ROBOT_MODULE,
     T_ROBOT_POSITION,
+    T_ROBOT_POSITION_SET,
     T_TELEMETRY,
 )
 
@@ -46,6 +56,44 @@ _CMD_NAMES = {
     0x03: "紧急停止",
     0x04: "云台回中",
 }
+
+# 编造的致盲时刻表（本地模拟，非 2027 协议）。元组为 (比赛内起始秒, 持续秒)，
+# 基准是 stage()==4 的比赛内已进行秒数，不是挂钟时间，故两次运行必然一致。
+#
+# 第一段起点取 30s（= 进程启动后 40s，因为 stage()==4 从挂钟 10s 才开始）是刻意
+# 的：致盲 12s + 终端 3s 退出滞回必须在 60s 验收窗口内跑完，否则只能观察到进入
+# 而观察不到退出。若把起点改成比赛内 40s（= 启动后 50s），退出会落在 65s，60s
+# 的验收就只剩一条切换记录、无法证明滞回真的会放行。
+_BLIND_SCHEDULE: tuple[tuple[float, float], ...] = ((30.0, 12.0), (150.0, 12.0))
+
+_BLIND_CAUSE_DART = 1
+
+# 编造的友军 / 敌方阵容（本地模拟，非 2027 协议）。附录二真实 ID 编码未公布，
+# 这里只保证「自身之外还有 5 台车、阵营各半」，不声称 ID 与真实赛制对应。
+_FRIENDLY_IDS: tuple[int, ...] = (1, 2)
+_ENEMY_IDS: tuple[int, ...] = (101, 103, 104)
+
+_FACTION_RED = 1
+_FACTION_BLUE = 2
+
+_FIELD_LENGTH_M = 28.0
+_FIELD_WIDTH_M = 15.0
+
+
+def _self_pose(e: float) -> tuple[float, float, float]:
+    """自身位姿的唯一函数来源，RobotPosition 与 RobotPositionSet 都必须走它。
+
+    调用方必须传入 _pose_tick() 量化后的时间：两个 sender 跑在各自的 1Hz 线程
+    上，若各自直接读 match.elapsed，采样点会相差几十微秒，同一时刻的两条消息
+    就会带上毫米级不同的自身坐标，与「同源」的说法不符。
+    """
+    return (14.0 + 5.5 * math.sin(e * 0.2),
+            7.5 + 3.5 * math.cos(e * 0.17),
+            math.degrees(math.sin(e * 0.3)))
+
+
+def _pose_tick(elapsed: float) -> float:
+    return math.floor(elapsed * 10.0) / 10.0
 
 
 class SimulatedMatch:
@@ -66,6 +114,15 @@ class SimulatedMatch:
         self.chassis_mode = 2
         self.autoaim = True
         self.events: list[tuple[int, str]] = []
+        self.blinded = False
+        self.blind_started_ms = 0
+        self.blind_remaining_ms = 0
+        self.blind_cause = 0
+        self._blind_window: tuple[float, float] | None = None
+        self._robot_phases = {
+            robot_id: (self.rng.uniform(0, math.tau), self.rng.uniform(0.11, 0.31))
+            for robot_id in (*_FRIENDLY_IDS, *_ENEMY_IDS)
+        }
 
     @property
     def elapsed(self) -> float:
@@ -132,6 +189,64 @@ class SimulatedMatch:
             self.red_score += 1
         if self.rng.random() < 0.008:
             self.blue_score += 1
+
+    def match_elapsed(self) -> float | None:
+        stage, _ = self.stage()
+        if stage != 4:
+            return None
+        return (self.elapsed - 10) % 420
+
+    def tick_blind(self) -> None:
+        """按 _BLIND_SCHEDULE 推进编造的致盲状态（本地模拟，非 2027 协议）。
+
+        时基是比赛内已进行秒数，不含任何随机数与挂钟读数，因此同一份代码两次
+        运行的致盲起止时刻必然逐次相同 —— 这是 todo 7 可复现性验收的依据。
+        """
+        me = self.match_elapsed()
+        active: tuple[float, float] | None = None
+        if me is not None:
+            for start, duration in _BLIND_SCHEDULE:
+                if start <= me < start + duration:
+                    active = (start, duration)
+                    break
+
+        if active is not None and self._blind_window is None:
+            start, duration = active
+            self.blinded = True
+            self.blind_cause = _BLIND_CAUSE_DART
+            # 编造字段：用比赛内 ms 而非挂钟 ms，保证两次运行完全一致。
+            self.blind_started_ms = int(start * 1000)
+            self._blind_window = active
+            self.events.append((3, "我方基地被飞镖命中，图传致盲"))
+            print(f"[server] 致盲开始 match_t={start:.1f}s 持续={duration:.1f}s", flush=True)
+        elif active is None and self._blind_window is not None:
+            start, duration = self._blind_window
+            self.blinded = False
+            self.blind_cause = 0
+            self.blind_remaining_ms = 0
+            self._blind_window = None
+            self.events.append((0, "基地致盲结束，图传恢复"))
+            print(f"[server] 致盲结束 match_t={start + duration:.1f}s", flush=True)
+
+        if self._blind_window is not None and me is not None:
+            start, duration = self._blind_window
+            self.blind_remaining_ms = max(0, int((start + duration - me) * 1000))
+
+    def fabricated_other_poses(self) -> list[tuple[int, int, float, float, float]]:
+        """编造的友军 / 敌方位姿（本地模拟，非 2027 协议）。
+
+        轨迹只依赖构造期由 self.rng 抽定的相位与角速度，加上比赛时基，故可复现。
+        不得改用全局 random 或挂钟时间，否则两次运行的地图轨迹不再可比。
+        """
+        e = self.elapsed
+        poses: list[tuple[int, int, float, float, float]] = []
+        for robot_id in (*_FRIENDLY_IDS, *_ENEMY_IDS):
+            phase, speed = self._robot_phases[robot_id]
+            faction = _FACTION_RED if robot_id in _FRIENDLY_IDS else _FACTION_BLUE
+            x = _FIELD_LENGTH_M / 2 + (_FIELD_LENGTH_M / 2 - 2.0) * math.sin(e * speed + phase)
+            y = _FIELD_WIDTH_M / 2 + (_FIELD_WIDTH_M / 2 - 1.5) * math.cos(e * speed * 0.8 + phase)
+            poses.append((robot_id, faction, x, y, math.degrees(math.sin(e * speed + phase))))
+        return poses
 
 
 def _publish(client: mqtt.Client, topic: str, msg) -> None:
@@ -269,12 +384,38 @@ def main() -> int:
         ))
 
     def send_position() -> None:
-        e = match.elapsed
-        _publish(client, T_ROBOT_POSITION, pb.RobotPosition(
-            x=14.0 + 5.5 * math.sin(e * 0.2),
-            y=7.5 + 3.5 * math.cos(e * 0.17),
-            yaw=math.degrees(math.sin(e * 0.3)),
-        ))
+        x, y, yaw = _self_pose(_pose_tick(match.elapsed))
+        _publish(client, T_ROBOT_POSITION, pb.RobotPosition(x=x, y=y, yaw=yaw))
+
+    def send_blind_status() -> None:
+        match.tick_blind()
+        m = pb.BlindStatus(
+            self_base_blinded=match.blinded,
+            blind_remaining_ms=match.blind_remaining_ms,
+            cause=match.blind_cause,
+        )
+        if match.blinded:
+            m.blind_started_ms = match.blind_started_ms
+        _publish(client, T_BLIND_STATUS, m)
+
+    def send_position_set() -> None:
+        m = pb.RobotPositionSet()
+        # 自身坐标必须复用既有 RobotPosition 轨迹，不另行编造：终端侧
+        # (todo 6) 会丢弃集合内的自身坐标、只取单机路径的值，两处若不同源
+        # 会让地图与数字读数对不上。
+        sx, sy, syaw = _self_pose(_pose_tick(match.elapsed))
+        own = m.entries.add()
+        own.robot_id = SELF_ROBOT_ID
+        own.faction = _FACTION_RED
+        own.is_self = True
+        own.x, own.y, own.yaw = sx, sy, syaw
+        for robot_id, faction, x, y, yaw in match.fabricated_other_poses():
+            entry = m.entries.add()
+            entry.robot_id = robot_id
+            entry.faction = faction
+            entry.is_self = False
+            entry.x, entry.y, entry.yaw = x, y, yaw
+        _publish(client, T_ROBOT_POSITION_SET, m)
 
     def send_events() -> None:
         while match.events:
@@ -288,6 +429,8 @@ def main() -> int:
         threading.Thread(target=loop, args=(1 / 10, send_dynamic), daemon=True),
         threading.Thread(target=loop, args=(1.0, send_module), daemon=True),
         threading.Thread(target=loop, args=(1.0, send_position), daemon=True),
+        threading.Thread(target=loop, args=(1 / 5, send_blind_status), daemon=True),
+        threading.Thread(target=loop, args=(1.0, send_position_set), daemon=True),
         threading.Thread(target=loop, args=(1 / 20, send_events), daemon=True),
     ]
     for w in workers:
