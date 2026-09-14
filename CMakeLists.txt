@@ -106,4 +106,27 @@ if(BUILD_TESTING)
     add_test(NAME reject_unknown_args COMMAND ${CMAKE_COMMAND} -DPROGRAM=$<TARGET_FILE:rm_terminal> -P ${CMAKE_CURRENT_SOURCE_DIR}/cpp/assert_bad_args.cmake)
     add_test(NAME safe_start COMMAND rm_terminal --safe-smoke)
     set_tests_properties(safe_start domain_state reject_unknown_args PROPERTIES TIMEOUT 15)
+    # Simulator-backed end-to-end timing check. It starts its own broker, match
+    # server and video sender, and needs ~65s of wall clock because it must observe
+    # a 12s blind window plus the 3s exit hysteresis.
+    #
+    # Registration is opt-in because a CTest label cannot keep this out of a plain
+    # `ctest` run: -L selects and -LE excludes, but neither makes a registered test
+    # skip by default, so registering it unconditionally would take the default
+    # suite from seconds to over a minute. Off by default keeps the edit-test loop
+    # fast; turn it on for the integration run:
+    #   cmake -S . -B build/macos-integration -DRM_TERMINAL_INTEGRATION_TESTS=ON
+    #   ctest --test-dir build/macos-integration -L integration --output-on-failure
+    # The script is also runnable directly: bash scripts/verify_mode_regression.sh
+    option(RM_TERMINAL_INTEGRATION_TESTS
+           "Register simulator-backed integration tests (adds ~65s to ctest)" OFF)
+    if(RM_TERMINAL_INTEGRATION_TESTS)
+        add_test(NAME mode_regression_e2e
+                 COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify_mode_regression.sh)
+        set_tests_properties(mode_regression_e2e PROPERTIES
+            LABELS integration
+            TIMEOUT 180
+            RUN_SERIAL TRUE
+            ENVIRONMENT "RM_TERMINAL_BINARY=$<TARGET_FILE:rm_terminal>")
+    endif()
 endif()
