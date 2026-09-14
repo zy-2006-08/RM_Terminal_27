@@ -33,6 +33,12 @@ target_link_libraries(terminal_video PUBLIC terminal_logging Qt6::Core Qt6::Netw
 add_library(terminal_presentation cpp/presentation.cpp cpp/ui_mode.cpp cpp/ui_mode.h cpp/field_map.cpp cpp/field_map.h)
 target_link_libraries(terminal_presentation PUBLIC terminal_domain terminal_logging Qt6::Core)
 
+# Separate from terminal_presentation because the map pane is the first component
+# that needs Qt6::Widgets; keeping Widgets off terminal_presentation stops the
+# pure projection and mode-machine tests from linking a GUI stack they never use.
+add_library(terminal_map cpp/map_pane.cpp cpp/map_pane.h)
+target_link_libraries(terminal_map PUBLIC terminal_presentation Qt6::Widgets)
+
 add_executable(rm_terminal
     cpp/main.cpp
     cpp/platform.h
@@ -42,7 +48,7 @@ add_executable(rm_terminal
     cpp/dashboard.h
 )
 target_include_directories(rm_terminal PRIVATE ${MOSQUITTO_INCLUDE_DIR})
-target_link_libraries(rm_terminal PRIVATE terminal_presentation terminal_video ${MOSQUITTO_LIBRARY} Qt6::Widgets)
+target_link_libraries(rm_terminal PRIVATE terminal_map terminal_presentation terminal_video ${MOSQUITTO_LIBRARY} Qt6::Widgets)
 target_compile_features(rm_terminal PRIVATE cxx_std_17)
 target_compile_definitions(rm_terminal PRIVATE QT_NO_KEYWORDS)
 
@@ -76,6 +82,12 @@ if(BUILD_TESTING)
     add_executable(field_map_test cpp/field_map_test.cpp)
     target_link_libraries(field_map_test PRIVATE terminal_presentation)
     add_test(NAME field_map_projection COMMAND field_map_test)
+    add_executable(map_pane_test cpp/map_pane_test.cpp)
+    target_link_libraries(map_pane_test PRIVATE terminal_map Qt6::Widgets)
+    add_test(NAME map_pane_render COMMAND map_pane_test)
+    # Offscreen so the pixel assertions run identically on a headless Ubuntu box
+    # and on a macOS workstation with a real display attached.
+    set_tests_properties(map_pane_render PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
     add_executable(clock_test cpp/clock_test.cpp)
     target_link_libraries(clock_test PRIVATE terminal_domain)
     add_test(NAME monotonic_clock COMMAND clock_test)
