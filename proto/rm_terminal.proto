@@ -117,3 +117,38 @@ message RobotTelemetry {
   optional float  bbox_w          = 18;
   optional float  bbox_h          = 19;
 }
+
+// ---------------------------------------------------------------
+// 服务器 -> 终端：我方基地致盲状态
+// RM2027 正式协议尚未发布；以下字段为本地模拟词汇，不得视为正式合同。
+// 之所以用结构化字段而非塞进 Event.text：文本解析不可测且脆弱。
+// ---------------------------------------------------------------
+message BlindStatus {
+  optional bool   self_base_blinded = 1;  // 我方基地当前是否处于致盲
+  optional uint64 blind_started_ms  = 2;  // 致盲开始时刻（ms）
+  optional int32  blind_remaining_ms = 3; // 预计剩余致盲时长（ms）
+  optional uint32 cause             = 4;  // 0未致盲 1对方飞镖命中我方基地 2其他
+}
+
+// ---------------------------------------------------------------
+// 服务器 -> 终端：多机器人位置集合（战术地图用）
+// RM2027 正式协议尚未发布；以下字段为本地模拟词汇，不得视为正式合同。
+// 既有 RobotPosition（见上）是模块一既有链路，保持原样不改不删。
+// ---------------------------------------------------------------
+message RobotPositionSet {
+  repeated RobotPositionEntry entries = 1;
+}
+
+// ---------------------------------------------------------------
+// 服务器 -> 终端：单个机器人位置条目
+// RM2027 正式协议尚未发布；以下字段为本地模拟词汇，不得视为正式合同。
+// 全部字段为 optional：缺失（has_x()==false）必须与真实的 0 坐标区分开。
+// ---------------------------------------------------------------
+message RobotPositionEntry {
+  optional uint32 robot_id = 1;  // 附录二 ID 编号
+  optional uint32 faction  = 2;  // 0未知 1红方 2蓝方
+  optional float  x        = 3;  // m，场地坐标
+  optional float  y        = 4;  // m，场地坐标
+  optional float  yaw      = 5;  // deg
+  optional bool   is_self  = 6;  // 是否为本终端所属机器人
+}

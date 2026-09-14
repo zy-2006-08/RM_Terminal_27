@@ -39,6 +39,8 @@ T_EVENT = "Event"
 T_TELEMETRY = "RobotTelemetry"        # 机器人 -> 终端（对应 0x0310）
 T_CUSTOM_CONTROL = "CustomControl"    # 终端 -> 机器人（对应 0x0311）
 T_COMMON_COMMAND = "CommonCommand"    # 终端 -> 服务器
+T_BLIND_STATUS = "BlindStatus"
+T_ROBOT_POSITION_SET = "RobotPositionSet"
 
 SUB_TOPICS = [
     T_GAME_STATUS,
@@ -47,6 +49,8 @@ SUB_TOPICS = [
     T_ROBOT_POSITION,
     T_EVENT,
     T_TELEMETRY,
+    T_BLIND_STATUS,
+    T_ROBOT_POSITION_SET,
 ]
 
 # ---------------- 比赛阶段（2026 协议 current_stage 枚举）----------------
