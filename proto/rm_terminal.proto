@@ -20,6 +20,33 @@ message GameStatus {
   optional bool   is_paused          = 8;   // 是否暂停
   optional uint32 winner             = 9;   // 0平局 1红胜 2蓝胜，非结算阶段为 255
   optional uint32 end_reason         = 10;  // 非结算阶段为 255
+  // 基地血量，对应 2026 协议 GameRobotHP 中随全场血量下发的基地字段。
+  optional uint32 red_base_hp        = 11;
+  optional uint32 red_base_max_hp    = 12;
+  optional uint32 blue_base_hp       = 13;
+  optional uint32 blue_base_max_hp   = 14;
+  // 前哨站血量。同样来自 GameRobotHP 的前哨站字段，是赛制里的关键中立目标，
+  // 和基地一样必须走协议下发，不允许界面侧推算。
+  optional uint32 red_outpost_hp     = 15;
+  optional uint32 red_outpost_max_hp = 16;
+  optional uint32 blue_outpost_hp    = 17;
+  optional uint32 blue_outpost_max_hp = 18;
+  // 参赛队名。官方选手端顶栏显示学校/队名，此处随 GameStatus 低频下发即可。
+  optional string red_team_name      = 19;
+  optional string blue_team_name     = 20;
+  // 语义照 2026 协议既有物：经济对应 GameInfo.red_economy/blue_economy，
+  // 总伤害对应 GlobalUnitStatus.total_damage_*。必须服务器下发：终端只有自机
+  // coin，且受击不带攻击方 ID，界面侧无法把血量下降归因到输出方。
+  optional uint32 red_economy        = 21;
+  optional uint32 blue_economy       = 22;
+  optional uint32 red_total_damage   = 23;
+  optional uint32 blue_total_damage  = 24;
+  // 堡垒占领。语义照 2026 协议 GlobalSpecialMechanism：占领是「持续秒数」而非血量，
+  // 双方各自累计。占领方为 0 未占领 1 红方 2 蓝方，和血量类字段不同，必须区分
+  // 「无人占领」与「没收到这一帧」，故同样为 optional。
+  optional uint32 red_fortress_sec   = 25;
+  optional uint32 blue_fortress_sec  = 26;
+  optional uint32 fortress_holder    = 27;
 }
 
 // ---------------------------------------------------------------
@@ -151,4 +178,23 @@ message RobotPositionEntry {
   optional float  y        = 4;  // m，场地坐标
   optional float  yaw      = 5;  // deg
   optional bool   is_self  = 6;  // 是否为本终端所属机器人
+}
+
+// ---------------------------------------------------------------
+// 服务器 -> 终端：全场机器人血量集合（顶部栏双方阵容用）
+// 对应 2026 协议 2.2.4 GameRobotHP：一帧给出全场所有机器人血量，而单机
+// RobotDynamicStatus 只覆盖自机。缺此消息时终端无法知道队友与敌方血量。
+// RM2027 正式协议尚未发布；以下字段为本地模拟词汇，不得视为正式合同。
+// ---------------------------------------------------------------
+message RobotHealthSet {
+  repeated RobotHealthEntry entries = 1;
+}
+
+// 全部字段为 optional：缺失（has_current_hp()==false）必须与真实的 0 血区分，
+// 0 血是「阵亡」，缺失是「没有这台机器人的数据」，顶部栏对两者画法不同。
+message RobotHealthEntry {
+  optional uint32 robot_id   = 1;  // 附录二 ID 编号
+  optional uint32 faction    = 2;  // 0未知 1红方 2蓝方
+  optional uint32 current_hp = 3;
+  optional uint32 max_hp     = 4;
 }
