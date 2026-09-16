@@ -30,6 +30,21 @@ QString chassis_name(std::uint32_t mode) {
     }
 }
 
+QString robot_class_name(std::uint32_t robot_id) {
+    switch (robot_id > 100 ? robot_id - 100 : robot_id) {
+    case 1: return QStringLiteral("重装");
+    case 2:
+    case 3: return QStringLiteral("步兵");
+    case 4: return QStringLiteral("空中");
+    case 5: return QStringLiteral("哨兵");
+    default: return QString();
+    }
+}
+
+std::uint32_t display_robot_number(std::uint32_t robot_id) {
+    return robot_id > 100 ? robot_id - 100 : robot_id;
+}
+
 QString quality_text(Quality quality) {
     switch (quality) {
     case Quality::Missing: return QStringLiteral("missing");
