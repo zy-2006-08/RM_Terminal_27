@@ -36,7 +36,10 @@ target_link_libraries(terminal_presentation PUBLIC terminal_domain terminal_logg
 # Separate from terminal_presentation because the map pane is the first component
 # that needs Qt6::Widgets; keeping Widgets off terminal_presentation stops the
 # pure projection and mode-machine tests from linking a GUI stack they never use.
-add_library(terminal_map cpp/map_pane.cpp cpp/map_pane.h)
+# 场地底图和单位图标编进二进制,不走运行时路径:操作手机器上没有源码目录,
+# 而缺图会静默退化成空白地图而不是报错。AUTORCC 只对这个目标开。
+add_library(terminal_map cpp/map_pane.cpp cpp/map_pane.h assets/minimap.qrc)
+set_target_properties(terminal_map PROPERTIES AUTORCC ON)
 target_link_libraries(terminal_map PUBLIC terminal_presentation Qt6::Widgets)
 
 # A library rather than sources compiled straight into the executable, so the

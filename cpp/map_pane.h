@@ -4,6 +4,7 @@
 #include "field_map.h"
 
 #include <QColor>
+#include <QSize>
 #include <QString>
 #include <QStringList>
 #include <QWidget>
@@ -12,16 +13,24 @@
 
 namespace rm_terminal {
 
-// The simulated roster size (sim/match_server.py publishes 1 self + 2 ally + 3
+// The simulated roster size (sim/match_server.py publishes 1 self + 2 ally + 5
 // enemy). It is a LOCAL simulation figure, not an RM2027 rule, and exists so the
-// operator can see "received 4 of 6" rather than a plausible-looking partial map.
-constexpr std::size_t kExpectedRobotCount = 6;
+// operator can see "received 4 of 8" rather than a plausible-looking partial map.
+// Must track _FRIENDLY_IDS + _ENEMY_IDS there, or the map reports a false shortfall.
+constexpr std::size_t kExpectedRobotCount = 8;
 
-constexpr int kStatusBandHeight = 74;
+// 故障行的行距。故障行叠在场地上而不是占用独立状态带:预留出来的带子在常态下
+// 是一条永久黑缝,而故障是不常见情况,不该长期收走地图高度。
+constexpr int kStatusLineHeight = 16;
 
-// Where the field is actually drawn inside a widget of this size, i.e.
-// fit_viewport applied to the area left over above the status band. Exposed so
-// callers and tests can locate the field region without duplicating the layout.
+// 场地是横向的(28:15),纵向槽位里多出来的高度只能画成上下黑边 —— 占掉格高却
+// 不承载信息。地图据此申报自己用得上的高度,富余留给别的面板。
+int map_height_for_width(const FieldExtent& field, int width);
+
+// Where the field is actually drawn inside a widget of this size: fit_viewport over
+// the whole widget, so a widget sized at map_height_for_width is covered edge to
+// edge. Exposed so callers and tests can locate the field without duplicating the
+// layout.
 MapViewport map_viewport(const FieldExtent& field, int widget_width, int widget_height);
 
 QColor faction_color(std::uint32_t faction);
@@ -62,6 +71,10 @@ public:
     explicit MapPane(QWidget* parent = nullptr);
 
     void setRobots(const std::vector<MapRobot>& robots);
+
+    bool hasHeightForWidth() const override { return true; }
+    int heightForWidth(int width) const override;
+    QSize sizeHint() const override;
 
 protected:
     void paintEvent(QPaintEvent* event) override;

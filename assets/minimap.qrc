@@ -1,0 +1,27 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="/minimap">
+        <file alias="minimap_bg.png">minimap/minimap_bg.png</file>
+        <file alias="red_map_robot.png">minimap/red_map_robot.png</file>
+        <file alias="blue_map_robot.png">minimap/blue_map_robot.png</file>
+        <file alias="red_map_robot_flat.png">minimap/red_map_robot_flat.png</file>
+        <file alias="blue_map_robot_flat.png">minimap/blue_map_robot_flat.png</file>
+        <file alias="self_map_robot_flat.png">minimap/self_map_robot_flat.png</file>
+        <file alias="red_map_robot_lockbg.png">minimap/red_map_robot_lockbg.png</file>
+        <file alias="blue_map_robot_lockbg.png">minimap/blue_map_robot_lockbg.png</file>
+        <file alias="self_map_robot.png">minimap/self_map_robot.png</file>
+        <file alias="red_map_arrow.png">minimap/red_map_arrow.png</file>
+        <file alias="blue_map_arrow.png">minimap/blue_map_arrow.png</file>
+        <file alias="self_map_arrow.png">minimap/self_map_arrow.png</file>
+        <file alias="map_robot_id_1.png">minimap/map_robot_id_1.png</file>
+        <file alias="map_robot_id_2.png">minimap/map_robot_id_2.png</file>
+        <file alias="map_robot_id_3.png">minimap/map_robot_id_3.png</file>
+        <file alias="map_robot_id_4.png">minimap/map_robot_id_4.png</file>
+        <file alias="map_robot_id_5.png">minimap/map_robot_id_5.png</file>
+        <file alias="red_map_guard.png">minimap/red_map_guard.png</file>
+        <file alias="blue_map_guard.png">minimap/blue_map_guard.png</file>
+        <file alias="red_map_airplane.png">minimap/red_map_airplane.png</file>
+        <file alias="blue_map_airplane.png">minimap/blue_map_airplane.png</file>
+        <file alias="map_robot_lockline.png">minimap/map_robot_lockline.png</file>
+    </qresource>
+</RCC>
