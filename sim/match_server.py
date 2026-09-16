@@ -46,6 +46,7 @@ from core.constants import (
     T_ROBOT_DYNAMIC,
     T_ROBOT_MODULE,
     T_ROBOT_POSITION,
+    T_ROBOT_HEALTH_SET,
     T_ROBOT_POSITION_SET,
     T_TELEMETRY,
 )
@@ -68,16 +69,37 @@ _BLIND_SCHEDULE: tuple[tuple[float, float], ...] = ((30.0, 12.0), (150.0, 12.0))
 
 _BLIND_CAUSE_DART = 1
 
-# 编造的友军 / 敌方阵容（本地模拟，非 2027 协议）。附录二真实 ID 编码未公布，
-# 这里只保证「自身之外还有 5 台车、阵营各半」，不声称 ID 与真实赛制对应。
-_FRIENDLY_IDS: tuple[int, ...] = (1, 2)
-_ENEMY_IDS: tuple[int, ...] = (101, 103, 104)
+# 阵容编号对齐 RMUC 2027 规则手册表 2-1：每方 5 台 = 1 重装 / 2,3 步兵 / 4 空中 / 5 哨兵。
+# 编号→兵种的对应见 cpp/presentation.cpp robot_class_name()，两处必须一致，
+# 否则终端会对模拟器发出的编号退回显示纯数字。蓝方沿用附录二 +100 偏移。
+# 正式协议未发布，这些编号为本地模拟词汇，不得视为正式合同。
+# 自机 SELF_ROBOT_ID=3 是红方步兵，故 _FRIENDLY_IDS 不含 3。
+_FRIENDLY_IDS: tuple[int, ...] = (1, 2, 4, 5)
+_ENEMY_IDS: tuple[int, ...] = (101, 102, 103, 104, 105)
+
+_RED_IDS: tuple[int, ...] = tuple(sorted((*_FRIENDLY_IDS, SELF_ROBOT_ID)))
+
+# 基地 5000 HP 配当前掉血速率要 455s 才打空，比一局 420s 还长，局分永远停在 0:0。
+# 1500 HP 约 2.3 分钟一局，演示时才看得到局分变化。
+_BASE_MAX_HP = 5000
+_OUTPOST_MAX_HP = 1500
+_RED_TEAM_NAME = "电子科技大学中山学院 RoboBraver"
+_BLUE_TEAM_NAME = "哈尔滨工业大学(威海) HERO"
 
 _FACTION_RED = 1
 _FACTION_BLUE = 2
 
 _FIELD_LENGTH_M = 28.0
 _FIELD_WIDTH_M = 15.0
+
+# 必须与 cpp/presentation.cpp robot_class_name() 逐字一致，否则事件文本与花名册对同一台车的称呼会不同。
+_ROBOT_CLASS_NAMES = {1: "重装", 2: "步兵", 3: "步兵", 4: "空中", 5: "哨兵"}
+
+
+def _robot_name(robot_id: int) -> str:
+    number = robot_id - 100 if robot_id > 100 else robot_id
+    faction = "红方" if robot_id in _RED_IDS else "蓝方"
+    return f"{faction}{_ROBOT_CLASS_NAMES.get(number, str(number))}"
 
 
 def _self_pose(e: float) -> tuple[float, float, float]:
@@ -108,6 +130,28 @@ class SimulatedMatch:
         self.blue_score = 0
         self.seq = 0
         self.rng = random.Random(2027)
+        # 全场血量：自机血量仍由 self.hp 单独维护（既有 RobotDynamicStatus 链路），
+        # 这里只存其余机器人，避免同一台机器人有两个互相矛盾的血量来源。
+        self.other_hp = {
+            robot_id: 400 for robot_id in (*_FRIENDLY_IDS, *_ENEMY_IDS)
+        }
+        self.other_max_hp = {
+            robot_id: 600 for robot_id in (*_FRIENDLY_IDS, *_ENEMY_IDS)
+        }
+        self.red_base_hp = _BASE_MAX_HP
+        self.blue_base_hp = _BASE_MAX_HP
+        self.red_outpost_hp = _OUTPOST_MAX_HP
+        self.blue_outpost_hp = _OUTPOST_MAX_HP
+        self.red_economy = 600
+        self.blue_economy = 600
+        # 累计总伤害由每次实际扣血累加（见 _deal_damage），不额外造随机数：面板
+        # 同时显示血量差和总伤害，两者取自同一次扣血才不会互相矛盾。
+        self.red_total_damage = 0
+        self.blue_total_damage = 0
+        self.red_fortress_sec = 0
+        self.blue_fortress_sec = 0
+        self.fortress_holder = 0
+        self._fortress_accum = 0.0
         self.target_locked = False
         self.target_id = 0
         self.vision_online = True
@@ -145,15 +189,12 @@ class SimulatedMatch:
 
         if self.rng.random() < 0.004:
             self.vision_online = not self.vision_online
-            self.events.append((2 if not self.vision_online else 0,
-                                "视觉进程离线" if not self.vision_online else "视觉进程恢复"))
 
         if self.vision_online and self.autoaim:
             if self.rng.random() < 0.02:
                 self.target_locked = not self.target_locked
                 if self.target_locked:
-                    self.target_id = self.rng.choice([101, 103, 104, 107])
-                    self.events.append((1, f"锁定目标 ID {self.target_id}"))
+                    self.target_id = self.rng.choice(_ENEMY_IDS)
         else:
             self.target_locked = False
 
@@ -166,29 +207,135 @@ class SimulatedMatch:
         if self.target_locked and self.ammo > 0 and self.rng.random() < 0.3:
             self.ammo -= 1
             self.heat = min(300, self.heat + 10)
-            if self.heat > 240:
-                self.events.append((2, "射击热量接近上限"))
         if self.hp == 0:
             if self.rng.random() < 0.04:
                 self.hp = self.max_hp
                 self.ammo = min(400, self.ammo + 100)
-                self.events.append((0, "复活完成，血量与弹量已补充"))
             return
 
         if self.rng.random() < 0.05:
             dmg = self.rng.randint(5, 40)
-            self.hp = max(0, self.hp - dmg)
+            applied = min(self.hp, dmg)
+            self.hp -= applied
+            self._deal_damage(True, applied)
             if self.hp == 0:
-                self.events.append((3, "机器人阵亡，等待复活"))
-            else:
-                self.events.append((2 if dmg > 25 else 1, f"装甲板受击 -{dmg} HP"))
+                self.events.append((3, f"{_robot_name(SELF_ROBOT_ID)}阵亡"))
         if self.rng.random() < 0.03:
             self.hp = min(self.max_hp, self.hp + 60)
             self.coin += 20
+        self.tick_field_hp()
+        self.tick_fortress()
+
+    def tick_fortress(self) -> None:
         if self.rng.random() < 0.01:
+            self.fortress_holder = self.rng.choice((0, 1, 2))
+        if self.fortress_holder == 0:
+            return
+        # 占领秒数按 10Hz 累加:每 tick 0.1s,攒满 1s 才 +1,否则秒数会以 10 倍速跑。
+        self._fortress_accum += 0.1
+        if self._fortress_accum < 1.0:
+            return
+        self._fortress_accum -= 1.0
+        if self.fortress_holder == 1:
+            self.red_fortress_sec += 1
+        else:
+            self.blue_fortress_sec += 1
+
+    def _deal_damage(self, victim_is_red: bool, amount: int) -> None:
+        if victim_is_red:
+            self.blue_total_damage += amount
+        else:
+            self.red_total_damage += amount
+
+    def tick_field_hp(self) -> None:
+        """推进除自机外的全场血量与双方基地血量。
+
+        比分改为局分语义：基地被打空即该局结束、对方 +1 局分并重置基地。此前用
+        每 tick 1% 概率给 red_score += 1 的累计计数，跑几分钟就攒到几百，和真实
+        赛制的 0-3 局分完全不是一个量级。
+        """
+        for robot_id, hp in self.other_hp.items():
+            if hp == 0:
+                if self.rng.random() < 0.04:
+                    self.other_hp[robot_id] = self.other_max_hp[robot_id]
+                continue
+            if self.rng.random() < 0.05:
+                applied = min(hp, self.rng.randint(5, 40))
+                self.other_hp[robot_id] = hp - applied
+                self._deal_damage(robot_id in _RED_IDS, applied)
+                if self.other_hp[robot_id] == 0:
+                    level = 1 if robot_id in _RED_IDS else 0
+                    self.events.append((level, f"{_robot_name(robot_id)}阵亡"))
+            elif self.rng.random() < 0.03:
+                self.other_hp[robot_id] = min(
+                    self.other_max_hp[robot_id], hp + 60)
+
+        # 按 10Hz 折算:0.02 × 均值 50 × 10 tick ≈ 10 HP/s,1500 血约 150s 倒,比基地略早。
+        # `> 0` 是边沿判定,不可省:血量已是 0 时再减仍是 0,只看减后结果会让前哨站倒下后每 tick 重播一次。
+        if self.rng.random() < 0.02 and self.blue_outpost_hp > 0:
+            applied = min(self.blue_outpost_hp, self.rng.randint(20, 80))
+            self.blue_outpost_hp -= applied
+            self._deal_damage(False, applied)
+            if self.blue_outpost_hp == 0:
+                self.events.append((0, "蓝方前哨站被摧毁"))
+        if self.rng.random() < 0.018 and self.red_outpost_hp > 0:
+            applied = min(self.red_outpost_hp, self.rng.randint(20, 80))
+            self.red_outpost_hp -= applied
+            self._deal_damage(True, applied)
+            if self.red_outpost_hp == 0:
+                self.events.append((2, "红方前哨站被摧毁"))
+
+        if self.rng.random() < 0.02:
+            applied = min(self.blue_base_hp, self.rng.randint(20, 90))
+            self.blue_base_hp -= applied
+            self._deal_damage(False, applied)
+        if self.rng.random() < 0.018:
+            applied = min(self.red_base_hp, self.rng.randint(20, 90))
+            self.red_base_hp -= applied
+            self._deal_damage(True, applied)
+
+        # 收入期望需盖过支出期望,否则剩余经济几十秒内就被抽干贴在 0:
+        # 收 0.18×27.5≈4.95/tick vs 支 0.05×80≈4.0/tick,净微增并在数百区间震荡。
+        if self.rng.random() < 0.18:
+            self.red_economy += self.rng.randint(10, 45)
+        if self.rng.random() < 0.18:
+            self.blue_economy += self.rng.randint(10, 45)
+        if self.rng.random() < 0.05:
+            self.red_economy = max(0, self.red_economy - self.rng.randint(40, 120))
+        if self.rng.random() < 0.05:
+            self.blue_economy = max(0, self.blue_economy - self.rng.randint(40, 120))
+
+        if self.blue_base_hp == 0:
             self.red_score += 1
-        if self.rng.random() < 0.008:
+            self.events.append((0, "蓝方基地被击毁，红方本局获胜"))
+            self.start_next_round()
+        elif self.red_base_hp == 0:
             self.blue_score += 1
+            self.events.append((3, "红方基地被击毁，蓝方本局获胜"))
+            self.start_next_round()
+
+    def start_next_round(self) -> None:
+        self.red_base_hp = _BASE_MAX_HP
+        self.blue_base_hp = _BASE_MAX_HP
+        self.red_outpost_hp = _OUTPOST_MAX_HP
+        self.blue_outpost_hp = _OUTPOST_MAX_HP
+        self.red_economy = 600
+        self.blue_economy = 600
+        self.red_total_damage = 0
+        self.blue_total_damage = 0
+        self.red_fortress_sec = 0
+        self.blue_fortress_sec = 0
+        self.fortress_holder = 0
+        self._fortress_accum = 0.0
+
+    def field_health(self) -> list[tuple[int, int, int, int]]:
+        out: list[tuple[int, int, int, int]] = [
+            (SELF_ROBOT_ID, _FACTION_RED, self.hp, self.max_hp)
+        ]
+        for robot_id, hp in self.other_hp.items():
+            faction = _FACTION_RED if robot_id in _FRIENDLY_IDS else _FACTION_BLUE
+            out.append((robot_id, faction, hp, self.other_max_hp[robot_id]))
+        return out
 
     def match_elapsed(self) -> float | None:
         stage, _ = self.stage()
@@ -217,7 +364,7 @@ class SimulatedMatch:
             # 编造字段：用比赛内 ms 而非挂钟 ms，保证两次运行完全一致。
             self.blind_started_ms = int(start * 1000)
             self._blind_window = active
-            self.events.append((3, "我方基地被飞镖命中，图传致盲"))
+            self.events.append((3, "红方基地被飞镖命中，图传致盲"))
             print(f"[server] 致盲开始 match_t={start:.1f}s 持续={duration:.1f}s", flush=True)
         elif active is None and self._blind_window is not None:
             start, duration = self._blind_window
@@ -359,7 +506,28 @@ def main() -> int:
             current_stage=stage, stage_countdown_sec=remain,
             stage_elapsed_sec=int(match.elapsed), is_paused=False,
             winner=255, end_reason=255,
+            red_base_hp=match.red_base_hp, red_base_max_hp=_BASE_MAX_HP,
+            blue_base_hp=match.blue_base_hp, blue_base_max_hp=_BASE_MAX_HP,
+            red_outpost_hp=match.red_outpost_hp, red_outpost_max_hp=_OUTPOST_MAX_HP,
+            blue_outpost_hp=match.blue_outpost_hp, blue_outpost_max_hp=_OUTPOST_MAX_HP,
+            red_team_name=_RED_TEAM_NAME, blue_team_name=_BLUE_TEAM_NAME,
+            red_economy=match.red_economy, blue_economy=match.blue_economy,
+            red_total_damage=match.red_total_damage,
+            blue_total_damage=match.blue_total_damage,
+            red_fortress_sec=match.red_fortress_sec,
+            blue_fortress_sec=match.blue_fortress_sec,
+            fortress_holder=match.fortress_holder,
         ))
+
+    def send_health_set() -> None:
+        m = pb.RobotHealthSet()
+        for robot_id, faction, hp, max_hp in match.field_health():
+            entry = m.entries.add()
+            entry.robot_id = robot_id
+            entry.faction = faction
+            entry.current_hp = hp
+            entry.max_hp = max_hp
+        _publish(client, T_ROBOT_HEALTH_SET, m)
 
     def send_dynamic() -> None:
         match.tick_10hz()
@@ -431,6 +599,7 @@ def main() -> int:
         threading.Thread(target=loop, args=(1.0, send_position), daemon=True),
         threading.Thread(target=loop, args=(1 / 5, send_blind_status), daemon=True),
         threading.Thread(target=loop, args=(1.0, send_position_set), daemon=True),
+        threading.Thread(target=loop, args=(1 / 5, send_health_set), daemon=True),
         threading.Thread(target=loop, args=(1 / 20, send_events), daemon=True),
     ]
     for w in workers:
