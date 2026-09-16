@@ -1,0 +1,9 @@
+ts=2026-09-14T22:20:49.014Z level=info event=startup mode=terminal platform=macOS mqtt_host=127.0.0.1 mqtt_port=3333 udp_port=3334 stale_window_ms=500
+ts=2026-09-14T22:20:50.408Z level=warning event=stale_data groups=robot3.modules:11,robot3.position:3 robots=1
+ts=2026-09-14T22:20:51.399Z level=warning event=stale_data groups=robot3.modules:11,robot3.position:3 robots=1
+ts=2026-09-14T22:20:52.408Z level=warning event=stale_data groups=robot3.modules:11,robot3.position:3 robots=1
+ts=2026-09-14T22:20:53.156Z level=warning event=stale_data groups=event:3 robots=1
+ts=2026-09-14T22:20:53.406Z level=warning event=stale_data groups=event:3,robot3.modules:11,robot3.position:3 robots=1
+ts=2026-09-14T22:20:53.904Z level=warning event=stale_data groups=event:3 robots=1
+ts=2026-09-14T22:20:54.401Z level=warning event=stale_data groups=event:3,robot3.modules:11,robot3.position:3 robots=1
+ts=2026-09-14T22:20:54.925Z level=info event=shutdown mode=terminal exit=0

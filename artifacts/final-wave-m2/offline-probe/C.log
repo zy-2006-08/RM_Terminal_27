@@ -1,0 +1,20 @@
+ts=2026-09-14T22:11:08.034Z level=info event=startup mode=terminal platform=macOS mqtt_host=127.0.0.1 mqtt_port=3333 udp_port=3334 stale_window_ms=500
+ts=2026-09-14T22:11:08.174Z level=info event=ui_mode_switch from=Info to=Video reason=ForcedByCli blind_freshness=NeverReceived
+ts=2026-09-14T22:11:08.912Z level=warning event=stale_data groups=event:3 robots=1
+ts=2026-09-14T22:11:09.659Z level=warning event=stale_data groups=event:3,robot3.modules:11,robot3.position:3 robots=1
+ts=2026-09-14T22:11:09.914Z level=warning event=stale_data groups=robot3.modules:11,robot3.position:3 robots=1
+ts=2026-09-14T22:11:10.663Z level=warning event=stale_data groups=robot3.modules:11,robot3.position:3 robots=1
+ts=2026-09-14T22:11:10.913Z level=warning event=stale_data groups=event:3,robot3.modules:11,robot3.position:3,robot3.telemetry:4 robots=1
+ts=2026-09-14T22:11:11.160Z level=warning event=stale_data groups=event:3,robot3.telemetry:4 robots=1
+ts=2026-09-14T22:11:11.411Z level=warning event=stale_data groups=robot3.telemetry:4 robots=1
+ts=2026-09-14T22:11:11.660Z level=warning event=stale_data groups=robot3.modules:11,robot3.position:3,robot3.telemetry:4 robots=1
+ts=2026-09-14T22:11:11.912Z level=warning event=stale_data groups=event:3,robot3.modules:11,robot3.position:3,robot3.telemetry:4 robots=1
+ts=2026-09-14T22:11:12.163Z level=warning event=stale_data groups=event:3,robot3.telemetry:4 robots=1
+ts=2026-09-14T22:11:12.663Z level=warning event=stale_data groups=event:3,robot3.modules:11,robot3.position:3,robot3.telemetry:4 robots=1
+ts=2026-09-14T22:11:13.159Z level=warning event=stale_data groups=event:3,robot3.telemetry:4 robots=1
+ts=2026-09-14T22:11:13.662Z level=warning event=stale_data groups=robot3.modules:11,robot3.position:3 robots=1
+ts=2026-09-14T22:11:14.413Z level=warning event=stale_data groups=event:3 robots=1
+ts=2026-09-14T22:11:14.660Z level=warning event=stale_data groups=event:3,robot3.modules:11,robot3.position:3 robots=1
+ts=2026-09-14T22:11:15.163Z level=warning event=stale_data groups=event:3,robot3.telemetry:4 robots=1
+ts=2026-09-14T22:11:15.660Z level=warning event=stale_data groups=event:3,robot3.modules:11,robot3.position:3,robot3.telemetry:4 robots=1
+ts=2026-09-14T22:11:15.936Z level=info event=shutdown mode=terminal exit=0

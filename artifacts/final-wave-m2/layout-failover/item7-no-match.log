@@ -1,0 +1,2 @@
+ts=2026-09-14T22:20:55.988Z level=info event=startup mode=terminal platform=macOS mqtt_host=127.0.0.1 mqtt_port=3333 udp_port=3334 stale_window_ms=500
+ts=2026-09-14T22:21:01.936Z level=info event=shutdown mode=terminal exit=0

@@ -1,0 +1,14 @@
+[video_sender] 372 帧 -> udp://127.0.0.1:3334  fps=30.0 loss=0.0% 循环播放，Ctrl-C 退出
+[video_sender] 已发 60 帧 806 包，丢弃 0
+[video_sender] 已发 120 帧 1643 包，丢弃 0
+[video_sender] 已发 180 帧 2448 包，丢弃 0
+[video_sender] 已发 240 帧 3269 包，丢弃 0
+[video_sender] 已发 300 帧 4080 包，丢弃 0
+[video_sender] 已发 360 帧 4888 包，丢弃 0
+[video_sender] 372 帧 -> udp://127.0.0.1:3334  fps=30.0 loss=0.0% 循环播放，Ctrl-C 退出
+[video_sender] 已发 60 帧 806 包，丢弃 0
+[video_sender] 已发 120 帧 1643 包，丢弃 0
+[video_sender] 已发 180 帧 2448 包，丢弃 0
+[video_sender] 已发 240 帧 3269 包，丢弃 0
+[video_sender] 已发 300 帧 4080 包，丢弃 0
+[video_sender] 已发 360 帧 4888 包，丢弃 0

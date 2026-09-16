@@ -1,0 +1,5 @@
+MQTT subscribed (readonly)
+ignored malformed, stale, invalid, or unknown MQTT message: Event
+2026-09-15 08:08:59.691 rm_terminal[19579:2784736] error messaging the mach port for IMKCFRunLoopWakeUpReliable
+ignored malformed, stale, invalid, or unknown MQTT message: Event
+ignored malformed, stale, invalid, or unknown MQTT message: Event

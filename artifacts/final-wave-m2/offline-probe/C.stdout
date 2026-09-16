@@ -1,0 +1,5 @@
+MQTT subscribed (readonly)
+qt.qpa.fonts: Populating font family aliases took 56 ms. Replace uses of missing font family "Sans Serif" with one that exists to avoid this cost. 
+ignored malformed, stale, invalid, or unknown MQTT message: Event
+screenshot written: /Users/zy/RMGF/terminal/artifacts/final-wave-m2/offline-probe/C.png 980 x 620
+layout dump written: /Users/zy/RMGF/terminal/artifacts/final-wave-m2/offline-probe/C.json

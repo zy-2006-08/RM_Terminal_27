@@ -1,0 +1,191 @@
+FINAL VERIFICATION WAVE - MODULE TWO (adaptive ops UI)
+Plan: /Users/zy/.omo/plans/rmuc-terminal-adaptive-ops-ui.md
+HEAD at verification: 8d994bf docs(build): rerun read-only control audit and document module-two entry points
+Platform: macOS only. Ubuntu is NOT validated and is not claimed to be.
+Human acceptance (F5) is NOT covered here and is not self-approved.
+
+VERDICTS
+  F1 Plan compliance audit ....... PASS
+  F2 Code quality review ......... PASS
+  F3 Runtime verification ........ REJECT  (item 6, video-mode offline text)
+  F4 Scope fidelity .............. PASS
+  F5 Human acceptance ............ PENDING - awaiting user
+
+Overall: NOT ACCEPTED. F3 must pass before the agent-side completion condition is met.
+
+================================================================
+F1 - PLAN COMPLIANCE AUDIT (per-item, todo 1-14)
+================================================================
+(a) Mode state machine inside terminal_presentation + has CTest ...... PASS
+    UiModeMachine lives in the terminal_presentation library; CMakeLists.txt
+    registers test `ui_mode_state`. No Qt Widgets include, no global time read.
+(b) Map projection is a pure function, Y flip correct ................ PASS
+    cpp/field_map.cpp:40-58 `project()` is free/pure; Y inverted via
+    (1.0 - fy) * view.height with the rationale commented at :53-54.
+    MapPane::paintEvent (cpp/map_pane.cpp:109) contains NO projection
+    arithmetic - it only calls map_viewport()/project()/project_yaw_deg().
+(c) Event history bounded AND original EventFields retained .......... PASS
+    event_history_capacity config key present; EventFields still exists
+    alongside EventHistory (not replaced).
+(d) Chassis 5 modes match core/constants.py:80-86 value-for-value .... PASS
+    Labels compared against core/constants.py; all five agree.
+(e) Protocol new fields additive, existing 7 messages untouched ...... PASS
+    New fields carry the simulation disclaimer comment. No existing message
+    field number changed.
+(f) Self-position priority (todo 6f) ................................. PASS
+    cpp/store.cpp:129-136: when robot.is_self, the position is taken from the
+    authoritative single-robot path (state_.robots) and the coordinates carried
+    in the set are DISCARDED. Absent authoritative data leaves it Missing with
+    no fallback. This is the anti-spoof property the plan asked for.
+
+================================================================
+F2 - CODE QUALITY REVIEW (read-only)
+================================================================
+UiModeMachine takes no global time, no Qt Widgets ................... PASS
+  Time is injected as MonotonicMs. Single process-wide epoch via
+  monotonic_now() (cpp/clock.h), backed by steady_clock - chosen over
+  QElapsedTimer because the mosquitto loop thread and the Qt main thread call
+  it concurrently. No QDateTime::currentMSecsSinceEpoch() anywhere in cpp/
+  except a comment in clock_test.cpp naming it as the thing NOT used.
+  Guard is enforced by tests `monotonic_clock` and `monotonic_clock_guard`.
+MapPane::paintEvent has no projection math ......................... PASS  (see F1b)
+Dashboard::update calls latestFrame() once per tick, keeps .copy() .. PASS
+No second panel-text implementation ................................ PASS
+No VideoReceiver::stop() call from the GUI path .................... PASS
+  Only two hits exist: cpp/video_receiver.cpp:77 which IS stop()'s own body,
+  and cpp/video_diagnostic.cpp:52 which is a SEPARATE diagnostic executable
+  (CMakeLists.txt:77-78), not the GUI target. main.cpp and dashboard.cpp
+  contain no stop() call at all.
+No VideoPane reparenting ........................................... PASS
+map_robots replaced wholesale, stable sort by id ................... PASS
+  cpp/store.cpp:143 std::stable_sort by id, then whole-vector move-assign
+  into state_.map_robots at :145. No incremental mutation.
+  NOTE (not a defect): cpp/map_pane.cpp:66 uses plain std::sort, also by id.
+  Ids are unique per robot so ordering is still deterministic; it is simply
+  less defensive than the store's stable_sort. No behavioural consequence.
+New config keys present on BOTH sides .............................. PASS
+  key                        config.cpp  config_test.cpp
+  mode_exit_hysteresis_ms         2            5
+  blind_stale_fallback_ms         3           10
+  event_history_capacity          2            5
+  map_enabled                     2            9
+AI-slop check (dead abstraction, defensive padding, comments that
+merely restate code) ............................................... PASS
+  Comments encountered explain WHY (Y-flip consequence, off-field points
+  deliberately not drawn, self-coordinate spoof resistance, steady_clock
+  thread-safety rationale) rather than paraphrasing the statement below them.
+
+================================================================
+F3 - AGENT-EXECUTED RUNTIME VERIFICATION  -> REJECT
+================================================================
+Harnesses (all dependency-free, all written for this wave):
+  artifacts/final-wave-m2/f3_png.py             PNG decoder/classifier
+  artifacts/final-wave-m2/f3_offline_probe.sh   sender-loss probe
+  artifacts/final-wave-m2/f3_long_run.sh        190s timeline + wire capture
+  artifacts/final-wave-m2/f3_layout_failover.sh 3-process layout + failover
+
+(1) exactly 4 ui_mode_switch transitions, paired, correct reason ... PASS
+    Observed at +40.25s, +55.25s, +160.25s, +175.25s.
+    Simulator blind schedule sim/match_server.py:_BLIND_SCHEDULE =
+    ((30.0,12.0),(150.0,12.0)); the +10.25s stage offset accounts for the
+    absolute timestamps.
+(2) both Video durations ~= 12s blind + 3s hysteresis, +/-1.5s ..... PASS
+    Both durations exactly 15.00s (12s asserted blind + 3000ms hysteresis).
+(3) no extra transitions inside the blind window (no flapping) ..... PASS
+    Total transition count is exactly 4; no intermediate transitions.
+(4) 4x --dump-layout JSON assertions, both modes ................... PASS
+    Info mode map area 175,200px vs Video-mode thumbnail 14,400px = 12.17x.
+    Video pane occupies 79.6% of the window, map hidden. Read-only banner and
+    ForcedByCli reason correct in both. Screenshots differ.
+(5) decoded_frames monotonic, never resets ......... PASS (WITH CAVEAT)
+    CAVEAT, stated plainly: decoded_frames is NOT externally observable from
+    the GUI process - it appears in neither the logs nor --dump-layout JSON.
+    This item is therefore NOT literal runtime sampling of the counter.
+    What was actually proven:
+      - static: the only mutation site is `++decoded_frames_`; there is no
+        assignment and no reset anywhere in cpp/video_receiver.cpp.
+      - runtime: the decoder child PID stayed constant (1074 in the recorded
+        run) across all four mode transitions, with zero reconnect_udp and
+        zero decode_failure. The decoder was resident, never respawned.
+    Together these make a reset impossible, but the wording "observed
+    monotonic increase" would overstate the evidence and is not claimed.
+(6) after killing sim/video_sender.py: video mode shows offline text,
+    info mode map still fine, both exit 0 ......................... **FAIL**
+    Info-mode half PASSES: map remained functional after sender loss, exit 0.
+    Video-mode half FAILS. Three-arm probe:
+      A  sender alive                     -> classified `frame`     (expected)
+      B  sender killed 14s before capture  -> classified `frame`     (WRONG)
+      C  no sender at all                 -> classified `placard`   (expected;
+         99.51% background + status-pen pixels)
+    In arm B the receiver logged reconnect_udp=1 and went disconnected, yet the
+    last decoded frame was still painted. All three captures exited 0, so the
+    exit-code half of the item is fine - the display requirement is what fails.
+    ROOT CAUSE: VideoReceiver never clears latest_ on disconnect or decoder
+    teardown, so VideoPane::paintEvent keeps drawing the stale QImage and
+    returns before it can paint the offline text.
+    PRE-EXISTING, NOT A MODULE-TWO REGRESSION: baseline 5437b0c has the same
+    latest_ lifecycle. Module two did not introduce this. It did raise the
+    stakes: video mode now fills the screen exactly when the operator is
+    blind, instead of sitting in a corner thumbnail, so a frozen frame is now
+    far more likely to be misread as live.
+    An early version of this probe leaked the sender process and mis-counted;
+    that bug was fixed and the run above is the corrected one.
+(7) after killing sim/match_server.py: no crash, exit 0 ............ PASS
+(8) todo 14's 5 read-only audits re-run, control_from_terminal=0 ... PASS
+    No product mosquitto_pub, no publish symbol, no writeDatagram, no
+    CAN/UART/serial egress, no control-topic reference. The CustomControl
+    rejection path is test-only.
+(9) runtime zero-publish observation via mosquitto_sub -t '#' ...... PASS
+    Wildcard capture started BEFORE any publisher. 8 inbound topic families,
+    14,151 topic-led messages. Zero CustomControl and zero CommonCommand in
+    the raw bytes. Artifact: artifacts/final-wave-m2/long-run/asserted_wire.log
+    The harness first crashed decoding binary protobuf as UTF-8; the analysis
+    was redone byte-safe and completed.
+
+F3 verdict: REJECT on item 6. Per the plan's own rule ("any single item FAIL
+means F3 is REJECTED overall"), no partial credit is taken.
+
+================================================================
+F4 - SCOPE FIDELITY
+================================================================
+Under-delivery side - all present, nothing silently downgraded ..... PASS
+  Dual mode, full tactical map, --force-mode, event severity grading, and the
+  chassis enum correction are all implemented. Neither "just one mode first"
+  nor "skip the map for now" happened.
+Over-delivery side - none of the forbidden additions .............. PASS
+  No control buttons, no keyboard shortcuts, no menus (no QPushButton, QMenu,
+  QShortcut, no key/mouse handlers), no QML, no animation, no CAN, no UART,
+  no publish call, no real camera, no field obstacle geometry, no trail/tail
+  rendering, no AI recommendation.
+Honesty of claims ................................................ PASS
+  New protocol fields are not described as an official 2027 contract.
+  No document claims Ubuntu is verified.
+  Correction made during this wave: artifacts/task-14/receipt.txt previously
+  claimed every --force-mode / --dump-layout mention sat under the debug
+  heading. It does not. Actual placement is lines 83/93/94/96 under
+  "## Configuration" and lines 179-207 under "## 调试与证据采集". The receipt
+  was rewritten to state that accurately. BUILD.md itself was fine; only the
+  receipt's description of it was wrong.
+
+================================================================
+BUILD / TEST EVIDENCE
+================================================================
+cmake --build build/macos ................... exit 0, 0 warnings, 0 errors
+cmake --build build/macos-release ........... exit 0, 0 warnings, 0 errors
+ctest --test-dir build/macos -LE integration ......... 12/12 passed
+ctest --test-dir build/macos-release -LE integration . 12/12 passed
+ctest --test-dir build/macos -L integration .......... 1/1 passed, 62.91s
+
+================================================================
+OPEN DECISION FOR THE USER
+================================================================
+F3 item 6 needs a product-code change plus a regression test. Two defensible
+fixes, and this is a design call rather than a mechanical one:
+  (i)  clear latest_ when the socket disconnects / the decoder is torn down,
+       so the existing placard path renders naturally; or
+  (ii) leave latest_ alone and have the dashboard/pane suppress a stale frame,
+       painting an explicit "offline"/"frozen" status over or instead of it.
+(ii) preserves the option of showing a dimmed last-known frame with an honest
+overlay, which an operator may prefer to a blank placard. (i) is smaller.
+Not implemented yet - it is a scope change on pre-existing behaviour and has
+not been approved. F3 will be re-run in full after the decision.

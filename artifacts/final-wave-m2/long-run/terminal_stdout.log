@@ -1,0 +1,4 @@
+MQTT subscribed (readonly)
+qt.qpa.fonts: Populating font family aliases took 65 ms. Replace uses of missing font family "Sans Serif" with one that exists to avoid this cost. 
+ignored malformed, stale, invalid, or unknown MQTT message: Event
+ignored malformed, stale, invalid, or unknown MQTT message: Event

@@ -234,8 +234,17 @@ Protobuf regeneration was already documented (## Protobuf generation, C++ via th
 Plan acceptance greps:
   grep -c "force-mode" BUILD.md   -> 6   (>= 1)
   grep -c "dump-layout" BUILD.md  -> 5   (>= 1)
-  section owning every one of those hits -> "## 调试与证据采集 (debug and evidence
-    capture)", so the heading contains both 调试 and 证据
+  CORRECTION (F1/F4 re-audit, 2026-09-15): the line previously claimed here, that
+    "## 调试与证据采集 (debug and evidence capture)" owns EVERY one of those hits,
+    was FALSE. Actual line numbers: 83, 93, 94, 96 fall under "## Configuration"
+    (heading at line 40); only 179-207 fall under the debug/evidence heading
+    (line 162). The plan's criterion is that the hits' section title contains
+    "调试" or "证据", which IS satisfied by 179-207, so the acceptance check still
+    passes -- but it passes on those lines, not on all of them. The Configuration
+    entries are the exit-code table (83) and the CLI argument table (93, 94, 96),
+    each of which labels the flags "Debug/evidence only", so BUILD.md never
+    presents them as operator features. The defect was in this receipt's
+    over-broad wording, not in the documentation.
   grep -i "ubuntu" BUILD.md -> hits at the Ubuntu command section and the platform
     status table, context DEFERRED
   four config keys present: mode_exit_hysteresis_ms (2), event_history_capacity (1),

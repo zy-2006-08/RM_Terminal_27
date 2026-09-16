@@ -1,0 +1,12 @@
+ts=2026-09-14T22:20:40.967Z level=info event=startup mode=terminal platform=macOS mqtt_host=127.0.0.1 mqtt_port=3333 udp_port=3334 stale_window_ms=500
+ts=2026-09-14T22:20:41.098Z level=info event=ui_mode_switch from=Info to=Video reason=ForcedByCli blind_freshness=Fresh
+ts=2026-09-14T22:20:41.626Z level=warning event=stale_data groups=event:3 robots=1
+ts=2026-09-14T22:20:42.401Z level=warning event=stale_data groups=robot3.modules:11,robot3.position:3 robots=1
+ts=2026-09-14T22:20:43.404Z level=warning event=stale_data groups=robot3.modules:11,robot3.position:3,robot3.telemetry:4 robots=1
+ts=2026-09-14T22:20:43.900Z level=warning event=stale_data groups=event:3,robot3.telemetry:4 robots=1
+ts=2026-09-14T22:20:44.404Z level=warning event=stale_data groups=event:3,robot3.modules:11,robot3.position:3,robot3.telemetry:4 robots=1
+ts=2026-09-14T22:20:44.902Z level=warning event=stale_data groups=event:3,robot3.telemetry:4 robots=1
+ts=2026-09-14T22:20:45.399Z level=warning event=stale_data groups=event:3,robot3.modules:11,robot3.position:3,robot3.telemetry:4 robots=1
+ts=2026-09-14T22:20:45.900Z level=warning event=stale_data groups=event:3,robot3.telemetry:4 robots=1
+ts=2026-09-14T22:20:46.400Z level=warning event=stale_data groups=event:3,robot3.modules:11,robot3.position:3,robot3.telemetry:4 robots=1
+ts=2026-09-14T22:20:46.931Z level=info event=shutdown mode=terminal exit=0

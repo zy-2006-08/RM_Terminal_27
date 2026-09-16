@@ -1,0 +1,17 @@
+{
+  "mode": "Video",
+  "reason": "ForcedByCli",
+  "readonly_banner_visible": true,
+  "stacked_index": 1,
+  "window": {"width": 980, "height": 620},
+  "panes": [
+    {"name": "map_pane", "visible": false, "x": 0, "y": 0, "width": 0, "height": 0},
+    {"name": "info_video_pane", "visible": false, "x": 0, "y": 0, "width": 0, "height": 0},
+    {"name": "video_full_pane", "visible": true, "x": 0, "y": 27, "width": 958, "height": 505},
+    {"name": "game_panel", "visible": false, "x": 0, "y": 0, "width": 0, "height": 0},
+    {"name": "robot_panel", "visible": false, "x": 0, "y": 0, "width": 0, "height": 0},
+    {"name": "event_panel", "visible": false, "x": 0, "y": 0, "width": 0, "height": 0},
+    {"name": "mode_banner", "visible": true, "x": 11, "y": 46, "width": 958, "height": 25},
+    {"name": "readonly_banner", "visible": true, "x": 11, "y": 11, "width": 958, "height": 29}
+  ]
+}
