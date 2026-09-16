@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QImage>
 #include <QLabel>
+#include <QQuickWidget>
 #include <algorithm>
 #include <iostream>
 #include <stdexcept>
@@ -75,6 +76,19 @@ Snapshot clear_snapshot() {
 void settle(Dashboard& dashboard) {
     dashboard.show();
     QCoreApplication::processEvents();
+}
+
+// QWidget::render() 抵不到 QQuickWidget 里的 QML 内容：scene graph 是异步的，
+// 单跑一次 processEvents() 就读像素实测约 9/40 抓到空白帧。grabFramebuffer()
+// 同步算绘并回传当前帧，既不靠等待也不靠 sleep 赌时序。
+QImage grab_rendered(const QWidget* host) {
+    if (auto* quick = qobject_cast<QQuickWidget*>(const_cast<QWidget*>(host))) {
+        return quick->grabFramebuffer();
+    }
+    QImage shot(host->size(), QImage::Format_ARGB32);
+    shot.fill(Qt::transparent);
+    const_cast<QWidget*>(host)->render(&shot);
+    return shot;
 }
 
 // Modes are reached only by feeding snapshots through the real update() path.
@@ -477,9 +491,7 @@ void a_blocking_popup_renders_above_both_pages_without_moving_the_layout() {
           "the popup is vertically centred");
 
     // 真的画出了像素,而不是一个可见但透明的空盒子。
-    QImage shot(popup->size(), QImage::Format_ARGB32);
-    shot.fill(Qt::transparent);
-    const_cast<QWidget*>(popup)->render(&shot);
+    const QImage shot = grab_rendered(popup);
     int opaque_pixels = 0;
     for (int y = 0; y < shot.height(); ++y) {
         for (int x = 0; x < shot.width(); ++x) {

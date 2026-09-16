@@ -13,6 +13,10 @@ namespace rm_terminal {
 // 而不是 dashboard.h:事件面板的宽度提示要用它,而 dashboard.h 反向依赖本头文件。
 constexpr int kRosterColumnWidth = 250;
 
+// 卡片布局的左右内边距之和(dashboard.cpp 里 event_column/video_column 都是 9+9)。
+// 面板的宽度提示要减掉它,否则卡片加上边距后会把所在列顶宽。
+constexpr int kCardHorizontalMargins = 18;
+
 // 事件横幅的配色来源。faction 之外单列 Positive:能量机关一类正向事件无论由哪
 // 方激活都走绿色横幅,不能按阵营染成红/蓝。
 enum class EventBanner { Neutral, Red, Blue, Positive };

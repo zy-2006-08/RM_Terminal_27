@@ -175,9 +175,12 @@ void EventFeedPane::setDroppedCount(std::size_t dropped) {
 
 int EventFeedPane::rowHeight() { return QFontMetrics(row_font()).lineSpacing() + 8; }
 
-// 宽度提示不能超过花名册列宽:报 460 会把左列顶宽,右列却只有图传的提示,画面
-// 就左右不对称。事件文字过长时由 elidedText 收尾,不需要靠宽提示撑开。
-QSize EventFeedPane::sizeHint() const { return QSize(kRosterColumnWidth, rowHeight()); }
+// 宽度提示必须减掉所在卡片的左右内边距(各 9)。报满 kRosterColumnWidth 时,卡片
+// 会在提示之外再加边距,把左列顶到 268 而右列只有 250,画面左右不对称 —— 这正是
+// 报 460 时更夸张的那个 bug。事件文字过长由 elidedText 收尾,不靠宽提示撑开。
+QSize EventFeedPane::sizeHint() const {
+    return QSize(kRosterColumnWidth - kCardHorizontalMargins, rowHeight());
+}
 
 void EventFeedPane::paintEvent(QPaintEvent*) {
     QPainter painter(this);

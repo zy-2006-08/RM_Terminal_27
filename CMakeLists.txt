@@ -152,7 +152,7 @@ if(BUILD_TESTING)
     add_test(NAME top_bar_model COMMAND top_bar_model_test)
     # 资源随可执行文件带:这个测试构造真的 Dashboard,顶部栏要能真的加载 QML。
     add_executable(dashboard_layout_test cpp/dashboard_layout_test.cpp ${TOPBAR_RES})
-    target_link_libraries(dashboard_layout_test PRIVATE terminal_dashboard Qt6::Widgets)
+    target_link_libraries(dashboard_layout_test PRIVATE terminal_dashboard Qt6::Widgets Qt6::QuickWidgets)
     target_compile_definitions(dashboard_layout_test PRIVATE
         QT_NO_KEYWORDS
         RM_TERMINAL_DASHBOARD_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/cpp/dashboard.cpp")
