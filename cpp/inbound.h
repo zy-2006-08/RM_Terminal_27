@@ -21,5 +21,11 @@ struct RobotPositionEntry : PositionFields<std::optional> {
 struct RobotPositionSet {
     std::vector<RobotPositionEntry> entries;
 };
+struct RobotHealthEntry {
+    std::optional<std::uint32_t> robot_id, faction, current_hp, max_hp;
+};
+struct RobotHealthSet {
+    std::vector<RobotHealthEntry> entries;
+};
 
 }

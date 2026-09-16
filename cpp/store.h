@@ -15,6 +15,7 @@ public:
     bool apply(const inbound::RobotTelemetry& patch, std::optional<RobotId> source, MonotonicMs now);
     bool apply(const inbound::BlindStatus& patch, MonotonicMs now);
     bool apply(const inbound::RobotPositionSet& patch, MonotonicMs now);
+    bool apply(const inbound::RobotHealthSet& patch, MonotonicMs now);
     Snapshot snapshot(MonotonicMs now) const;
 
 private:

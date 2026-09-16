@@ -39,6 +39,25 @@ bool convert(GameFields<Field>& state, const inbound::GameStatus& patch, Monoton
     MERGE(is_paused, any_value);
     MERGE(winner, [](auto v) { return v <= 2 || v == 255; });
     MERGE(end_reason, between(0, 255));
+    // 漏掉一个 MERGE 不报错:字段停在 NeverReceived,界面谎报「无数据」。max 为 0
+    // 会让血条除零,故按无效拒绝。
+    MERGE(red_base_hp, any_value);
+    MERGE(red_base_max_hp, [](auto v) { return v > 0; });
+    MERGE(blue_base_hp, any_value);
+    MERGE(blue_base_max_hp, [](auto v) { return v > 0; });
+    MERGE(red_outpost_hp, any_value);
+    MERGE(red_outpost_max_hp, [](auto v) { return v > 0; });
+    MERGE(blue_outpost_hp, any_value);
+    MERGE(blue_outpost_max_hp, [](auto v) { return v > 0; });
+    MERGE(red_team_name, [](const std::string& v) { return !v.empty(); });
+    MERGE(blue_team_name, [](const std::string& v) { return !v.empty(); });
+    MERGE(red_economy, any_value);
+    MERGE(blue_economy, any_value);
+    MERGE(red_total_damage, any_value);
+    MERGE(blue_total_damage, any_value);
+    MERGE(red_fortress_sec, any_value);
+    MERGE(blue_fortress_sec, any_value);
+    MERGE(fortress_holder, between(0, 2));
     return ok;
 }
 bool convert(DynamicFields<Field>& state, const inbound::RobotDynamicStatus& patch, MonotonicMs now) {

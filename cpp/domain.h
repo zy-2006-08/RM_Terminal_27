@@ -31,8 +31,18 @@ template<template<class> class F> struct GameFields {
     F<std::int32_t> stage_countdown_sec, stage_elapsed_sec;
     F<bool> is_paused;
     F<std::uint32_t> winner, end_reason;
+    F<std::uint32_t> red_base_hp, red_base_max_hp, blue_base_hp, blue_base_max_hp;
+    F<std::uint32_t> red_outpost_hp, red_outpost_max_hp, blue_outpost_hp, blue_outpost_max_hp;
+    F<std::string> red_team_name, blue_team_name;
+    F<std::uint32_t> red_economy, blue_economy, red_total_damage, blue_total_damage;
+    F<std::uint32_t> red_fortress_sec, blue_fortress_sec, fortress_holder;
     auto fields() { return std::tie(current_round, total_rounds, red_score, blue_score,
-        current_stage, stage_countdown_sec, stage_elapsed_sec, is_paused, winner, end_reason); }
+        current_stage, stage_countdown_sec, stage_elapsed_sec, is_paused, winner, end_reason,
+        red_base_hp, red_base_max_hp, blue_base_hp, blue_base_max_hp,
+        red_outpost_hp, red_outpost_max_hp, blue_outpost_hp, blue_outpost_max_hp,
+        red_team_name, blue_team_name,
+        red_economy, blue_economy, red_total_damage, blue_total_damage,
+        red_fortress_sec, blue_fortress_sec, fortress_holder); }
 };
 template<template<class> class F> struct DynamicFields {
     F<std::uint32_t> current_hp, max_hp, shooter_heat_17mm, shooter_heat_limit;
@@ -128,6 +138,16 @@ struct MapRobot {
     PositionFields<Field> position;
 };
 
+// One robot's health as the top bar needs it. Health keeps the full Field
+// vocabulary so a missing HP stays distinguishable from a real 0, which is what
+// stops a robot with no data from being drawn as dead.
+struct RobotHealth {
+    RobotId id;
+    std::uint32_t faction = 0;
+    Field<std::uint32_t> current_hp;
+    Field<std::uint32_t> max_hp;
+};
+
 struct Snapshot {
     GameFields<Field> game;
     // Retained alongside `events`: the existing single-event panel, convert()
@@ -139,6 +159,9 @@ struct Snapshot {
     // the drawing order is stable across frames and the list stays bounded.
     std::vector<MapRobot> map_robots;
     std::size_t map_invalid_entries = 0;
+    // Sorted by ascending id and replaced wholesale on every health set, same
+    // contract as map_robots.
+    std::vector<RobotHealth> robot_health;
     std::map<RobotId, RobotState> robots;
 };
 

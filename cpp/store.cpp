@@ -145,6 +145,51 @@ bool Store::apply(const inbound::RobotPositionSet& patch, MonotonicMs now) {
     state_.map_robots = std::move(robots);
     return ok;
 }
+bool Store::apply(const inbound::RobotHealthSet& patch, MonotonicMs now) {
+    if (!advance(now)) return false;
+    bool ok = true;
+
+    std::vector<RobotHealth> health;
+    health.reserve(patch.entries.size());
+    for (const auto& entry : patch.entries) {
+        if (!entry.robot_id) {
+            ok = false;
+            continue;
+        }
+        RobotHealth robot;
+        robot.id = RobotId{*entry.robot_id};
+        // Same rule as the position set: a side is never inferred from robot_id,
+        // because the 2027 id encoding is unknown.
+        if (entry.faction) {
+            if (*entry.faction <= 2) {
+                robot.faction = *entry.faction;
+            } else {
+                ok = false;
+            }
+        }
+        // max_hp == 0 would make any bar arithmetic divide by zero downstream, so
+        // it is rejected as invalid rather than stored.
+        const bool max_ok = !entry.max_hp || *entry.max_hp > 0;
+        if (!max_ok) ok = false;
+        if (entry.current_hp) {
+            robot.current_hp.value = *entry.current_hp;
+            robot.current_hp.last_valid = now;
+            robot.current_hp.quality = Quality::Valid;
+            robot.current_hp.freshness = Freshness::Fresh;
+        }
+        if (entry.max_hp && max_ok) {
+            robot.max_hp.value = *entry.max_hp;
+            robot.max_hp.last_valid = now;
+            robot.max_hp.quality = Quality::Valid;
+            robot.max_hp.freshness = Freshness::Fresh;
+        }
+        health.push_back(std::move(robot));
+    }
+    std::stable_sort(health.begin(), health.end(),
+                     [](const RobotHealth& left, const RobotHealth& right) { return left.id < right.id; });
+    state_.robot_health = std::move(health);
+    return ok;
+}
 Snapshot Store::snapshot(MonotonicMs now) const {
     if (now < latest_) throw std::invalid_argument("snapshot precedes latest update");
     auto copy = state_;

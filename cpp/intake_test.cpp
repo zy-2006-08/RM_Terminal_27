@@ -11,6 +11,9 @@ int main() {
     Store store(500);
     Decoder decoder(store, RobotId{3});
     rm::GameStatus game; game.set_current_stage(4); game.set_red_score(0);
+    game.set_red_economy(900); game.set_blue_economy(750);
+    game.set_red_total_damage(4000); game.set_blue_total_damage(0);
+    game.set_red_fortress_sec(42); game.set_fortress_holder(1);
     rm::RobotDynamicStatus dynamic; dynamic.set_robot_id(3); dynamic.set_coin(220);
     rm::RobotModuleStatus modules; modules.set_laser_detection_module(2);
     rm::RobotPosition position; position.set_x(14.5);
@@ -24,6 +27,16 @@ int main() {
     require(decoder.accept("RobotTelemetry", telemetry.SerializeAsString(), 6), "Telemetry");
     auto s = store.snapshot(6);
     require(s.game.current_stage.value == 4 && s.game.red_score.value == 0, "Game values");
+    // 每个 GameStatus 字段都要在这里断言一次:漏掉 conversion.cpp 的 MERGE 不会
+    // 报错,字段会停在 NeverReceived,面板显示 "--" 而协议其实给了值。
+    require(s.game.red_economy.value == 900 && s.game.blue_economy.value == 750, "Economy");
+    require(s.game.red_total_damage.value == 4000, "Damage");
+    require(s.game.blue_total_damage.value == 0 &&
+            s.game.blue_total_damage.quality == Quality::Valid, "Zero damage is a value");
+    require(s.game.red_fortress_sec.value == 42, "Fortress seconds");
+    require(s.game.fortress_holder.value == 1, "Fortress holder");
+    require(s.game.blue_fortress_sec.freshness == Freshness::NeverReceived,
+            "Unsent field stays never-received");
     require(s.robots.at(RobotId{3}).dynamic.coin.value == 220, "Dynamic values");
     require(s.robots.at(RobotId{3}).modules.laser_detection_module.value == 2, "Module values");
     require(s.robots.at(RobotId{3}).position.x.value == 14.5, "Position values");
