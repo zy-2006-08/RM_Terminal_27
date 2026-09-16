@@ -52,9 +52,10 @@ bool VideoReceiver::launchDecoder() {
     raw_.clear();submitted_=-1;decoder_primed_=false;state_="waiting";return true;
 }
 bool VideoReceiver::start(const VideoEndpoint& endpoint) {
-    stop(); endpoint_=endpoint;failure_.clear();last_packet_=-1;last_frame_=-1;
+    stop(); endpoint_=endpoint;failure_.clear();last_packet_=-1;last_frame_=-1;last_datagram_=-1;
     vps_.clear();sps_.clear();pps_.clear();
     received_=false;reassembler_.resetSession();
+    recovery_=VideoRecoveryPolicy{};
     if(!socket_.bind(endpoint.address,endpoint.port,QAbstractSocket::DontShareAddress)) {
         failure_="udp_bind_failed: "+socket_.errorString();state_="bind_failed";return false;
     }
@@ -166,27 +167,45 @@ void VideoReceiver::tick() {
     const auto now=clock_.elapsed();reassembler_.expire(now/1000.0);
     reportLoss();
     if(last_frame_>=0 && now-last_frame_>=1000)online_=false;
-    // Liveness must follow datagram arrival, not frame completion: under loss many
-    // access units never complete, which would falsely destroy a healthy decoder.
-    if(received_ && last_datagram_>=0 && now-last_datagram_>=1000) {
+
+    // 判活规则、双条件优先级和恢复冷却全部在 VideoRecoveryPolicy 里,可单测;
+    // 这里只负责把观测量喂进去,再执行它给出的动作。
+    VideoLiveness liveness;
+    liveness.stream_established=received_;
+    if(last_datagram_>=0)liveness.last_datagram=last_datagram_;
+    if(submitted_>=0)liveness.awaiting_decode_since=submitted_;
+    liveness.decoder_stderr_bytes=stderr_bytes_;
+
+    switch(recovery_.step(liveness,now)) {
+    case RecoveryAction::ReconnectUdp:
         received_=false;stopDecoder();reassembler_.resetSession();online_=false;state_="disconnected";
         emit_log(LogLevel::warning,QStringLiteral("reconnect_udp"),
             {QStringLiteral("state=disconnected"),
-             QStringLiteral("silent_ms=%1").arg(now-last_datagram_),
+             QStringLiteral("silent_ms=%1").arg(last_datagram_>=0?now-last_datagram_:-1),
              QStringLiteral("port=%1").arg(socket_.localPort())});
-    // Only recover when the decoder is truly mute. Under loss FFmpeg emits stderr
-    // and buffers for many seconds before its first frame; killing it then destroys
-    // a healthy stream, and the replacement fares no better.
-    } else if(submitted_>=0 && now-submitted_>=5000 && stderr_bytes_==last_stderr_seen_) {
-        ++recoveries_;stopDecoder();submitted_=-1;failure_.clear();state_="waiting";
+        break;
+    case RecoveryAction::RestartDecoder: {
+        // 先取值:下面把 submitted_ 清成 -1,清完再读就只能记出 -1。
+        const auto stalled_ms=submitted_>=0?now-submitted_:-1;
+        stopDecoder();submitted_=-1;failure_.clear();state_="waiting";
+        emit_log(LogLevel::warning,QStringLiteral("restart_decoder"),
+            {QStringLiteral("stalled_ms=%1").arg(stalled_ms),
+             QStringLiteral("restarts=%1").arg(recovery_.decoderRestarts()),
+             QStringLiteral("port=%1").arg(socket_.localPort())});
+        break;
     }
-    last_stderr_seen_=stderr_bytes_;
+    case RecoveryAction::None:
+        break;
+    }
 }
 QJsonObject VideoReceiver::snapshot() const {
     const auto& s=reassembler_.stats();
     return {{"state",state_},{"failure",failure_},{"online",online_},
         {"port",socket_.localPort()},{"decoder_pid",decoder_.processId()},
-        {"decoded_frames",decoded_frames_},{"decoder_failures",failures_},{"recoveries",recoveries_},
+        {"decoded_frames",decoded_frames_},{"decoder_failures",failures_},
+        {"recoveries",qint64(recovery_.reconnects()+recovery_.decoderRestarts())},
+        {"reconnects",qint64(recovery_.reconnects())},
+        {"decoder_restarts",qint64(recovery_.decoderRestarts())},
         {"invalid_frames",invalid_frames_},{"decoder_stderr_bytes",stderr_bytes_},
         {"packets",qint64(s.packets_received)},{"completed",qint64(s.frames_completed)},
         {"duplicates",qint64(s.packets_duplicated)},{"out_of_order",qint64(s.packets_out_of_order)},

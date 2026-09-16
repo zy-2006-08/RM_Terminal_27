@@ -1,7 +1,7 @@
 """模拟机器人图传发送端。
 
 读取本地 H.265 裸流（Annex-B），按 access unit 切帧，
-用 core.video_protocol 的 8 字节大端头分片，通过 UDP 发往终端。
+用 sim.video_protocol 的 8 字节大端头分片，通过 UDP 发往终端。
 可注入丢包与抖动，用来验证终端在无重传链路下的表现。
 
 用法：
@@ -20,8 +20,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core.constants import SERVER_HOST, VIDEO_UDP_PORT
-from core.video_protocol import pack_frame
+from sim.constants import SERVER_HOST, VIDEO_UDP_PORT
+from sim.video_protocol import pack_frame
 
 _START_CODE = b"\x00\x00\x01"
 # HEVC NAL 类型 32=VPS 33=SPS 34=PPS，属于参数集，需与后续首个切片同帧发送

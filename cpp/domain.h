@@ -36,13 +36,16 @@ template<template<class> class F> struct GameFields {
     F<std::string> red_team_name, blue_team_name;
     F<std::uint32_t> red_economy, blue_economy, red_total_damage, blue_total_damage;
     F<std::uint32_t> red_fortress_sec, blue_fortress_sec, fortress_holder;
+    F<std::uint32_t> red_kills, blue_kills;
+    F<std::uint32_t> red_energy_activations, blue_energy_activations;
     auto fields() { return std::tie(current_round, total_rounds, red_score, blue_score,
         current_stage, stage_countdown_sec, stage_elapsed_sec, is_paused, winner, end_reason,
         red_base_hp, red_base_max_hp, blue_base_hp, blue_base_max_hp,
         red_outpost_hp, red_outpost_max_hp, blue_outpost_hp, blue_outpost_max_hp,
         red_team_name, blue_team_name,
         red_economy, blue_economy, red_total_damage, blue_total_damage,
-        red_fortress_sec, blue_fortress_sec, fortress_holder); }
+        red_fortress_sec, blue_fortress_sec, fortress_holder,
+        red_kills, blue_kills, red_energy_activations, blue_energy_activations); }
 };
 template<template<class> class F> struct DynamicFields {
     F<std::uint32_t> current_hp, max_hp, shooter_heat_17mm, shooter_heat_limit;
@@ -73,7 +76,8 @@ template<template<class> class F> struct EventFields {
     F<std::uint64_t> timestamp_ms;
     F<std::uint32_t> level;
     F<std::string> text;
-    auto fields() { return std::tie(timestamp_ms, level, text); }
+    F<std::uint32_t> faction;
+    auto fields() { return std::tie(timestamp_ms, level, text, faction); }
 };
 template<template<class> class F> struct TelemetryFields {
     F<std::uint32_t> sequence;
@@ -96,6 +100,8 @@ struct EventRecord {
     std::uint32_t level;
     std::string text;
     MonotonicMs received_at;
+    // 末位且有默认值:既有构造点按位置初始化前四项,补这一项不该迫使它们全部改写。
+    std::uint32_t faction = 0;
 };
 
 // Ring buffer, bounded so a match-long run cannot grow without limit. Overwrites

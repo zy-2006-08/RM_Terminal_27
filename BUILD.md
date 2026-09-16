@@ -1,8 +1,10 @@
 # Native task-2 foundation
 
-This document covers only the native CMake target `rm_terminal`; it does not
-describe or replace the legacy Python/PySide6 launcher (`main.py`, `run.sh`) or
-its simulation modules. The native target is a C++17/Qt6 read-only placeholder.
+This document covers the native CMake target `rm_terminal`, which is now the
+only terminal implementation. The legacy Python/PySide6 launcher (`main.py`,
+`core/`, `ui/`) has been removed; `run.sh` starts the native binary against the
+Python simulator in `sim/`, which remains the only data source for local runs
+and for `mode_regression_e2e`. The native target is C++17/Qt6 and read-only.
 
 Task 2 uses the six inbound message families in `proto/rm_terminal.proto`:
 GameStatus, RobotDynamicStatus, RobotModuleStatus, RobotPosition, Event, and

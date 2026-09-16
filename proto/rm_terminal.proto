@@ -47,6 +47,13 @@ message GameStatus {
   optional uint32 red_fortress_sec   = 25;
   optional uint32 blue_fortress_sec  = 26;
   optional uint32 fortress_holder    = 27;
+  // 击杀数与能量机关激活次数。上游选手端结算面板把这两项与伤害、血量并列展示，
+  // 但终端无法自行统计：击伤不带攻击方 ID，能量机关激活也没有面向单机的回执，
+  // 所以和经济/总伤害同样必须由服务器汇总下发。
+  optional uint32 red_kills          = 28;
+  optional uint32 blue_kills         = 29;
+  optional uint32 red_energy_activations  = 30;
+  optional uint32 blue_energy_activations = 31;
 }
 
 // ---------------------------------------------------------------
@@ -99,6 +106,9 @@ message Event {
   optional uint64 timestamp_ms = 1;
   optional uint32 level        = 2;   // 0信息 1提示 2警告 3严重
   optional string text         = 3;
+  // 事件主体所属阵营，决定横幅配色。与血量类字段同理必须区分「中立/无阵营」
+  // 和「没收到」，故为 optional：0未知 1红方 2蓝方。
+  optional uint32 faction      = 4;
 }
 
 // ---------------------------------------------------------------

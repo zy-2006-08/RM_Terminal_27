@@ -19,6 +19,8 @@ struct AnalysisMetric {
     std::optional<std::int64_t> self_value;
     std::optional<std::int64_t> enemy_value;
     QString unit;
+    // qrc 路径,空 = 该指标不配图标,标签从卡片左边距起排。
+    QString icon;
 };
 
 // 我方视角。self_faction() 为空(尚未收到任何 is_self 标记)时返回的指标全部为

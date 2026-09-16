@@ -32,15 +32,23 @@ std::vector<AnalysisMetric> build_analysis_metrics(const Snapshot& snapshot) {
     metrics.push_back({QStringLiteral("经济"),
                        pick(g.red_economy, g.blue_economy, true),
                        pick(g.red_economy, g.blue_economy, false),
-                       QStringLiteral("金")});
+                       QStringLiteral("金"),
+                       QString()});
     metrics.push_back({QStringLiteral("总伤害"),
                        pick(g.red_total_damage, g.blue_total_damage, true),
                        pick(g.red_total_damage, g.blue_total_damage, false),
+                       QString(),
                        QString()});
     metrics.push_back({QStringLiteral("堡垒占领"),
                        pick(g.red_fortress_sec, g.blue_fortress_sec, true),
                        pick(g.red_fortress_sec, g.blue_fortress_sec, false),
-                       QStringLiteral("s")});
+                       QStringLiteral("s"),
+                       QString()});
+    metrics.push_back({QStringLiteral("能量机关"),
+                       pick(g.red_energy_activations, g.blue_energy_activations, true),
+                       pick(g.red_energy_activations, g.blue_energy_activations, false),
+                       QStringLiteral("次"),
+                       QStringLiteral(":/images/message/validate_icon_rune.png")});
     return metrics;
 }
 

@@ -14,7 +14,7 @@ import struct
 import time
 from dataclasses import dataclass, field
 
-from core.constants import (
+from sim.constants import (
     FRAME_ASSEMBLY_TIMEOUT_S,
     FRAME_CACHE_MAX,
     UDP_HEADER_SIZE,

@@ -14,8 +14,10 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QPainter>
+#include <QQuickItem>
 #include <QRect>
 #include <QResizeEvent>
+#include <QUrl>
 #include <QPair>
 #include <QScrollArea>
 #include <QSizePolicy>
@@ -83,6 +85,30 @@ QString reason_name(ModeReason reason) {
     return QStringLiteral("Unknown");
 }
 
+QString game_result_name(GameResult result) {
+    switch (result) {
+        case GameResult::None:       return QStringLiteral("none");
+        case GameResult::RedWin:     return QStringLiteral("red_win");
+        case GameResult::BlueWin:    return QStringLiteral("blue_win");
+        case GameResult::Draw:       return QStringLiteral("draw");
+        case GameResult::Terminated: return QStringLiteral("terminated");
+    }
+    return QStringLiteral("none");
+}
+
+QString popup_name(Popup popup) {
+    switch (popup) {
+    case Popup::None: return QStringLiteral("None");
+    case Popup::LinkLost: return QStringLiteral("LinkLost");
+    case Popup::WaitingForData: return QStringLiteral("WaitingForData");
+    case Popup::Settlement: return QStringLiteral("Settlement");
+    case Popup::Eliminated: return QStringLiteral("Eliminated");
+    case Popup::Paused: return QStringLiteral("Paused");
+    case Popup::PreMatch: return QStringLiteral("PreMatch");
+    }
+    return QStringLiteral("Unknown");
+}
+
 QString freshness_name(Freshness freshness) {
     switch (freshness) {
     case Freshness::NeverReceived: return QStringLiteral("NeverReceived");
@@ -142,38 +168,6 @@ QString event_panel_text(const Snapshot& snapshot) {
 
 QColor event_level_color(std::uint32_t level) { return theme::eventColor(level); }
 
-QString event_history_html(const Snapshot& snapshot, std::size_t max) {
-    const std::vector<EventRecord> records = snapshot.events.recent(max);
-    if (records.empty()) return QStringLiteral("<span>暂无赛事事件</span>");
-
-    QStringList rows;
-    for (const EventRecord& record : records) {
-        // Escaped because the text arrives from the MQTT feed: an unescaped '<'
-        // would be swallowed by the rich-text parser, so a hostile or merely
-        // malformed payload could hide or restyle the alert it is reporting.
-        const QString text = QString::fromStdString(record.text).toHtmlEscaped();
-        rows.append(QStringLiteral(
-                        "<tr>"
-                        "<td style=\"color:%1;padding-right:8px\">%2</td>"
-                        "<td style=\"color:%3\">%4</td>"
-                        "</tr>")
-                        .arg(theme::kTextMuted.name())
-                        .arg(event_time_text(record.timestamp_ms))
-                        .arg(event_level_color(record.level).name())
-                        .arg(text));
-    }
-
-    // Overwritten records are disclosed rather than dropped in silence, which
-    // would render a truncated history as a quiet match.
-    if (snapshot.events.droppedCount() > 0) {
-        rows.append(QStringLiteral("<tr><td></td><td style=\"color:%1\">… 更早 %2 条已滚出缓冲</td></tr>")
-                        .arg(theme::kTextMuted.name())
-                        .arg(snapshot.events.droppedCount()));
-    }
-    return QStringLiteral("<table cellspacing=\"0\" cellpadding=\"1\">%1</table>")
-        .arg(rows.join(QString()));
-}
-
 QString alert_strip_text(const Snapshot& snapshot, const VideoReceiver* video) {
     QStringList alerts;
 
@@ -204,6 +198,87 @@ QString alert_strip_text(const Snapshot& snapshot, const VideoReceiver* video) {
 
 QString video_overlay_countdown_text(const Snapshot& snapshot) {
     return QStringLiteral("倒计时 %1").arg(clock_text(snapshot.game.stage_countdown_sec));
+}
+
+PopupInputs popup_inputs(const Snapshot& snapshot) {
+    PopupInputs inputs;
+    // 取阶段而不是任意字段做链路判活:阶段是每帧必发的,某个可选字段缺失是正常的
+    // 协议行为,拿它当链路依据会把「这一项没发」误报成「链路断了」。
+    inputs.match_freshness = snapshot.game.current_stage.freshness;
+    inputs.stage = snapshot.game.current_stage.value;
+    inputs.paused = snapshot.game.is_paused.value;
+    inputs.countdown_sec = snapshot.game.stage_countdown_sec.value;
+
+    for (const MapRobot& robot : snapshot.map_robots) {
+        if (!robot.is_self) continue;
+        const auto found = snapshot.robots.find(robot.id);
+        if (found == snapshot.robots.end()) break;
+        inputs.self_hp = found->second.dynamic.current_hp.value;
+        break;
+    }
+    return inputs;
+}
+
+QString popup_text(Popup popup, std::optional<std::int32_t> countdown_sec) {
+    switch (popup) {
+        case Popup::None:
+            return QString();
+        case Popup::LinkLost:
+            return QStringLiteral("信号中断\n画面已冻结,数值非当前战况");
+        case Popup::WaitingForData:
+            return QStringLiteral("等待连接赛场");
+        case Popup::Settlement:
+            return QStringLiteral("本局结束");
+        case Popup::Eliminated:
+            return QStringLiteral("已阵亡\n等待复活");
+        case Popup::Paused:
+            return QStringLiteral("比赛暂停");
+        case Popup::PreMatch:
+            return countdown_sec && *countdown_sec > 0
+                       ? QStringLiteral("比赛即将开始\n%1").arg(*countdown_sec)
+                       : QStringLiteral("比赛即将开始");
+    }
+    return QString();
+}
+
+QString popup_title(Popup popup) {
+    switch (popup) {
+        case Popup::None:           return QString();
+        case Popup::LinkLost:       return QStringLiteral("信号中断");
+        case Popup::WaitingForData: return QStringLiteral("等待连接赛场");
+        case Popup::Settlement:     return QStringLiteral("本局结束");
+        case Popup::Eliminated:     return QStringLiteral("已阵亡");
+        case Popup::Paused:         return QStringLiteral("比赛暂停");
+        case Popup::PreMatch:       return QStringLiteral("比赛即将开始");
+    }
+    return QString();
+}
+
+QString popup_detail(Popup popup) {
+    switch (popup) {
+        case Popup::LinkLost:   return QStringLiteral("画面已冻结,数值非当前战况");
+        case Popup::Eliminated: return QStringLiteral("等待复活");
+        case Popup::None:
+        case Popup::WaitingForData:
+        case Popup::Settlement:
+        case Popup::Paused:
+        case Popup::PreMatch:
+            return QString();
+    }
+    return QString();
+}
+
+QString popup_kind(Popup popup) {
+    switch (popup) {
+        case Popup::None:           return QString();
+        case Popup::LinkLost:       return QStringLiteral("linkLost");
+        case Popup::WaitingForData: return QStringLiteral("waiting");
+        case Popup::Settlement:     return QStringLiteral("settlement");
+        case Popup::Eliminated:     return QStringLiteral("eliminated");
+        case Popup::Paused:         return QStringLiteral("paused");
+        case Popup::PreMatch:       return QStringLiteral("preMatch");
+    }
+    return QString();
 }
 
 QString video_overlay_hp_text(const Snapshot& snapshot) {
@@ -307,13 +382,24 @@ void VideoPane::setStatus(const QString& status) {
     update();
 }
 
+void VideoPane::setScaling(Scaling scaling) {
+    if (scaling_ == scaling) return;
+    scaling_ = scaling;
+    update();
+}
+
 void VideoPane::paintEvent(QPaintEvent*) {
     QPainter painter(this);
     painter.fillRect(rect(), QColor(12, 12, 14));
     if (!image_.isNull()) {
-        const QImage scaled =
-            image_.scaled(size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        // Cover 用 KeepAspectRatioByExpanding 铺满,再靠 clip 裁掉溢出画面的部分,
+        // 溢出量左右/上下均分,所以画面中心仍是格子中心。
+        const Qt::AspectRatioMode mode = scaling_ == Scaling::Cover
+                                             ? Qt::KeepAspectRatioByExpanding
+                                             : Qt::KeepAspectRatio;
+        const QImage scaled = image_.scaled(size(), mode, Qt::SmoothTransformation);
         const QPoint origin((width() - scaled.width()) / 2, (height() - scaled.height()) / 2);
+        painter.setClipRect(rect());
         painter.drawImage(origin, scaled);
         return;
     }
@@ -441,10 +527,11 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     video_column->addWidget(video_heading);
     info_video_pane_ = new VideoPane(video_box);
     info_video_pane_->setObjectName(QStringLiteral("infoVideoPane"));
-    // A cap, not a fixed size: scaling a 320x180 frame up buys no detail, but
-    // setFixedSize also pinned the floor, so the box could not shrink on a short
-    // window and overflowed onto the stats label. paintEvent keeps the aspect.
-    info_video_pane_->setMaximumSize(320, 180);
+    // 不设宽高上限:paintEvent 已按 KeepAspectRatio 居中缩放,让它铺满整格即可。
+    // 320x180 放大后画质偏软,但留一大片黑边更难看。曾经用 setFixedSize 把下限也
+    // 钉死,导致窗口变矮时画面压到统计文字上,所以这里只放开上限、保留下限。
+    info_video_pane_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    info_video_pane_->setScaling(VideoPane::Scaling::Cover);
     // Half the cap, so a short window shrinks the picture instead of overlapping the
     // stats text with it. paintEvent keeps the aspect ratio at whatever height it gets.
     info_video_pane_->setMinimumSize(160, 90);
@@ -459,15 +546,15 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     video_stats_->setFont(mono);
     video_stats_->setAlignment(Qt::AlignTop | Qt::AlignLeft);
 
-    QSizePolicy stats_policy(QSizePolicy::Preferred, QSizePolicy::MinimumExpanding);
+    // 纵向 Minimum 而不是 MinimumExpanding:后者会让这个常态为空串的标签把盈余高度
+    // 吃掉,画面被顶到上方,标签下方留出一条黑带。盈余要留给画面。
+    QSizePolicy stats_policy(QSizePolicy::Preferred, QSizePolicy::Minimum);
     stats_policy.setHeightForWidth(true);
     video_stats_->setSizePolicy(stats_policy);
-    // 上下各一个 stretch 把画面夹在板块正中:只给下方 addStretch 会把画面顶到
-    // 标题下方,右列比图传高时就是一块偏上的小图加大片空白。
-    video_column->addStretch(1);
-    video_column->addWidget(info_video_pane_, 0, Qt::AlignHCenter);
+    // 画面直接吃掉这一列的盈余高度。原先靠上下两个 addStretch 把定高画面夹在正中,
+    // 那是画面不能变大时的折中;现在画面自己会铺满,再加 stretch 只会重新挤出黑边。
+    video_column->addWidget(info_video_pane_, 1);
     video_column->addWidget(video_stats_, 0);
-    video_column->addStretch(1);
 
     auto* event_box = new QFrame(info_page_);
     event_box->setProperty("card", true);
@@ -477,21 +564,11 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     auto* event_heading = new QLabel(QStringLiteral("战场事件"), event_box);
     event_heading->setProperty("heading", true);
     event_column->addWidget(event_heading);
-    event_ = new QLabel(QStringLiteral("--"), event_box);
+    event_ = new EventFeedPane(event_box);
     event_->setObjectName(QStringLiteral("eventPanel"));
-    event_->setTextFormat(Qt::RichText);
-    QFont event_font(QStringLiteral("Menlo"));
-    event_font.setStyleHint(QFont::Monospace);
-    event_font.setPointSize(10);
-    event_->setFont(event_font);
-    event_->setAlignment(Qt::AlignTop | Qt::AlignLeft);
-    event_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    event_->setWordWrap(true);
-    // 高度不随内容走:下区 rowStretch 为 0(按内容定高),事件变多会挤扁上区花名册。
-    // 用 maximumHeight 而非 fixedHeight —— 满档行数的固定下限会把窗口最小高度顶过
-    // 720p 并造成裁切,dashboard_layout_test 的 720p 断言守的就是这条。
-    const int event_row_h = QFontMetrics(event_font).lineSpacing() + 2;
-    event_->setMaximumHeight(event_row_h * static_cast<int>(kEventPanelRows));
+    // Ignored 纵向策略让面板既不撑高窗口最小高度(720p 断言守的就是这条),也不给
+    // 自己设上限 —— 高度完全由下区那一格分到多少决定,画满为止。封顶会让分到的
+    // 高度重新变成卡片内的空白。
     event_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Ignored);
     event_column->addWidget(event_, 1);
 
@@ -516,12 +593,18 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     grid->setColumnStretch(0, 0);
     grid->setColumnStretch(1, 5);
     grid->setColumnStretch(2, 0);
-    grid->setColumnMinimumWidth(0, 250);
-    grid->setColumnMinimumWidth(2, 250);
-    // 上区拿走盈余高度,下区按内容高度走:事件面板已封顶(见上方 setMaximumHeight),
-    // 战场分析和图传都有自己的最小高度,把盈余给它们只会拉出空白。
-    grid->setRowStretch(0, 4);
-    grid->setRowStretch(1, 0);
+    // 两侧花名册列必须等宽。列宽取该列最宽控件的 sizeHint,左列下方是事件面板、
+    // 右列下方是图传,两者宽度提示不同就会让画面左右不对称(事件面板报 460 时左列
+    // 明显更宽)。这里钉住列宽本身,而不是给花名册 setFixedWidth —— 后者会让花名册
+    // 窄于列宽,差额就是花名册右侧那道黑缝。
+    for (int column : {0, 2}) {
+        grid->setColumnMinimumWidth(column, kRosterColumnWidth);
+    }
+    // 上区内容是定高的(花名册满 5 台即到顶、地图按比例缩放后用 addStretch 吸差额),
+    // 所以把全部盈余压给上区会在花名册/地图下方画出一道纯黑带 —— 全屏越宽越明显。
+    // 两区都给拉伸权,盈余按 3:2 分,下区的事件与战场分析随窗口一起长高。
+    grid->setRowStretch(0, 5);
+    grid->setRowStretch(1, 3);
 
     auto* video_layout = new QVBoxLayout(video_page_);
     video_layout->setContentsMargins(0, 0, 0, 0);
@@ -549,6 +632,41 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     stack_->addWidget(info_page_);
     stack_->addWidget(video_page_);
     root->addLayout(stack_, 1);
+
+    // 不进任何 layout:一个会改变布局的弹窗等于在最紧张的时刻把整屏控件推位,
+    // 操作手的肌肉记忆随之失效。它悬浮在最上层,几何由 resizeEvent 单独维护。
+    popup_ = new QQuickWidget(this);
+    popup_->setObjectName(QStringLiteral("popupOverlay"));
+    popup_->setResizeMode(QQuickWidget::SizeRootObjectToView);
+    // 铺满整窗但要能透出下面的地图/图传:压暗层是 QML 自己画的半透明矩形,
+    // 宿主必须真透明,否则整屏会被 Quick 场景的背景色糊死。
+    popup_->setClearColor(Qt::transparent);
+    popup_->setAttribute(Qt::WA_TranslucentBackground);
+    popup_->setAttribute(Qt::WA_AlwaysStackOnTop);
+    popup_->setSource(QUrl(QStringLiteral("qrc:/qml/PopupOverlay.qml")));
+    popup_->setVisible(false);
+
+    victory_ = new QQuickWidget(this);
+    victory_->setObjectName(QStringLiteral("victoryOverlay"));
+    victory_->setResizeMode(QQuickWidget::SizeRootObjectToView);
+    victory_->setClearColor(Qt::transparent);
+    victory_->setAttribute(Qt::WA_TranslucentBackground);
+    victory_->setAttribute(Qt::WA_AlwaysStackOnTop);
+    victory_->setSource(QUrl(QStringLiteral("qrc:/qml/VictoryOverlay.qml")));
+    victory_->setVisible(false);
+}
+
+void Dashboard::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    if (!popup_) return;
+    // 宿主铺满整窗是为了压暗层;对话框自身的居中与限宽在 QML 内部,
+    // 所以两侧花名册照旧可读 —— 它是本终端的核心增量,不能被弹窗盖掉。
+    popup_->setGeometry(rect());
+    popup_->raise();
+    if (victory_) {
+        victory_->setGeometry(rect());
+        victory_->raise();
+    }
 }
 
 void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, MonotonicMs now) {
@@ -590,7 +708,8 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
     alert_strip_->setVisible(!alerts.isEmpty());
     if (!alerts.isEmpty()) alert_strip_->setText(alerts);
 
-    event_->setText(event_history_html(snapshot, kEventPanelRows));
+    event_->setRows(build_event_rows(snapshot, kEventPanelRows));
+    event_->setDroppedCount(snapshot.events.droppedCount());
     video_stats_->setText(video_panel_text(video, &video_faults_, now));
     map_->setRobots(snapshot.map_robots);
     video_countdown_->setText(video_overlay_countdown_text(snapshot));
@@ -617,6 +736,47 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
         info_video_pane_->setStatus(QStringLiteral("图传未启用"));
         video_full_pane_->setStatus(QStringLiteral("图传未启用"));
     }
+
+    const PopupDecision popup = popups_.step(popup_inputs(snapshot), now);
+    if (popup.popup != logged_popup_) {
+        StructuredLog::write(
+            LogLevel::info, QStringLiteral("popup_switch"),
+            {QStringLiteral("from=%1").arg(popup_name(logged_popup_)),
+             QStringLiteral("to=%1").arg(popup_name(popup.popup)),
+             QStringLiteral("match_freshness=%1")
+                 .arg(freshness_name(snapshot.game.current_stage.freshness))});
+        logged_popup_ = popup.popup;
+    }
+    // 结算动画一旦接管屏幕就压住普通弹窗:两者都会画在最上层,同时出现会互相遮挡,
+    // 而「本局结束」这句话已经被动画本身说得更清楚。
+    const GameResult result = resolve_game_result(game_result_inputs(snapshot));
+    if (result != shown_result_) {
+        StructuredLog::write(LogLevel::info, QStringLiteral("game_result"),
+                             {QStringLiteral("result=%1").arg(game_result_name(result))});
+        shown_result_ = result;
+        if (QQuickItem* overlay = victory_->rootObject()) {
+            overlay->setProperty("title", game_result_title(result));
+            overlay->setProperty("frameUrls", game_result_frame_urls(result));
+            overlay->setProperty("shown", result != GameResult::None);
+        }
+        victory_->setVisible(result != GameResult::None);
+    }
+    if (result != GameResult::None) victory_->raise();
+
+    const bool popup_shown = popup.popup != Popup::None && result == GameResult::None;
+    popup_->setVisible(popup_shown);
+    if (QQuickItem* overlay = popup_->rootObject()) {
+        overlay->setProperty("kind", popup_kind(popup.popup));
+        overlay->setProperty("title", popup_title(popup.popup));
+        overlay->setProperty("detail", popup_detail(popup.popup));
+        // 倒计时只在备战阶段有意义,其余状态传 -1 让 QML 整块隐藏而不是显示 00:00。
+        overlay->setProperty("countdownSec",
+                             popup.popup == Popup::PreMatch && popup.countdown_sec
+                                 ? *popup.countdown_sec
+                                 : -1);
+        overlay->setProperty("shown", popup_shown);
+    }
+    if (popup_shown) popup_->raise();
 }
 
 std::string Dashboard::layoutDump() const {

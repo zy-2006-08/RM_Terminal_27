@@ -58,6 +58,10 @@ bool convert(GameFields<Field>& state, const inbound::GameStatus& patch, Monoton
     MERGE(red_fortress_sec, any_value);
     MERGE(blue_fortress_sec, any_value);
     MERGE(fortress_holder, between(0, 2));
+    MERGE(red_kills, any_value);
+    MERGE(blue_kills, any_value);
+    MERGE(red_energy_activations, any_value);
+    MERGE(blue_energy_activations, any_value);
     return ok;
 }
 bool convert(DynamicFields<Field>& state, const inbound::RobotDynamicStatus& patch, MonotonicMs now) {
@@ -101,6 +105,7 @@ bool convert(EventFields<Field>& state, const inbound::Event& patch, MonotonicMs
     MERGE(timestamp_ms, any_value);
     MERGE(level, between(0, 3));
     MERGE(text, [](const auto& v) { return v.size() <= 4096; });
+    MERGE(faction, between(0, 2));
     return ok;
 }
 bool convert(TelemetryFields<Field>& state, const inbound::RobotTelemetry& patch, MonotonicMs now) {

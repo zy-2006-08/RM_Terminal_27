@@ -1,0 +1,67 @@
+name: build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # macOS only. BUILD.md marks macOS as the sole verified platform and Ubuntu as
+  # DEFERRED with no host to validate it; adding an unverified ubuntu job here
+  # would manufacture a green check for a build nobody has ever run.
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Qt6 ships as split formulae on Homebrew. qtdeclarative supplies the
+      # Qml/Quick/QuickWidgets components CMakeLists.txt requires; qtbase alone
+      # fails the find_package.
+      # No ffmpeg: the default suite never spawns a decoder and --safe-smoke runs
+      # with transport=none, so installing it would only add minutes of CI time.
+      # The integration test that does need ffmpeg is not registered here.
+      - name: Install dependencies
+        run: |
+          brew update
+          brew install cmake qtbase qtdeclarative qtsvg protobuf abseil mosquitto
+
+      - name: Configure
+        run: cmake -S . -B build/ci -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build/ci --parallel
+
+      # The simulator-backed mode_regression_e2e is registered only under
+      # -DRM_TERMINAL_INTEGRATION_TESTS=ON, so the default suite here is the fast
+      # deterministic set. The GUI tests set QT_QPA_PLATFORM=offscreen themselves
+      # via set_tests_properties, so no display is needed.
+      - name: Test
+        run: ctest --test-dir build/ci --output-on-failure
+
+      - name: Smoke
+        run: build/ci/rm_terminal --safe-smoke
+
+  simulator:
+    runs-on: macos-15
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install simulator dependencies
+        run: pip install protobuf paho-mqtt
+
+      # sim/ is the deterministic test fixture, not shipped code. Import and
+      # bytecode checks catch the broken-import class of error that the C++ suite
+      # cannot see at all.
+      - name: Compile and import check
+        run: |
+          python -m py_compile sim/*.py
+          python -c "import sim.constants, sim.video_protocol, sim.video_sender, sim.match_server"

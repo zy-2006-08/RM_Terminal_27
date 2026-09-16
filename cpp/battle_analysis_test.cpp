@@ -55,6 +55,8 @@ Snapshot red_self_snapshot() {
     snapshot.game.red_fortress_sec = present<std::uint32_t>(42);
     snapshot.game.blue_fortress_sec = present<std::uint32_t>(42);
     snapshot.game.fortress_holder = present<std::uint32_t>(1);
+    snapshot.game.red_energy_activations = present<std::uint32_t>(3);
+    snapshot.game.blue_energy_activations = present<std::uint32_t>(1);
     snapshot.robot_health.push_back(health(1, 1, 500));
     snapshot.robot_health.push_back(health(2, 1, 400));
     snapshot.robot_health.push_back(health(101, 2, 200));
@@ -74,6 +76,13 @@ void red_perspective_orients_self_to_red() {
           "red self reads red damage as ours");
     check(metric_stance(damage) == MetricStance::Behind, "lower damage reads as behind");
     check(*metric_diff(damage) == -1200, "damage diff is signed toward us");
+
+    const AnalysisMetric& rune = by_label(metrics, QStringLiteral("能量机关"));
+    check(rune.self_value == 3 && rune.enemy_value == 1,
+          "red self reads red energy activations as ours");
+    check(metric_stance(rune) == MetricStance::Ahead, "more activations reads as ahead");
+    check(rune.icon == QStringLiteral(":/images/message/validate_icon_rune.png"),
+          "energy metric carries the rune icon");
 }
 
 // 蓝方视角必须整体镜像。本校每场可能被编在任一方,写死红方会把敌我完全倒置,
@@ -88,6 +97,12 @@ void blue_perspective_mirrors_every_metric() {
     check(economy.self_value == 750 && economy.enemy_value == 900,
           "blue self reads blue economy as ours");
     check(metric_stance(economy) == MetricStance::Behind, "mirrored economy reads as behind");
+
+    const AnalysisMetric& rune = by_label(metrics, QStringLiteral("能量机关"));
+    check(rune.self_value == 1 && rune.enemy_value == 3,
+          "blue self reads blue energy activations as ours");
+    check(metric_stance(rune) == MetricStance::Behind,
+          "mirrored activations read as behind");
 
     check(fortress_hold(snapshot) == FortressHold::Theirs,
           "red-held fortress reads as theirs from blue seat");
@@ -130,7 +145,7 @@ void unknown_faction_yields_no_metrics_values() {
     snapshot.map_robots.clear();
 
     const std::vector<AnalysisMetric> metrics = build_analysis_metrics(snapshot);
-    check(metrics.size() == 3, "metric list keeps its rows without a faction");
+    check(metrics.size() == 4, "metric list keeps its rows without a faction");
     for (const AnalysisMetric& metric : metrics) {
         check(!metric.self_value.has_value() && !metric.enemy_value.has_value(),
               "no faction means no oriented values");

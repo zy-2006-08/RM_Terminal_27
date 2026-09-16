@@ -1,5 +1,6 @@
 #pragma once
 #include "video.h"
+#include "video_recovery.h"
 #include <QByteArray>
 #include <QElapsedTimer>
 #include <QHostAddress>
@@ -61,9 +62,12 @@ private:
     QByteArray vps_, sps_, pps_;
     bool decoder_primed_=false;
     static constexpr qsizetype frame_bytes_=320*180*3;
-    qint64 decoded_frames_=0, failures_=0, recoveries_=0, invalid_frames_=0, stderr_bytes_=0;
-    qint64 last_stderr_seen_=-1;
+    qint64 decoded_frames_=0, failures_=0, invalid_frames_=0, stderr_bytes_=0;
     qint64 last_packet_=-1, last_datagram_=-1, last_frame_=-1, last_launch_=-1000, submitted_=-1;
+    // Owns the dual-liveness thresholds, the restart cooldown, and the stderr
+    // edge-detection that tick() used to inline. Recreated by start(), so a restart
+    // does not inherit a cooldown earned by the previous session.
+    VideoRecoveryPolicy recovery_;
     bool stopping_=false, running_=false, online_=false, received_=false;
     QString failure_, state_="stopped";
     // Loss logging is sampled, not per-packet: a lossy 60fps stream would emit

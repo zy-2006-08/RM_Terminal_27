@@ -5,9 +5,11 @@
 #include <QFile>
 #include <QImage>
 #include <QLabel>
+#include <algorithm>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 using namespace rm_terminal;
 
@@ -284,28 +286,41 @@ void a_critical_event_is_listed_and_coloured() {
     dashboard.resize(kWidth, kHeight);
 
     Snapshot snapshot = clear_snapshot();
-    snapshot.events.push(EventRecord{1000, 0, "常规事件", 900});
-    snapshot.events.push(EventRecord{2000, 3, "基地被击破", 950});
+    snapshot.events.push(EventRecord{1000, 0, "常规事件", 900, 0});
+    snapshot.events.push(EventRecord{2000, 3, "红方基地被击破", 950, 1});
     dashboard.update(snapshot, nullptr, 1000);
     settle(dashboard);
 
-    const QLabel* panel = find_label(dashboard, "eventPanel");
-    check(panel->text().contains(QStringLiteral("基地被击破")),
-          "the critical event appears in the panel");
-    check(panel->text().contains(QStringLiteral("常规事件")),
-          "the ordinary event is still listed");
+    const EventFeedPane* panel =
+        dashboard.findChild<const EventFeedPane*>(QStringLiteral("eventPanel"));
+    check(panel != nullptr, "the event panel is present");
+
+    const std::vector<EventFeedRow> rows = build_event_rows(snapshot, kEventPanelRows);
+    check(rows.size() == 2, "both events reach the feed");
+    const bool has_critical =
+        std::any_of(rows.begin(), rows.end(), [](const EventFeedRow& row) {
+            return row.text == QStringLiteral("红方基地被击破") &&
+                   row.banner == EventBanner::Red;
+        });
+    check(has_critical, "the critical red event carries the red banner");
+    const bool has_ordinary =
+        std::any_of(rows.begin(), rows.end(), [](const EventFeedRow& row) {
+            return row.text == QStringLiteral("常规事件") &&
+                   row.banner == EventBanner::Neutral;
+        });
+    check(has_ordinary, "the factionless event stays neutral");
 
     QImage shot(panel->size(), QImage::Format_ARGB32);
     shot.fill(Qt::black);
-    const_cast<QLabel*>(panel)->render(&shot);
+    const_cast<EventFeedPane*>(panel)->render(&shot);
     int alert_pixels = 0;
     for (int y = 0; y < shot.height(); ++y) {
         for (int x = 0; x < shot.width(); ++x) {
             const QRgb p = shot.pixel(x, y);
-            if (qRed(p) > qGreen(p) + 60 && qRed(p) > qBlue(p) + 60) ++alert_pixels;
+            if (qRed(p) > qGreen(p) + 40 && qRed(p) > qBlue(p) + 40) ++alert_pixels;
         }
     }
-    check(alert_pixels > 0, "the critical event renders in the alert colour");
+    check(alert_pixels > 0, "the red banner actually renders red pixels");
 }
 
 // (7): both panes are handed the SAME frame every tick, including the hidden one.
@@ -410,6 +425,96 @@ void the_layout_dump_is_reproducible_and_hides_unlaid_geometry() {
           "that pane really is the hidden one, not merely reported so");
 }
 
+// (9) 弹窗必须真的画在屏幕里、盖在两页之上,而且**不改变布局**。纯逻辑测试
+// 只能证明状态机选对了,证明不了它没被挤出窗口或被地图盖住。
+void a_blocking_popup_renders_above_both_pages_without_moving_the_layout() {
+    Dashboard dashboard(test_config());
+    dashboard.resize(kWidth, kHeight);
+
+    Snapshot healthy = clear_snapshot();
+    dashboard.update(healthy, nullptr, 1000);
+    settle(dashboard);
+
+    const QWidget* popup = find(dashboard, "popupOverlay");
+    check(!popup->isVisible(), "no popup during a healthy live match");
+
+    // 记下健康状态下的几何,弹窗出现后必须逐一保持不变。
+    const QRect map_before = find(dashboard, "mapPane")->geometry();
+    const QRect ally_before = find(dashboard, "allyRoster")->geometry();
+    const QRect enemy_before = find(dashboard, "enemyRoster")->geometry();
+
+    Snapshot dead = clear_snapshot();
+    dead.robots.at(RobotId{3}).dynamic.current_hp = present<std::uint32_t>(0);
+    dashboard.update(dead, nullptr, 1250);
+    settle(dashboard);
+
+    check(popup->isVisible(), "hp=0 shows the popup overlay");
+    check(dashboard.popup() == Popup::Eliminated, "the dashboard reports Eliminated");
+
+    // 文案断言落在纯函数上,而不是从控件里抓字符串:弹窗内容现在由 QML 排版,
+    // 从宿主控件读不到文字,而「这个状态说了什么」仍然必须被钉住。
+    check(popup_title(Popup::Eliminated).contains(QStringLiteral("已阵亡")),
+          "the popup states the condition");
+
+    // 布局不动是刻意的:弹窗一出现就推位整屏控件,会在最紧张的时刻废掉肌肉记忆。
+    check(find(dashboard, "mapPane")->geometry() == map_before,
+          "the popup does not move the map");
+    check(find(dashboard, "allyRoster")->geometry() == ally_before,
+          "the popup does not move the ally roster");
+    check(find(dashboard, "enemyRoster")->geometry() == enemy_before,
+          "the popup does not move the enemy roster");
+
+    // 完整落在窗口内。限宽逻辑写错时弹窗会被裁掉一半,而文字恰好在被裁的那半边。
+    check(dashboard.rect().contains(popup->geometry()),
+          "the popup is fully inside the window");
+    check(popup->width() > 0 && popup->height() > 0, "the popup has a real size");
+
+    // 居中容差 2px:整数除法允许 1px 偏移,但不允许偏到一侧。
+    const QPoint popup_center = popup->geometry().center();
+    check(std::abs(popup_center.x() - dashboard.rect().center().x()) <= 2,
+          "the popup is horizontally centred");
+    check(std::abs(popup_center.y() - dashboard.rect().center().y()) <= 2,
+          "the popup is vertically centred");
+
+    // 真的画出了像素,而不是一个可见但透明的空盒子。
+    QImage shot(popup->size(), QImage::Format_ARGB32);
+    shot.fill(Qt::transparent);
+    const_cast<QWidget*>(popup)->render(&shot);
+    int opaque_pixels = 0;
+    for (int y = 0; y < shot.height(); ++y) {
+        for (int x = 0; x < shot.width(); ++x) {
+            if (qAlpha(shot.pixel(x, y)) > 200) ++opaque_pixels;
+        }
+    }
+    check(opaque_pixels > 0, "the popup renders opaque pixels over the page beneath it");
+
+    // 恢复后必须消失,否则一次出局会把弹窗永久钉在屏幕上。dwell 窗口需要跨过。
+    dashboard.update(healthy, nullptr, 1250 + 5000);
+    settle(dashboard);
+    check(!popup->isVisible(), "the popup clears once the condition is gone");
+    check(dashboard.popup() == Popup::None, "the dashboard reports None after recovery");
+}
+
+// (10) 弹窗在图传全屏页同样有效。它是 Dashboard 的子控件而不是某一页的,
+// 一份实现覆盖两种布局 —— 按页各放一份会在切换瞬间互相打断。
+void the_popup_also_covers_the_video_page() {
+    Dashboard dashboard(test_config());
+    dashboard.resize(kWidth, kHeight);
+    drive_to_video(dashboard);
+    check(dashboard.mode() == UiMode::Video, "in video mode");
+
+    Snapshot stale = blinded_snapshot();
+    stale.game.current_stage = present<std::uint32_t>(4, Freshness::Stale);
+    dashboard.update(stale, nullptr, 1250);
+    settle(dashboard);
+
+    const QWidget* popup = find(dashboard, "popupOverlay");
+    check(popup->isVisible(), "the popup shows on the video page too");
+    check(dashboard.popup() == Popup::LinkLost, "stale match data reports LinkLost");
+    check(dashboard.rect().contains(popup->geometry()),
+          "the popup stays inside the window in video mode");
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -427,6 +532,8 @@ int main(int argc, char* argv[]) {
         both_panes_receive_one_identical_frame();
         the_frame_source_is_read_exactly_once();
         the_layout_dump_is_reproducible_and_hides_unlaid_geometry();
+        a_blocking_popup_renders_above_both_pages_without_moving_the_layout();
+        the_popup_also_covers_the_video_page();
     } catch (const std::exception& error) {
         std::cerr << "FAIL " << error.what() << '\n';
         return 1;

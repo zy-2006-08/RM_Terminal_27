@@ -65,7 +65,8 @@ bool Store::apply(const inbound::Event& patch, MonotonicMs now) {
         return true;
     }
     last_event_ = EventKey{timestamp, level, *patch.text};
-    state_.events.push(EventRecord{timestamp, level, *patch.text, now});
+    state_.events.push(
+        EventRecord{timestamp, level, *patch.text, now, patch.faction.value_or(0)});
     return true;
 }
 bool Store::apply(const inbound::RobotDynamicStatus& patch, std::optional<RobotId> source, MonotonicMs now) {

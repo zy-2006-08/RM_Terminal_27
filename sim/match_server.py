@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import math
+import os
 import random
 import sys
 import threading
@@ -34,7 +35,7 @@ sys.path.insert(0, str(_ROOT / "generated"))
 import paho.mqtt.client as mqtt
 
 import rm_terminal_pb2 as pb
-from core.constants import (
+from sim.constants import (
     MQTT_PORT,
     SELF_ROBOT_ID,
     SERVER_HOST,
@@ -83,11 +84,17 @@ _RED_IDS: tuple[int, ...] = tuple(sorted((*_FRIENDLY_IDS, SELF_ROBOT_ID)))
 # 1500 HP 约 2.3 分钟一局，演示时才看得到局分变化。
 _BASE_MAX_HP = 5000
 _OUTPOST_MAX_HP = 1500
+# 结算动画要等满一局才看得到,演示/验收时用 RM_MATCH_SEC 缩短比赛。
+_MATCH_SEC = int(os.environ.get("RM_MATCH_SEC", "420"))
+_SETTLEMENT_SEC = int(os.environ.get("RM_SETTLEMENT_SEC", "15"))
+_STAGE_SETTLEMENT = 5
 _RED_TEAM_NAME = "电子科技大学中山学院 RoboBraver"
 _BLUE_TEAM_NAME = "哈尔滨工业大学(威海) HERO"
 
 _FACTION_RED = 1
 _FACTION_BLUE = 2
+# 自机阵亡事件必须与队友走同一 faction 来源，否则横幅配色会不一致。
+_SELF_FACTION = _FACTION_RED if SELF_ROBOT_ID in _RED_IDS else _FACTION_BLUE
 
 _FIELD_LENGTH_M = 28.0
 _FIELD_WIDTH_M = 15.0
@@ -128,6 +135,7 @@ class SimulatedMatch:
         self.coin = 220
         self.red_score = 0
         self.blue_score = 0
+        self._locked_winner: int | None = None
         self.seq = 0
         self.rng = random.Random(2027)
         # 全场血量：自机血量仍由 self.hp 单独维护（既有 RobotDynamicStatus 链路），
@@ -152,12 +160,19 @@ class SimulatedMatch:
         self.blue_fortress_sec = 0
         self.fortress_holder = 0
         self._fortress_accum = 0.0
+        # 击杀数同样绑定到真实致死事件（见 _register_kill），不独立造数：
+        # 否则会出现击杀数上涨却无人掉血的自相矛盾画面。
+        self.red_kills = 0
+        self.blue_kills = 0
+        self.red_energy_activations = 0
+        self.blue_energy_activations = 0
         self.target_locked = False
         self.target_id = 0
         self.vision_online = True
         self.chassis_mode = 2
         self.autoaim = True
-        self.events: list[tuple[int, str]] = []
+        # (level, text, faction)：faction 0未知/中立 1红方 2蓝方，决定事件横幅配色。
+        self.events: list[tuple[int, str, int]] = []
         self.blinded = False
         self.blind_started_ms = 0
         self.blind_remaining_ms = 0
@@ -173,14 +188,39 @@ class SimulatedMatch:
         return time.monotonic() - self.t0
 
     def stage(self) -> tuple[int, int]:
-        """准备 5s -> 倒计时 5s -> 比赛 420s，循环往复便于长时间演示。"""
+        """准备 5s -> 倒计时 5s -> 比赛 420s -> 结算 15s，循环往复便于长时间演示。
+
+        结算阶段必须真的出现：终端的结算动画只在 stage==5 且 winner 有效时播放，
+        少了这一段就永远验证不到胜负画面。
+        """
         e = self.elapsed
         if e < 5:
             return 1, int(5 - e)
         if e < 10:
             return 3, int(10 - e)
-        match_elapsed = (e - 10) % 420
-        return 4, int(420 - match_elapsed)
+        cycle = (e - 10) % (_MATCH_SEC + _SETTLEMENT_SEC)
+        if cycle < _MATCH_SEC:
+            return 4, int(_MATCH_SEC - cycle)
+        return 5, int(_MATCH_SEC + _SETTLEMENT_SEC - cycle)
+
+    def winner(self) -> int:
+        """0 平局 1 红胜 2 蓝胜，非结算阶段为 255（协议规定的占位值）。
+
+        进入结算的那一刻按基地血量定胜负并**锁住**结果。基地血量每 tick 仍在变化，
+        不锁的话胜方会在结算期间来回翻转，终端那边就会反复重播胜利动画。
+        """
+        stage, _ = self.stage()
+        if stage != _STAGE_SETTLEMENT:
+            self._locked_winner = None
+            return 255
+        if self._locked_winner is None:
+            if self.red_base_hp > self.blue_base_hp:
+                self._locked_winner = 1
+            elif self.blue_base_hp > self.red_base_hp:
+                self._locked_winner = 2
+            else:
+                self._locked_winner = 0
+        return self._locked_winner
 
     def tick_fast(self) -> None:
         """50Hz：更新云台、自瞄与目标状态。"""
@@ -219,7 +259,7 @@ class SimulatedMatch:
             self.hp -= applied
             self._deal_damage(True, applied)
             if self.hp == 0:
-                self.events.append((3, f"{_robot_name(SELF_ROBOT_ID)}阵亡"))
+                self.events.append((3, f"{_robot_name(SELF_ROBOT_ID)}阵亡", _SELF_FACTION))
         if self.rng.random() < 0.03:
             self.hp = min(self.max_hp, self.hp + 60)
             self.coin += 20
@@ -247,6 +287,12 @@ class SimulatedMatch:
         else:
             self.red_total_damage += amount
 
+    def _register_kill(self, victim_is_red: bool) -> None:
+        if victim_is_red:
+            self.blue_kills += 1
+        else:
+            self.red_kills += 1
+
     def tick_field_hp(self) -> None:
         """推进除自机外的全场血量与双方基地血量。
 
@@ -264,8 +310,11 @@ class SimulatedMatch:
                 self.other_hp[robot_id] = hp - applied
                 self._deal_damage(robot_id in _RED_IDS, applied)
                 if self.other_hp[robot_id] == 0:
-                    level = 1 if robot_id in _RED_IDS else 0
-                    self.events.append((level, f"{_robot_name(robot_id)}阵亡"))
+                    victim_is_red = robot_id in _RED_IDS
+                    self._register_kill(victim_is_red)
+                    level = 1 if victim_is_red else 0
+                    self.events.append(
+                        (level, f"{_robot_name(robot_id)}阵亡", 1 if victim_is_red else 2))
             elif self.rng.random() < 0.03:
                 self.other_hp[robot_id] = min(
                     self.other_max_hp[robot_id], hp + 60)
@@ -277,13 +326,13 @@ class SimulatedMatch:
             self.blue_outpost_hp -= applied
             self._deal_damage(False, applied)
             if self.blue_outpost_hp == 0:
-                self.events.append((0, "蓝方前哨站被摧毁"))
+                self.events.append((0, "蓝方前哨站被摧毁", 2))
         if self.rng.random() < 0.018 and self.red_outpost_hp > 0:
             applied = min(self.red_outpost_hp, self.rng.randint(20, 80))
             self.red_outpost_hp -= applied
             self._deal_damage(True, applied)
             if self.red_outpost_hp == 0:
-                self.events.append((2, "红方前哨站被摧毁"))
+                self.events.append((2, "红方前哨站被摧毁", 1))
 
         if self.rng.random() < 0.02:
             applied = min(self.blue_base_hp, self.rng.randint(20, 90))
@@ -307,11 +356,11 @@ class SimulatedMatch:
 
         if self.blue_base_hp == 0:
             self.red_score += 1
-            self.events.append((0, "蓝方基地被击毁，红方本局获胜"))
+            self.events.append((0, "蓝方基地被击毁，红方本局获胜", 1))
             self.start_next_round()
         elif self.red_base_hp == 0:
             self.blue_score += 1
-            self.events.append((3, "红方基地被击毁，蓝方本局获胜"))
+            self.events.append((3, "红方基地被击毁，蓝方本局获胜", 2))
             self.start_next_round()
 
     def start_next_round(self) -> None:
@@ -327,6 +376,10 @@ class SimulatedMatch:
         self.blue_fortress_sec = 0
         self.fortress_holder = 0
         self._fortress_accum = 0.0
+        self.red_kills = 0
+        self.blue_kills = 0
+        self.red_energy_activations = 0
+        self.blue_energy_activations = 0
 
     def field_health(self) -> list[tuple[int, int, int, int]]:
         out: list[tuple[int, int, int, int]] = [
@@ -341,7 +394,9 @@ class SimulatedMatch:
         stage, _ = self.stage()
         if stage != 4:
             return None
-        return (self.elapsed - 10) % 420
+        # 周期必须与 stage() 完全一致。写死 420 会与含结算段的真实周期错开,
+        # 致盲时刻表随之漂移,表现为 UI 模式在一局内多切一次。
+        return (self.elapsed - 10) % (_MATCH_SEC + _SETTLEMENT_SEC)
 
     def tick_blind(self) -> None:
         """按 _BLIND_SCHEDULE 推进编造的致盲状态（本地模拟，非 2027 协议）。
@@ -364,7 +419,7 @@ class SimulatedMatch:
             # 编造字段：用比赛内 ms 而非挂钟 ms，保证两次运行完全一致。
             self.blind_started_ms = int(start * 1000)
             self._blind_window = active
-            self.events.append((3, "红方基地被飞镖命中，图传致盲"))
+            self.events.append((3, "红方基地被飞镖命中，图传致盲", 1))
             print(f"[server] 致盲开始 match_t={start:.1f}s 持续={duration:.1f}s", flush=True)
         elif active is None and self._blind_window is not None:
             start, duration = self._blind_window
@@ -372,7 +427,7 @@ class SimulatedMatch:
             self.blind_cause = 0
             self.blind_remaining_ms = 0
             self._blind_window = None
-            self.events.append((0, "基地致盲结束，图传恢复"))
+            self.events.append((0, "基地致盲结束，图传恢复", 0))
             print(f"[server] 致盲结束 match_t={start + duration:.1f}s", flush=True)
 
         if self._blind_window is not None and me is not None:
@@ -427,16 +482,16 @@ def main() -> int:
     def apply_command(cmd: int, param: int) -> None:
         if cmd == 0x01:
             match.chassis_mode = param
-            match.events.append((0, f"底盘模式切换为 {param}"))
+            match.events.append((0, f"底盘模式切换为 {param}", 0))
         elif cmd == 0x02:
             match.autoaim = bool(param)
-            match.events.append((0, f"自瞄{'启用' if param else '关闭'}"))
+            match.events.append((0, f"自瞄{'启用' if param else '关闭'}", 0))
         elif cmd == 0x03:
             match.chassis_mode = 0
             match.autoaim = False
-            match.events.append((3, "终端下发紧急停止"))
+            match.events.append((3, "终端下发紧急停止", 0))
         elif cmd == 0x04:
-            match.events.append((0, "云台回中"))
+            match.events.append((0, "云台回中", 0))
 
     match.apply_command = apply_command
 
@@ -505,7 +560,7 @@ def main() -> int:
             red_score=match.red_score, blue_score=match.blue_score,
             current_stage=stage, stage_countdown_sec=remain,
             stage_elapsed_sec=int(match.elapsed), is_paused=False,
-            winner=255, end_reason=255,
+            winner=match.winner(), end_reason=255,
             red_base_hp=match.red_base_hp, red_base_max_hp=_BASE_MAX_HP,
             blue_base_hp=match.blue_base_hp, blue_base_max_hp=_BASE_MAX_HP,
             red_outpost_hp=match.red_outpost_hp, red_outpost_max_hp=_OUTPOST_MAX_HP,
@@ -517,6 +572,9 @@ def main() -> int:
             red_fortress_sec=match.red_fortress_sec,
             blue_fortress_sec=match.blue_fortress_sec,
             fortress_holder=match.fortress_holder,
+            red_kills=match.red_kills, blue_kills=match.blue_kills,
+            red_energy_activations=match.red_energy_activations,
+            blue_energy_activations=match.blue_energy_activations,
         ))
 
     def send_health_set() -> None:
@@ -587,9 +645,10 @@ def main() -> int:
 
     def send_events() -> None:
         while match.events:
-            level, text = match.events.pop(0)
+            level, text, faction = match.events.pop(0)
             _publish(client, T_EVENT, pb.Event(
-                timestamp_ms=int(time.time() * 1000), level=level, text=text))
+                timestamp_ms=int(time.time() * 1000), level=level, text=text,
+                faction=faction))
 
     workers = [
         threading.Thread(target=loop, args=(1 / 50, send_telemetry), daemon=True),

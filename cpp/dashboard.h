@@ -3,15 +3,19 @@
 #include "config.h"
 #include "domain.h"
 #include "map_pane.h"
+#include "game_result.h"
+#include "popup_state.h"
 #include "roster_pane.h"
 #include "roster_panel.h"
 #include "battle_analysis_pane.h"
+#include "event_feed_pane.h"
 #include "top_bar.h"
 #include "ui_mode.h"
 #include "video_receiver.h"
 
 #include <QImage>
 #include <QLabel>
+#include <QQuickWidget>
 #include <QStackedLayout>
 #include <QString>
 #include <QWidget>
@@ -57,7 +61,9 @@ private:
 QString video_panel_text(const VideoReceiver* video, VideoFaultTracker* tracker = nullptr,
                          MonotonicMs now = 0);
 
-constexpr std::size_t kEventPanelRows = 14;
+// 只是喂给面板的行数上限,不决定面板高度(面板画到自己那一格满为止)。取值需
+// 覆盖全屏下能显示的行数,否则高分辨率下面板底部会空着。
+constexpr std::size_t kEventPanelRows = 24;
 
 QColor event_level_color(std::uint32_t level);
 
@@ -65,15 +71,25 @@ QColor event_level_color(std::uint32_t level);
 // 操作手习惯性忽略它,而这条带子存在的唯一目的就是打破这种忽略。
 QString alert_strip_text(const Snapshot& snapshot, const VideoReceiver* video);
 
-// Newest first, one row per record, coloured by level. Truncation is disclosed
-// rather than implied away: a panel that silently drops records reads as a quiet
-// match.
-QString event_history_html(const Snapshot& snapshot, std::size_t max);
-
 // Countdown and HP survive into the video overlay because during blinding they
 // are the only match state the operator can still rely on.
 QString video_overlay_countdown_text(const Snapshot& snapshot);
 QString video_overlay_hp_text(const Snapshot& snapshot);
+
+// Snapshot -> popup machine inputs. Separate from the machine so the machine stays
+// free of the Field/Snapshot vocabulary and testable on plain values.
+PopupInputs popup_inputs(const Snapshot& snapshot);
+
+// Popup::None yields an empty string, and the caller hides the overlay on empty
+// rather than showing a blank panel.
+QString popup_text(Popup popup, std::optional<std::int32_t> countdown_sec);
+
+// 标题/说明分开返回,而不是继续传一个带 \n 的整串:两者在 QML 里是不同字号的
+// 两层,合成一串就无法分层排版。popup_text 保留给日志和测试断言。
+QString popup_title(Popup popup);
+QString popup_detail(Popup popup);
+
+QString popup_kind(Popup popup);
 
 // BGR24 from the decoder maps to Format_BGR888, and the QImage borrows the
 // caller's bytes, so the returned image must be consumed before the next frame.
@@ -88,6 +104,12 @@ public:
     void setFrame(const QImage& image);
     void setStatus(const QString& status);
 
+    // Cover 会把画面放大到铺满整格并裁掉溢出的边,Fit 保留全幅、四周留黑边。
+    // 信息页缩略图用 Cover(黑边比裁边更显眼),全屏图传用 Fit —— 全屏下操作手要看
+    // 到完整视野,裁掉边缘可能裁掉对手。
+    enum class Scaling { Fit, Cover };
+    void setScaling(Scaling scaling);
+
     // Observation only. Returns the owned copy this pane is painting, so a caller
     // can confirm both panes received the same frame.
     const QImage& currentFrame() const { return image_; }
@@ -98,6 +120,7 @@ protected:
 private:
     QImage image_;
     QString status_ = QStringLiteral("waiting for video");
+    Scaling scaling_ = Scaling::Fit;
 };
 
 // Hands ONE already-owned frame to both panes.
@@ -121,11 +144,18 @@ public:
     ModeReason reason() const { return machine_.reason(); }
     void forceMode(std::optional<UiMode> forced) { machine_.forceMode(forced); }
 
+    Popup popup() const { return popups_.popup(); }
+
     // Structured layout evidence: mode, reason, and the geometry of every pane that
     // distinguishes the two layouts. Deliberately carries no match data or robot
     // coordinates - it is evidence about the LAYOUT, and mixing live values in would
     // make a byte-for-byte diff fail for reasons that have nothing to do with layout.
     std::string layoutDump() const;
+
+protected:
+    // The popup is outside both page layouts (see popup_ below), so nothing else
+    // would ever resize it.
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     // Two VideoPane instances, one per page, sharing the single resident
@@ -148,7 +178,7 @@ private:
     BattleAnalysisPane* analysis_;
 
     MapPane* map_;
-    QLabel* event_;
+    EventFeedPane* event_;
     QLabel* video_stats_;
     VideoPane* info_video_pane_;
 
@@ -156,8 +186,24 @@ private:
     QLabel* video_countdown_;
     QLabel* video_hp_;
 
+    // Child of the Dashboard itself rather than of either page, so one instance
+    // covers both layouts. A per-page copy could disagree about what is blocking,
+    // and a mode switch would swap one popup for another mid-condition.
+    //
+    // Initialised here, not just in the constructor body: resizeEvent can fire
+    // while the constructor is still building the layouts, before this member is
+    // assigned, and the override must be able to tell that apart.
+    QQuickWidget* popup_ = nullptr;
+
+    // 结算动画独立于弹窗层,和上游一样是单独一个部件:它要盖住整屏(含弹窗),
+    // 而且生命周期由「本局是否已判定胜负」决定,与弹窗的 dwell 规则无关。
+    QQuickWidget* victory_ = nullptr;
+    GameResult shown_result_ = GameResult::None;
+
     UiModeMachine machine_;
     UiMode logged_mode_ = UiMode::Info;
+    PopupStateMachine popups_;
+    Popup logged_popup_ = Popup::None;
     VideoFaultTracker video_faults_;
 };
 
