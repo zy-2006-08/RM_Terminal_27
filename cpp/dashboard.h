@@ -3,6 +3,10 @@
 #include "config.h"
 #include "domain.h"
 #include "map_pane.h"
+#include "roster_pane.h"
+#include "roster_panel.h"
+#include "battle_analysis_pane.h"
+#include "top_bar.h"
 #include "ui_mode.h"
 #include "video_receiver.h"
 
@@ -19,14 +23,47 @@ namespace rm_terminal {
 
 // Shared by both layout pages. A second set of these for the video page would
 // let the two pages disagree about the same underlying values.
-QString game_panel_text(const Snapshot& snapshot);
-QString robot_panel_text(const Snapshot& snapshot);
 QString event_panel_text(const Snapshot& snapshot);
-QString video_panel_text(const VideoReceiver* video);
 
-constexpr std::size_t kEventPanelRows = 8;
+// VideoReceiver::snapshot() 的计数器是**累计值**。
+struct VideoFaultCounts {
+    qint64 missing = 0;
+    qint64 out_of_order = 0;
+    qint64 duplicates = 0;
+    qint64 incomplete = 0;
+    qint64 expired = 0;
+};
+
+VideoFaultCounts video_fault_counts(const VideoReceiver* video);
+
+constexpr MonotonicMs kVideoFaultHoldMs = 3000;
+
+// 累计计数器用 `>0` 判定,会让开局的一次丢包在整场比赛里永久挂在界面上,操作手
+// 无法分辨「正在丢包」和「三十分钟前丢过一次」。这里只报告相对基线的新增量,并
+// 让它可见 kVideoFaultHoldMs —— 否则单帧抖动会一闪而过看不见。恢复后自动消失。
+class VideoFaultTracker {
+public:
+    QString faultLine(const VideoFaultCounts& counts, MonotonicMs now);
+
+private:
+    VideoFaultCounts baseline_;
+    bool seeded_ = false;
+    MonotonicMs visible_until_ = 0;
+    QString held_;
+};
+
+// 图传状态。正常返回单行状态;仅在**新增**故障时追加故障行。tracker 为空时不做
+// 增量判定,只返回状态文字。
+QString video_panel_text(const VideoReceiver* video, VideoFaultTracker* tracker = nullptr,
+                         MonotonicMs now = 0);
+
+constexpr std::size_t kEventPanelRows = 14;
 
 QColor event_level_color(std::uint32_t level);
+
+// 全宽告警带的文字。空字符串表示一切正常,调用方据此隐藏整条 —— 常态占位会让
+// 操作手习惯性忽略它,而这条带子存在的唯一目的就是打破这种忽略。
+QString alert_strip_text(const Snapshot& snapshot, const VideoReceiver* video);
 
 // Newest first, one row per record, coloured by level. Truncation is disclosed
 // rather than implied away: a panel that silently drops records reads as a quiet
@@ -103,10 +140,14 @@ private:
 
     QLabel* banner_;
     QLabel* mode_banner_;
+    QLabel* alert_strip_;
+
+    TopBar* top_bar_;
+    RosterPanel* ally_roster_;
+    RosterPanel* enemy_roster_;
+    BattleAnalysisPane* analysis_;
 
     MapPane* map_;
-    QLabel* game_;
-    QLabel* robot_;
     QLabel* event_;
     QLabel* video_stats_;
     VideoPane* info_video_pane_;
@@ -117,6 +158,7 @@ private:
 
     UiModeMachine machine_;
     UiMode logged_mode_ = UiMode::Info;
+    VideoFaultTracker video_faults_;
 };
 
 }

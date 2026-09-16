@@ -244,7 +244,10 @@ int main(int argc, char* argv[]) {
 
     rm_terminal::Dashboard dashboard(cfg);
     dashboard.setWindowTitle("RM Terminal");
-    dashboard.setMinimumSize(980, 620);
+    // Four columns plus the flanking roster cards need more width than the old
+    // two-column layout; below this the map degrades to a sliver.
+    dashboard.setMinimumSize(1280, 760);
+    dashboard.resize(1440, 900);
     // Applied before the first update() so the forced layout holds from the very
     // first tick; injecting it afterwards would render one automatic frame first
     // and put the wrong layout in a capture taken at a short delay.

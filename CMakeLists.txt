@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network Qml Quick QuickWidgets)
 find_package(Protobuf REQUIRED)
 find_package(absl CONFIG REQUIRED)
 find_library(MOSQUITTO_LIBRARY NAMES mosquitto REQUIRED)
@@ -30,7 +30,7 @@ target_link_libraries(terminal_domain PUBLIC terminal_proto)
 add_library(terminal_video cpp/video.cpp cpp/video_receiver.cpp cpp/video_receiver.h)
 target_include_directories(terminal_video PUBLIC cpp)
 target_link_libraries(terminal_video PUBLIC terminal_logging Qt6::Core Qt6::Network)
-add_library(terminal_presentation cpp/presentation.cpp cpp/ui_mode.cpp cpp/ui_mode.h cpp/field_map.cpp cpp/field_map.h)
+add_library(terminal_presentation cpp/presentation.cpp cpp/ui_mode.cpp cpp/ui_mode.h cpp/field_map.cpp cpp/field_map.h cpp/top_bar_model.cpp cpp/top_bar_model.h)
 target_link_libraries(terminal_presentation PUBLIC terminal_domain terminal_logging Qt6::Core)
 
 # Separate from terminal_presentation because the map pane is the first component
@@ -42,10 +42,28 @@ add_library(terminal_map cpp/map_pane.cpp cpp/map_pane.h assets/minimap.qrc)
 set_target_properties(terminal_map PROPERTIES AUTORCC ON)
 target_link_libraries(terminal_map PUBLIC terminal_presentation Qt6::Widgets)
 
+# Visual layer: the shared palette plus the self-drawn widgets that the reference
+# layout needs (gradient roster cards). Grouped with the map because they share the
+# same Widgets dependency.
+add_library(terminal_visual
+    cpp/theme.cpp cpp/theme.h
+    cpp/roster_pane.cpp cpp/roster_pane.h
+    cpp/roster_panel.cpp cpp/roster_panel.h
+    cpp/self_status_pane.cpp cpp/self_status_pane.h
+    cpp/battle_analysis.cpp cpp/battle_analysis.h
+    cpp/battle_analysis_pane.cpp cpp/battle_analysis_pane.h
+    cpp/top_bar.cpp cpp/top_bar.h)
+target_link_libraries(terminal_visual PUBLIC terminal_presentation Qt6::Widgets Qt6::QuickWidgets)
+
+# 切图资源。挂在**可执行文件**上而不是 terminal_visual 静态库上:塞进静态库时资源的
+# 自注册符号没有任何 TU 引用它,链接器会整段丢掉,运行期表现为 qrc:/qml/TopBar.qml
+# 404 而不是构建报错。每个要显示顶部栏的可执行文件都得带上它。
+qt_add_resources(TOPBAR_RES resources.qrc)
+
 # A library rather than sources compiled straight into the executable, so the
 # offscreen layout test can link the real Dashboard instead of a reimplementation.
 add_library(terminal_dashboard cpp/dashboard.cpp cpp/dashboard.h)
-target_link_libraries(terminal_dashboard PUBLIC terminal_map terminal_video Qt6::Widgets)
+target_link_libraries(terminal_dashboard PUBLIC terminal_map terminal_visual terminal_video Qt6::Widgets)
 target_compile_definitions(terminal_dashboard PRIVATE QT_NO_KEYWORDS)
 
 add_executable(rm_terminal
@@ -53,9 +71,10 @@ add_executable(rm_terminal
     cpp/platform.h
     cpp/mqtt_intake.cpp
     cpp/mqtt_intake.h
+    ${TOPBAR_RES}
 )
 target_include_directories(rm_terminal PRIVATE ${MOSQUITTO_INCLUDE_DIR})
-target_link_libraries(rm_terminal PRIVATE terminal_dashboard terminal_map terminal_presentation terminal_video ${MOSQUITTO_LIBRARY} Qt6::Widgets)
+target_link_libraries(rm_terminal PRIVATE terminal_dashboard ${MOSQUITTO_LIBRARY} Qt6::Widgets)
 target_compile_features(rm_terminal PRIVATE cxx_std_17)
 target_compile_definitions(rm_terminal PRIVATE QT_NO_KEYWORDS)
 
@@ -81,7 +100,7 @@ if(BUILD_TESTING)
     target_link_libraries(video_diagnostic PRIVATE terminal_video Qt6::Core Qt6::Network)
     target_link_libraries(intake_test PRIVATE terminal_domain terminal_proto)
     add_test(NAME intake_contract COMMAND intake_test)
-    target_link_libraries(domain_test PRIVATE terminal_presentation)
+    target_link_libraries(domain_test PRIVATE terminal_visual)
     add_test(NAME domain_state COMMAND domain_test)
     add_executable(ui_mode_test cpp/ui_mode_test.cpp)
     target_link_libraries(ui_mode_test PRIVATE terminal_presentation)
@@ -89,7 +108,14 @@ if(BUILD_TESTING)
     add_executable(field_map_test cpp/field_map_test.cpp)
     target_link_libraries(field_map_test PRIVATE terminal_presentation)
     add_test(NAME field_map_projection COMMAND field_map_test)
-    add_executable(dashboard_layout_test cpp/dashboard_layout_test.cpp)
+    add_executable(battle_analysis_test cpp/battle_analysis_test.cpp)
+    target_link_libraries(battle_analysis_test PRIVATE terminal_visual)
+    add_test(NAME battle_analysis_metrics COMMAND battle_analysis_test)
+    add_executable(top_bar_model_test cpp/top_bar_model_test.cpp)
+    target_link_libraries(top_bar_model_test PRIVATE terminal_presentation)
+    add_test(NAME top_bar_model COMMAND top_bar_model_test)
+    # 资源随可执行文件带:这个测试构造真的 Dashboard,顶部栏要能真的加载 QML。
+    add_executable(dashboard_layout_test cpp/dashboard_layout_test.cpp ${TOPBAR_RES})
     target_link_libraries(dashboard_layout_test PRIVATE terminal_dashboard Qt6::Widgets)
     target_compile_definitions(dashboard_layout_test PRIVATE
         QT_NO_KEYWORDS

@@ -1,5 +1,6 @@
 #include "store.h"
 #include "presentation.h"
+#include "roster_pane.h"
 #include "logging.h"
 #include <cmath>
 #include <iostream>
@@ -33,6 +34,63 @@ void chassis_names_match_authoritative_constants() {
     check(chassis_name(5) == QStringLiteral("未知"), "chassis 5 falls back to 未知");
     check(chassis_name(9) == QStringLiteral("未知"), "chassis 9 falls back to 未知");
     check(chassis_name(2) != QStringLiteral("独立"), "the old wrong name for mode 2 is gone");
+}
+
+// 阵容来自 RMUC 2027 规则手册表 2-1，与 2026 的 1英雄/2工程/3-4-5步兵/6空中/7哨兵
+// 不同。4 号和 7 号在 2027 阵容中不存在，必须返回空字符串让调用方退回显示编号，
+// 否则旧阵容的兵种名会贴在新编号上 —— 这是错误读数，故逐值断言。
+void robot_class_names_match_2027_lineup() {
+    check(robot_class_name(1) == QStringLiteral("重装"), "1 is 重装");
+    check(robot_class_name(2) == QStringLiteral("步兵"), "2 is 步兵");
+    check(robot_class_name(3) == QStringLiteral("步兵"), "3 is 步兵");
+    check(robot_class_name(4) == QStringLiteral("空中"), "4 is 空中");
+    check(robot_class_name(5) == QStringLiteral("哨兵"), "5 is 哨兵");
+    check(robot_class_name(101) == QStringLiteral("重装"), "101 mirrors 1 as 重装");
+    check(robot_class_name(103) == QStringLiteral("步兵"), "103 mirrors 3 as 步兵");
+    check(robot_class_name(105) == QStringLiteral("哨兵"), "105 mirrors 5 as 哨兵");
+    check(robot_class_name(6).isEmpty(), "6 is beyond the five-robot lineup");
+    check(robot_class_name(7).isEmpty(), "7 is beyond the five-robot lineup");
+
+    // 官方选手端两侧都显示 1-5：操作手看到的是 5 号,不是内部的 105。
+    check(display_robot_number(105) == 5, "blue 105 shows as 5");
+    check(display_robot_number(101) == 1, "blue 101 shows as 1");
+    check(display_robot_number(3) == 3, "red ids are shown unchanged");
+    check(robot_class_name(1) != QStringLiteral("英雄"), "the 2026 name for 1 is gone");
+    check(robot_class_name(2) != QStringLiteral("工程"), "the 2026 name for 2 is gone");
+}
+
+// build_roster feeds the ally/enemy columns. Pinned against the ids match_server.py
+// actually publishes: red 1,2 + self 3 and blue 101-105. A row that loses its faction
+// or its self flag lands in the wrong column on screen.
+void roster_splits_the_2027_lineup_by_faction() {
+    Snapshot snapshot;
+    for (std::uint32_t id : {1u, 2u, 3u}) {
+        MapRobot robot;
+        robot.id = RobotId{id};
+        robot.faction = 1;
+        robot.is_self = (id == 3);
+        snapshot.map_robots.push_back(robot);
+    }
+    for (std::uint32_t id : {101u, 102u, 103u, 104u, 105u}) {
+        MapRobot robot;
+        robot.id = RobotId{id};
+        robot.faction = 2;
+        snapshot.map_robots.push_back(robot);
+    }
+
+    const auto red = build_roster(snapshot, 1);
+    const auto blue = build_roster(snapshot, 2);
+    check(red.size() == 3, "the red column holds 1, 2 and self 3");
+    check(blue.size() == 5, "the blue column holds all five mirrored ids");
+    check(red[0].id.value == 1 && red[2].id.value == 3, "the red column is sorted by id");
+    check(red[2].is_self, "self stays flagged inside the red column");
+
+    // Every published id must resolve to a 兵种; a blank here is the fallback path
+    // and would show the operator a bare number where the reference shows a class.
+    for (const RosterEntry& entry : red)
+        check(!robot_class_name(entry.id.value).isEmpty(), "every red id has a 兵种");
+    for (const RosterEntry& entry : blue)
+        check(!robot_class_name(entry.id.value).isEmpty(), "every blue id has a 兵种");
 }
 
 EventRecord make_event(std::uint64_t timestamp, std::uint32_t level, const char* text) {
@@ -357,6 +415,30 @@ void store_normalizes_unknown_faction() {
           "only the out of range faction counts as invalid; absence is not corruption");
 }
 
+void store_carries_base_hp_through_conversion() {
+    Store store(10);
+    inbound::GameStatus game;
+    game.red_base_hp = 1500;
+    game.red_base_max_hp = 1500;
+    game.blue_base_hp = 1451;
+    game.blue_base_max_hp = 1500;
+    check(store.apply(game, 0), "base hp update accepted");
+
+    const auto snapshot = store.snapshot(0);
+    check(snapshot.game.red_base_hp.value == 1500, "red base hp reaches the snapshot");
+    check(snapshot.game.red_base_max_hp.value == 1500, "red base max hp reaches the snapshot");
+    check(snapshot.game.blue_base_hp.value == 1451, "blue base hp reaches the snapshot");
+    check(snapshot.game.blue_base_max_hp.value == 1500, "blue base max hp reaches the snapshot");
+    check(snapshot.game.red_base_hp.freshness == Freshness::Fresh,
+          "a received base hp is fresh, not NeverReceived");
+
+    inbound::GameStatus zero_max;
+    zero_max.red_base_max_hp = 0;
+    check(!store.apply(zero_max, 0), "a zero base max hp reports invalid");
+    check(store.snapshot(0).game.red_base_max_hp.value == 1500,
+          "the last valid base max hp survives a rejected zero");
+}
+
 int main() {
     try {
         for (auto threshold : {-1, 0}) {
@@ -431,6 +513,8 @@ int main() {
         check(rejected, "backwards snapshot time rejected");
         stale_reporter_logs_once_per_transition();
         chassis_names_match_authoritative_constants();
+        robot_class_names_match_2027_lineup();
+        roster_splits_the_2027_lineup_by_faction();
         event_history_orders_newest_first();
         event_history_discards_oldest_when_full();
         event_history_preserves_unknown_levels();
@@ -445,6 +529,7 @@ int main() {
         store_leaves_self_position_missing_without_authoritative_source();
         store_demotes_duplicate_self_claims();
         store_normalizes_unknown_faction();
+        store_carries_base_hp_through_conversion();
         std::cout << "All domain checks passed (no assert, no sleep).\n";
         return 0;
     } catch (const std::exception& error) {

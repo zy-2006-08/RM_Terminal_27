@@ -2,33 +2,56 @@
 
 #include "logging.h"
 #include "presentation.h"
+#include "theme.h"
+
+#include <algorithm>
 
 #include <QColor>
+#include <QDateTime>
 #include <QFont>
+#include <QFontMetrics>
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QPainter>
 #include <QRect>
+#include <QResizeEvent>
+#include <QPair>
 #include <QScrollArea>
+#include <QSizePolicy>
 #include <QStackedLayout>
 #include <QStringList>
 #include <QVBoxLayout>
+#include <QVector>
 
 namespace rm_terminal {
 namespace {
 
-QString stage_name(std::uint32_t stage) {
-    switch (stage) {
-    case 0: return QStringLiteral("未开始");
-    case 1: return QStringLiteral("准备阶段");
-    case 2: return QStringLiteral("自检阶段");
-    case 3: return QStringLiteral("倒计时");
-    case 4: return QStringLiteral("比赛中");
-    case 5: return QStringLiteral("比赛结束");
-    default: return QStringLiteral("未知");
+// 自动换行的 QLabel 只按「一行」上报 minimumSizeHint,父布局据此把格子定矮,控件却按
+// 真实换行高度绘制,多出的行就向上盖住上方的图传画面。
+//
+// 上报真实换行高度需要宽度,而宽度要等布局算完才有 —— 于是首轮布局仍按一行定高。
+// resizeEvent 里的 updateGeometry() 就是打破这个循环的那一步:宽度一旦确定就让父布局
+// 带着正确的高度重算一遍。两者缺一都会静默复现重叠 bug。
+class WrappedLabel final : public QLabel {
+public:
+    WrappedLabel(const QString& text, QWidget* parent) : QLabel(text, parent) {
+        setWordWrap(true);
     }
-}
+
+    QSize minimumSizeHint() const override {
+        const QSize base = QLabel::minimumSizeHint();
+        const int w = width() > 0 ? width() : base.width();
+        if (w <= 0) return base;
+        return QSize(base.width(), std::max(base.height(), heightForWidth(w)));
+    }
+
+protected:
+    void resizeEvent(QResizeEvent* event) override {
+        QLabel::resizeEvent(event);
+        if (event->size().width() != event->oldSize().width()) updateGeometry();
+    }
+};
 
 QString level_name(std::uint32_t level) {
     switch (level) {
@@ -82,24 +105,11 @@ QString mark(const Field<T>& field) {
     return QString();
 }
 
-QString number(const Field<std::uint32_t>& field) {
-    if (!field.value) return QStringLiteral("--");
-    return QString::number(*field.value) + mark(field);
-}
-
-QString number(const Field<std::int32_t>& field) {
-    if (!field.value) return QStringLiteral("--");
-    return QString::number(*field.value) + mark(field);
-}
-
-QString number(const Field<double>& field, int precision) {
-    if (!field.value) return QStringLiteral("--");
-    return QString::number(*field.value, 'f', precision) + mark(field);
-}
-
-QString flag(const Field<bool>& field, const QString& yes, const QString& no) {
-    if (!field.value) return QStringLiteral("--");
-    return (*field.value ? yes : no) + mark(field);
+QString ratio(const Field<std::uint32_t>& value, const Field<std::uint32_t>& limit) {
+    if (!value.value) return QStringLiteral("--");
+    QString text = QString::number(*value.value);
+    if (limit.value) text += QStringLiteral(" / ") + QString::number(*limit.value);
+    return text + mark(value);
 }
 
 QString clock_text(const Field<std::int32_t>& field) {
@@ -111,89 +121,14 @@ QString clock_text(const Field<std::int32_t>& field) {
            mark(field);
 }
 
-QString ratio(const Field<std::uint32_t>& value, const Field<std::uint32_t>& limit) {
-    if (!value.value) return QStringLiteral("--");
-    QString text = QString::number(*value.value);
-    if (limit.value) text += QStringLiteral(" / ") + QString::number(*limit.value);
-    return text + mark(value);
+// Formats the timestamp carried in the feed's payload, not a local reading —— 故
+// 不受 assert_monotonic_clock.cmake 对 MonotonicMs 来源的限制。
+QString event_time_text(std::uint64_t timestamp_ms) {
+    if (timestamp_ms == 0) return QStringLiteral("--");
+    return QDateTime::fromMSecsSinceEpoch(static_cast<qint64>(timestamp_ms))
+        .toString(QStringLiteral("HH:mm:ss"));
 }
 
-}
-
-QString game_panel_text(const Snapshot& snapshot) {
-    const auto& game = snapshot.game;
-    QString stage = QStringLiteral("--");
-    if (game.current_stage.value) {
-        stage = QStringLiteral("%1 (%2)")
-                    .arg(stage_name(*game.current_stage.value))
-                    .arg(*game.current_stage.value) +
-                mark(game.current_stage);
-    }
-    return QStringLiteral(
-               "阶段    %1\n"
-               "剩余    %2      已进行  %3 s\n"
-               "轮次    %4 / %5\n"
-               "比分    红 %6  :  蓝 %7\n"
-               "暂停    %8\n"
-               "数据    quality=%9  freshness=%10")
-        .arg(stage)
-        .arg(clock_text(game.stage_countdown_sec))
-        .arg(number(game.stage_elapsed_sec))
-        .arg(number(game.current_round))
-        .arg(number(game.total_rounds))
-        .arg(number(game.red_score))
-        .arg(number(game.blue_score))
-        .arg(flag(game.is_paused, QStringLiteral("是"), QStringLiteral("否")))
-        .arg(quality_text(game.current_stage.quality))
-        .arg(freshness_text(game.current_stage.freshness));
-}
-
-QString robot_panel_text(const Snapshot& snapshot) {
-    if (snapshot.robots.empty()) return QStringLiteral("未收到任何机器人数据");
-    QStringList blocks;
-    for (const auto& entry : snapshot.robots) {
-        const auto& dyn = entry.second.dynamic;
-        const auto& tel = entry.second.telemetry;
-        const auto& pos = entry.second.position;
-        blocks.append(
-            QStringLiteral(
-                "机器人 %1\n"
-                "  血量    %2        装甲电源 %3\n"
-                "  热量    %4        弹速    %5 m/s\n"
-                "  弹量    %6        金币    %7\n"
-                "  底盘功率 %8 W      缓冲能量 %9 J\n"
-                "  云台    yaw %10   pitch %11\n"
-                "  底盘    %12        视觉    %13\n"
-                "  自瞄    %14        锁定    %15\n"
-                "  目标    id=%16 距离 %17 m 置信 %18\n"
-                "  摩擦轮  %19 rpm     允许开火 %20\n"
-                "  位置    x %21  y %22  yaw %23")
-                .arg(entry.first.value)
-                .arg(ratio(dyn.current_hp, dyn.max_hp))
-                .arg(number(entry.second.modules.power_manager))
-                .arg(ratio(dyn.shooter_heat_17mm, dyn.shooter_heat_limit))
-                .arg(number(dyn.bullet_speed, 2))
-                .arg(number(dyn.remaining_ammo))
-                .arg(number(dyn.coin))
-                .arg(number(dyn.chassis_power, 1))
-                .arg(number(dyn.buffer_energy, 1))
-                .arg(number(tel.gimbal_yaw, 2))
-                .arg(number(tel.gimbal_pitch, 2))
-                .arg(tel.chassis_mode.value ? chassis_name(*tel.chassis_mode.value) + mark(tel.chassis_mode)
-                                            : QStringLiteral("--"))
-                .arg(flag(tel.vision_online, QStringLiteral("在线"), QStringLiteral("离线")))
-                .arg(flag(tel.autoaim_enabled, QStringLiteral("开"), QStringLiteral("关")))
-                .arg(flag(tel.target_locked, QStringLiteral("是"), QStringLiteral("否")))
-                .arg(number(tel.target_id))
-                .arg(number(tel.target_distance, 2))
-                .arg(number(tel.confidence, 2))
-                .arg(number(tel.friction_rpm, 0))
-                .arg(flag(tel.fire_permit, QStringLiteral("是"), QStringLiteral("否")))
-                .arg(number(pos.x, 2))
-                .arg(number(pos.y, 2))
-                .arg(number(pos.yaw, 2)));
-    }
-    return blocks.join(QStringLiteral("\n\n"));
 }
 
 QString event_panel_text(const Snapshot& snapshot) {
@@ -205,15 +140,7 @@ QString event_panel_text(const Snapshot& snapshot) {
     return line + mark(event.text);
 }
 
-QColor event_level_color(std::uint32_t level) {
-    switch (level) {
-    case 0: return QColor(198, 200, 206);
-    case 1: return QColor(127, 183, 255);
-    case 2: return QColor(240, 200, 90);
-    case 3: return QColor(255, 107, 107);
-    default: return QColor(198, 200, 206);
-    }
-}
+QColor event_level_color(std::uint32_t level) { return theme::eventColor(level); }
 
 QString event_history_html(const Snapshot& snapshot, std::size_t max) {
     const std::vector<EventRecord> records = snapshot.events.recent(max);
@@ -225,19 +152,54 @@ QString event_history_html(const Snapshot& snapshot, std::size_t max) {
         // would be swallowed by the rich-text parser, so a hostile or merely
         // malformed payload could hide or restyle the alert it is reporting.
         const QString text = QString::fromStdString(record.text).toHtmlEscaped();
-        rows.append(QStringLiteral("<span style=\"color:%1\">[%2] %3</span>")
+        rows.append(QStringLiteral(
+                        "<tr>"
+                        "<td style=\"color:%1;padding-right:8px\">%2</td>"
+                        "<td style=\"color:%3\">%4</td>"
+                        "</tr>")
+                        .arg(theme::kTextMuted.name())
+                        .arg(event_time_text(record.timestamp_ms))
                         .arg(event_level_color(record.level).name())
-                        .arg(level_name(record.level))
                         .arg(text));
     }
 
     // Overwritten records are disclosed rather than dropped in silence, which
     // would render a truncated history as a quiet match.
     if (snapshot.events.droppedCount() > 0) {
-        rows.append(QStringLiteral("<span style=\"color:#8e8e94\">… 更早 %1 条已滚出缓冲</span>")
+        rows.append(QStringLiteral("<tr><td></td><td style=\"color:%1\">… 更早 %2 条已滚出缓冲</td></tr>")
+                        .arg(theme::kTextMuted.name())
                         .arg(snapshot.events.droppedCount()));
     }
-    return rows.join(QStringLiteral("<br/>"));
+    return QStringLiteral("<table cellspacing=\"0\" cellpadding=\"1\">%1</table>")
+        .arg(rows.join(QString()));
+}
+
+QString alert_strip_text(const Snapshot& snapshot, const VideoReceiver* video) {
+    QStringList alerts;
+
+    if (snapshot.blind.self_base_blinded.value.value_or(false)) {
+        const auto remaining = snapshot.blind.blind_remaining_ms.value;
+        alerts << (remaining && *remaining > 0
+                       ? QStringLiteral("基地致盲中 · 预计剩余 %1s")
+                             .arg((*remaining + 999) / 1000)
+                       : QStringLiteral("基地致盲中"));
+    }
+
+    if (snapshot.blind.self_base_blinded.freshness == Freshness::Stale)
+        alerts << QStringLiteral("致盲状态数据过期");
+    if (snapshot.game.stage_countdown_sec.freshness == Freshness::Stale)
+        alerts << QStringLiteral("比赛状态数据过期");
+    if (video && !video->online()) alerts << QStringLiteral("图传离线");
+
+    for (const RobotHealth& robot : snapshot.robot_health) {
+        if (robot.faction != 1) continue;
+        if (robot.current_hp.value && *robot.current_hp.value == 0) {
+            alerts << QStringLiteral("我方 %1 号阵亡")
+                          .arg(display_robot_number(robot.id.value));
+        }
+    }
+
+    return alerts.join(QStringLiteral("      "));
 }
 
 QString video_overlay_countdown_text(const Snapshot& snapshot) {
@@ -255,22 +217,69 @@ QString video_overlay_hp_text(const Snapshot& snapshot) {
     return QStringLiteral("血量 --");
 }
 
-QString video_panel_text(const VideoReceiver* video) {
-    if (!video) return QStringLiteral("图传未启用");
+// 只在异常时浮现。计数器全零时它们不带信息量,却占掉图传格一半宽度;
+// 但故障可见性是模块一的验收项,所以异常值一旦非零就必须显示,同时写日志。
+VideoFaultCounts video_fault_counts(const VideoReceiver* video) {
+    VideoFaultCounts counts;
+    if (!video) return counts;
     const auto stats = video->snapshot();
-    return QStringLiteral(
-               "状态 %1    已解码 %2 帧\n"
-               "包 %3   丢失 %4   乱序 %5   重复 %6\n"
-               "整帧 %7   不完整 %8   超时 %9")
-        .arg(stats.value(QStringLiteral("state")).toString())
-        .arg(stats.value(QStringLiteral("decoded_frames")).toInteger())
-        .arg(stats.value(QStringLiteral("packets")).toInteger())
-        .arg(stats.value(QStringLiteral("missing_packets")).toInteger())
-        .arg(stats.value(QStringLiteral("out_of_order")).toInteger())
-        .arg(stats.value(QStringLiteral("duplicates")).toInteger())
-        .arg(stats.value(QStringLiteral("completed")).toInteger())
-        .arg(stats.value(QStringLiteral("incomplete")).toInteger())
-        .arg(stats.value(QStringLiteral("expired")).toInteger());
+    const auto count = [&stats](const char* key) {
+        return stats.value(QLatin1String(key)).toInteger();
+    };
+    counts.missing = count("missing_packets");
+    counts.out_of_order = count("out_of_order");
+    counts.duplicates = count("duplicates");
+    counts.incomplete = count("incomplete");
+    counts.expired = count("expired");
+    return counts;
+}
+
+QString VideoFaultTracker::faultLine(const VideoFaultCounts& counts, MonotonicMs now) {
+    // 首次见到接收器时把当前累计值当作基线,而不是当作「刚刚发生的故障」。
+    if (!seeded_) {
+        baseline_ = counts;
+        seeded_ = true;
+        return QString();
+    }
+
+    QStringList faults;
+    const auto delta = [&faults](qint64 current, qint64 base, const char* label) {
+        const qint64 added = current - base;
+        if (added > 0) faults << QString::fromUtf8(label) + QStringLiteral(" %1").arg(added);
+        return added > 0;
+    };
+
+    bool any = false;
+    any |= delta(counts.missing, baseline_.missing, "丢失");
+    any |= delta(counts.out_of_order, baseline_.out_of_order, "乱序");
+    any |= delta(counts.duplicates, baseline_.duplicates, "重复");
+    any |= delta(counts.incomplete, baseline_.incomplete, "不完整");
+    any |= delta(counts.expired, baseline_.expired, "超时");
+
+    if (any) {
+        held_ = faults.join(QStringLiteral("  "));
+        visible_until_ = now + kVideoFaultHoldMs;
+        baseline_ = counts;
+        return held_;
+    }
+
+    if (now < visible_until_) return held_;
+    held_.clear();
+    return QString();
+}
+
+QString video_panel_text(const VideoReceiver* video, VideoFaultTracker* tracker,
+                         MonotonicMs now) {
+    if (!video) return QStringLiteral("图传未启用");
+    // 一切正常时不复述状态:画面本身就是「在线」最好的证据,再顶一行 online 只是噪声。
+    // 异常状态和故障计数仍要显示,那才是操作手需要读到的东西。
+    const QString state = video->snapshot().value(QStringLiteral("state")).toString();
+    const QString shown = video->online() ? QString() : state;
+    if (!tracker) return shown;
+    const QString faults = tracker->faultLine(video_fault_counts(video), now);
+    if (faults.isEmpty()) return shown;
+    if (shown.isEmpty()) return faults;
+    return shown + QStringLiteral("\n") + faults;
 }
 
 QImage frame_to_image(const QByteArray& frame, int width, int height) {
@@ -320,80 +329,115 @@ void apply_frame(VideoPane* thumbnail, VideoPane* full, const QImage& frame) {
 Dashboard::Dashboard(const Config& config, QWidget* parent)
     : QWidget(parent),
       machine_(config.mode_exit_hysteresis_ms, config.blind_stale_fallback_ms) {
+    setObjectName(QStringLiteral("dashboardRoot"));
+    setStyleSheet(theme::styleSheet());
+
     auto* root = new QVBoxLayout(this);
+    // 根层边距/间距纯装饰却吃掉约 30px 垂直预算,而 720p 下内容区正好差这一截。
+    root->setContentsMargins(6, 4, 6, 4);
+    root->setSpacing(4);
     banner_ = new QLabel(QStringLiteral("只读模拟 · READ-ONLY SIMULATION SAFE · 无控制下发通道"), this);
     banner_->setStyleSheet(QStringLiteral(
-        "background:#173d17; color:#8ef58e; padding:6px; font-weight:bold;"));
+        "background:#0d2818; color:#40d68a; padding:5px; font-weight:bold;"
+        " border:1px solid #1b5236; border-radius:3px;"));
     banner_->setObjectName(QStringLiteral("readOnlyBanner"));
-    root->addWidget(banner_);
 
     // Sits alongside the read-only banner and never replaces it: the read-only
     // guarantee has to stay on screen in every mode.
     mode_banner_ = new QLabel(this);
     mode_banner_->setStyleSheet(QStringLiteral(
-        "background:#1b2333; color:#9ec5ff; padding:4px; font-weight:bold;"));
+        "background:#101a26; color:#40d0e8; padding:4px; font-weight:bold;"
+        " border:1px solid #263042; border-radius:3px;"));
     mode_banner_->setObjectName(QStringLiteral("modeBanner"));
-    root->addWidget(mode_banner_);
+
+    // 常态隐藏。一条永远在屏幕上的告警带等于没有告警带 —— 操作手会在三十秒内
+    // 学会无视它,而它要传达的恰恰是「现在必须立刻看一眼」。
+    alert_strip_ = new QLabel(this);
+    alert_strip_->setObjectName(QStringLiteral("alertStrip"));
+    alert_strip_->setStyleSheet(QStringLiteral(
+        "background:#3a0d12; color:#ff9aa2; padding:1px 8px; font-weight:bold;"
+        " border:1px solid #f85c5c; border-radius:3px;"));
+    alert_strip_->setAlignment(Qt::AlignCenter);
+    alert_strip_->setFont(theme::labelFont(11, true));
+    alert_strip_->setVisible(false);
+
+    // 三者高度锁死在同一个值:告警带天生比另外两条高,不锁的话它一出现就顶高整行,
+    // 在 720p 恰好把窗口挤过屏幕高度。删掉 setFixedHeight 会静默复现该 bug。
+    mode_banner_->setText(QStringLiteral("模式"));
+    alert_strip_->setText(QStringLiteral("告警"));
+    // max 而不是 min:三条锁同一高度是为了让告警带出现时不顶高整行,而 min 会把内容
+    // 最长的只读横幅压到比它 sizeHint 更矮,中英混排的字直接垂直重叠。max 同样锁住
+    // 行高,且没有任何一条被压扁。
+    const int banner_row_height = std::max({banner_->sizeHint().height(),
+                                            mode_banner_->sizeHint().height(),
+                                            alert_strip_->sizeHint().height()});
+    banner_->setFixedHeight(banner_row_height);
+    mode_banner_->setFixedHeight(banner_row_height);
+    alert_strip_->setFixedHeight(banner_row_height);
+    alert_strip_->clear();
+
+    // 与模式横幅同一行而不是自成一行:独占一行时它出现/消失会把整个页面上下顶动,
+    // 而它恰好在最需要稳定视线的时刻出现。同行还省下 720p 下不够用的垂直预算。
+    auto* banner_row = new QHBoxLayout();
+    banner_row->setContentsMargins(0, 0, 0, 0);
+    banner_row->setSpacing(6);
+    banner_row->addWidget(banner_, 0);
+    banner_row->addWidget(mode_banner_, 0);
+    banner_row->addWidget(alert_strip_, 1);
+    root->addLayout(banner_row);
+
+    top_bar_ = new TopBar(this);
+    top_bar_->setObjectName(QStringLiteral("topBar"));
+    root->addWidget(top_bar_);
 
     stack_ = new QStackedLayout();
     info_page_ = new QWidget(this);
     video_page_ = new QWidget(this);
 
     auto* grid = new QGridLayout(info_page_);
-    auto make_section = [this](const QString& title, QLabel** target) {
-        auto* box = new QFrame(info_page_);
-        box->setFrameShape(QFrame::StyledPanel);
-        auto* column = new QVBoxLayout(box);
-        auto* heading = new QLabel(title, box);
-        heading->setStyleSheet(QStringLiteral("color:#7fb7ff; font-weight:bold;"));
-        column->addWidget(heading);
-        *target = new QLabel(QStringLiteral("--"));
-        QFont mono(QStringLiteral("Menlo"));
-        mono.setStyleHint(QFont::Monospace);
-        // 9pt, not 11pt: at 11pt the robot panel's ~13 telemetry rows do not fit the
-        // right-hand column at 720p, so rows got sliced mid-glyph behind a scrollbar.
-        mono.setPointSize(9);
-        (*target)->setFont(mono);
-        (*target)->setTextInteractionFlags(Qt::TextSelectableByMouse);
-        (*target)->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+    // 顶栏和面板区之间原本叠了三层留白(顶栏内余 4 + root spacing 4 + grid 默认上边距 9),
+    // 合起来是一道 17px 黑缝。上边距收到 2 把这道缝减半,左右下仍用默认值。
+    grid->setContentsMargins(9, 2, 9, 9);
 
-        // Scrolled, not stretched: these panels are dense enough that their
-        // combined minimum height forced the info page to 896px, which silently
-        // overrode resize(1280,720) and would clip on a 720p operator screen.
-        auto* scroll = new QScrollArea(box);
-        scroll->setWidget(*target);
-        scroll->setWidgetResizable(true);
-        scroll->setFrameShape(QFrame::NoFrame);
-        scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        scroll->setMinimumHeight(0);
-        scroll->setStyleSheet(QStringLiteral("background:transparent;"));
-        column->addWidget(scroll, 1);
-        return box;
-    };
+    // Roster columns flank the map. Built as cards so they read as the same kind
+    // of surface as the telemetry panels.
+    // 标题、卡面、边框都由 Panel.qml 画,所以这里不再套 QFrame+QLabel —— 套了会出现
+    // 双重标题和两层边框。QML 面板直接进 grid。
+    ally_roster_ = new RosterPanel(true, info_page_);
+    ally_roster_->setObjectName(QStringLiteral("allyRoster"));
+    enemy_roster_ = new RosterPanel(false, info_page_);
+    enemy_roster_->setObjectName(QStringLiteral("enemyRoster"));
+    QWidget* ally_box = ally_roster_;
+    QWidget* enemy_box = enemy_roster_;
 
     auto* map_box = new QFrame(info_page_);
-    map_box->setFrameShape(QFrame::StyledPanel);
+    map_box->setProperty("card", true);
     auto* map_column = new QVBoxLayout(map_box);
     auto* map_heading = new QLabel(QStringLiteral("战术地图"), map_box);
-    map_heading->setStyleSheet(QStringLiteral("color:#7fb7ff; font-weight:bold;"));
+    map_heading->setProperty("heading", true);
     map_column->addWidget(map_heading);
     map_ = new MapPane(map_box);
     map_->setObjectName(QStringLiteral("mapPane"));
-    map_column->addWidget(map_, 1);
+    // stretch 归 addStretch 而不是地图:给地图拉伸权会把差额画成上下黑边。
+    map_column->addWidget(map_, 0);
+    map_column->addStretch(1);
 
-    // The map owns the entire left column rather than sharing rows with the
-    // thumbnail box. Sharing rows pins it to its minimum height, because a
-    // fixed-size 320x180 pane and the map would compete for the same vertical
-    // space and grid stretch only distributes what is left over after minimums.
-    grid->addWidget(map_box, 0, 0, 3, 1);
-    grid->addWidget(make_section(QStringLiteral("赛事状态"), &game_), 0, 1);
-    grid->addWidget(make_section(QStringLiteral("机器人状态"), &robot_), 1, 1);
+    // 三列上区:我方花名册 / 地图 / 敌方花名册。花名册是本终端相对官方选手端的
+    // 核心增量 —— 官方端看不到对方血量,这两列是唯一来源,所以给固定宽度而不是
+    // 让地图把它们挤成窄条。
+    grid->addWidget(ally_box, 0, 0);
+    grid->addWidget(map_box, 0, 1);
+    grid->addWidget(enemy_box, 0, 2);
 
     auto* video_box = new QFrame(info_page_);
-    video_box->setFrameShape(QFrame::StyledPanel);
+    video_box->setProperty("card", true);
     auto* video_column = new QVBoxLayout(video_box);
+    // 标题 19 + 画面 90 + 统计 35 几乎填满这一格,默认边距/间距会让整列高出约 8px,
+    // 溢出部分就是压在画面上的统计文字。恢复默认值会静默复现该重叠 bug。
+    video_column->setContentsMargins(9, 4, 9, 4);
+    video_column->setSpacing(2);
     auto* video_heading = new QLabel(QStringLiteral("图传"), video_box);
-    video_heading->setStyleSheet(QStringLiteral("color:#7fb7ff; font-weight:bold;"));
+    video_heading->setProperty("heading", true);
     video_column->addWidget(video_heading);
     info_video_pane_ = new VideoPane(video_box);
     info_video_pane_->setObjectName(QStringLiteral("infoVideoPane"));
@@ -405,7 +449,9 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     // stats text with it. paintEvent keeps the aspect ratio at whatever height it gets.
     info_video_pane_->setMinimumSize(160, 90);
 
-    video_stats_ = new QLabel(QStringLiteral("--"), video_box);
+    // 状态在画面下方而不是右侧:异常时那行故障计数很长,并排放不下就会压到画面上。
+    // 常态是空串,WrappedLabel 负责把换行后的真实高度报给布局,所以空行不占高度。
+    video_stats_ = new WrappedLabel(QString(), video_box);
     video_stats_->setObjectName(QStringLiteral("videoStats"));
     QFont mono(QStringLiteral("Menlo"));
     mono.setStyleHint(QFont::Monospace);
@@ -413,45 +459,69 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     video_stats_->setFont(mono);
     video_stats_->setAlignment(Qt::AlignTop | Qt::AlignLeft);
 
-    // Picture beside the numbers, not above them. This box is wide and short (374x158
-    // at the 980x620 floor), so stacking heading + 90px picture + 3 lines of stats
-    // needed 196px, and QVBoxLayout resolved the 38px deficit by painting the text on
-    // top of the picture. Side by side the box needs only the taller of the two.
-    auto* video_row = new QHBoxLayout();
-    video_row->addWidget(info_video_pane_, 0, Qt::AlignTop);
-    video_row->addWidget(video_stats_, 1, Qt::AlignTop);
-    video_column->addLayout(video_row);
-    grid->addWidget(video_box, 2, 1);
+    QSizePolicy stats_policy(QSizePolicy::Preferred, QSizePolicy::MinimumExpanding);
+    stats_policy.setHeightForWidth(true);
+    video_stats_->setSizePolicy(stats_policy);
+    // 上下各一个 stretch 把画面夹在板块正中:只给下方 addStretch 会把画面顶到
+    // 标题下方,右列比图传高时就是一块偏上的小图加大片空白。
+    video_column->addStretch(1);
+    video_column->addWidget(info_video_pane_, 0, Qt::AlignHCenter);
+    video_column->addWidget(video_stats_, 0);
+    video_column->addStretch(1);
 
     auto* event_box = new QFrame(info_page_);
-    event_box->setFrameShape(QFrame::StyledPanel);
+    event_box->setProperty("card", true);
     auto* event_column = new QVBoxLayout(event_box);
-    auto* event_heading = new QLabel(QStringLiteral("赛事事件"), event_box);
-    event_heading->setStyleSheet(QStringLiteral("color:#7fb7ff; font-weight:bold;"));
+    event_column->setContentsMargins(9, 4, 9, 4);
+    event_column->setSpacing(2);
+    auto* event_heading = new QLabel(QStringLiteral("战场事件"), event_box);
+    event_heading->setProperty("heading", true);
     event_column->addWidget(event_heading);
     event_ = new QLabel(QStringLiteral("--"), event_box);
     event_->setObjectName(QStringLiteral("eventPanel"));
     event_->setTextFormat(Qt::RichText);
-    event_->setFont(mono);
+    QFont event_font(QStringLiteral("Menlo"));
+    event_font.setStyleHint(QFont::Monospace);
+    event_font.setPointSize(10);
+    event_->setFont(event_font);
     event_->setAlignment(Qt::AlignTop | Qt::AlignLeft);
     event_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    event_column->addWidget(event_);
-    event_column->addStretch();
-    grid->addWidget(event_box, 3, 0, 1, 2);
+    event_->setWordWrap(true);
+    // 高度不随内容走:下区 rowStretch 为 0(按内容定高),事件变多会挤扁上区花名册。
+    // 用 maximumHeight 而非 fixedHeight —— 满档行数的固定下限会把窗口最小高度顶过
+    // 720p 并造成裁切,dashboard_layout_test 的 720p 断言守的就是这条。
+    const int event_row_h = QFontMetrics(event_font).lineSpacing() + 2;
+    event_->setMaximumHeight(event_row_h * static_cast<int>(kEventPanelRows));
+    event_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Ignored);
+    event_column->addWidget(event_, 1);
 
-    grid->setColumnStretch(0, 3);
-    grid->setColumnStretch(1, 2);
-    // Rows 0-2 carry the map column; the event row stays unstretched so the map
-    // keeps the growth rather than the text panel below it.
-    grid->setRowStretch(0, 3);
-    grid->setRowStretch(1, 3);
-    // Row 2 takes no stretch share at all. The telemetry scroll areas above can shrink
-    // to nothing, so any share here let the grid hand row 2 less than the video box
-    // needs, and QVBoxLayout then overlapped the picture with the stats text. At zero
-    // stretch the row is sized from its own minimum and the spare height goes to the
-    // map column instead, which is where it was wanted anyway.
-    grid->setRowStretch(2, 0);
-    grid->setRowStretch(3, 0);
+    auto* analysis_box = new QFrame(info_page_);
+    analysis_box->setProperty("card", true);
+    auto* analysis_column = new QVBoxLayout(analysis_box);
+    auto* analysis_heading = new QLabel(QStringLiteral("战场数据分析"), analysis_box);
+    analysis_heading->setProperty("heading", true);
+    analysis_column->addWidget(analysis_heading);
+    analysis_ = new BattleAnalysisPane(analysis_box);
+    analysis_->setObjectName(QStringLiteral("battleAnalysisPane"));
+    analysis_column->addWidget(analysis_, 1);
+
+    // 下区三列与上区列一一对齐:事件在我方一侧、战场分析居中、图传在敌方一侧,
+    // 视线不需要横跨整屏找对应关系。
+    grid->addWidget(event_box, 1, 0);
+    grid->addWidget(analysis_box, 1, 1);
+    grid->addWidget(video_box, 1, 2);
+
+    // 花名册按内容定宽,地图吃掉盈余。中列同时承载地图和战场分析,所以它是唯一
+    // 有拉伸权的列。
+    grid->setColumnStretch(0, 0);
+    grid->setColumnStretch(1, 5);
+    grid->setColumnStretch(2, 0);
+    grid->setColumnMinimumWidth(0, 250);
+    grid->setColumnMinimumWidth(2, 250);
+    // 上区拿走盈余高度,下区按内容高度走:事件面板已封顶(见上方 setMaximumHeight),
+    // 战场分析和图传都有自己的最小高度,把盈余给它们只会拉出空白。
+    grid->setRowStretch(0, 4);
+    grid->setRowStretch(1, 0);
 
     auto* video_layout = new QVBoxLayout(video_page_);
     video_layout->setContentsMargins(0, 0, 0, 0);
@@ -505,10 +575,23 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
                               .arg(mode_name(decision.mode))
                               .arg(reason_name(decision.reason)));
 
-    game_->setText(game_panel_text(snapshot));
-    robot_->setText(robot_panel_text(snapshot));
+    top_bar_->setSnapshot(snapshot);
+    const std::optional<std::uint32_t> mine = self_faction(snapshot);
+    const std::uint32_t ally_faction = mine.value_or(1);
+    const std::uint32_t enemy_faction = ally_faction == 2 ? 1 : 2;
+    ally_roster_->setFactionKnown(mine.has_value(), ally_faction == 2);
+    enemy_roster_->setFactionKnown(mine.has_value(), enemy_faction == 2);
+    ally_roster_->setEntries(build_roster(snapshot, ally_faction));
+    enemy_roster_->setEntries(build_roster(snapshot, enemy_faction));
+    analysis_->setMetrics(build_analysis_metrics(snapshot));
+    analysis_->setFortressHold(fortress_hold(snapshot));
+
+    const QString alerts = alert_strip_text(snapshot, video);
+    alert_strip_->setVisible(!alerts.isEmpty());
+    if (!alerts.isEmpty()) alert_strip_->setText(alerts);
+
     event_->setText(event_history_html(snapshot, kEventPanelRows));
-    video_stats_->setText(video_panel_text(video));
+    video_stats_->setText(video_panel_text(video, &video_faults_, now));
     map_->setRobots(snapshot.map_robots);
     video_countdown_->setText(video_overlay_countdown_text(snapshot));
     video_hp_->setText(video_overlay_hp_text(snapshot));
@@ -558,8 +641,6 @@ std::string Dashboard::layoutDump() const {
     panes << pane_entry(QStringLiteral("map_pane"), map_)
           << pane_entry(QStringLiteral("info_video_pane"), info_video_pane_)
           << pane_entry(QStringLiteral("video_full_pane"), video_full_pane_)
-          << pane_entry(QStringLiteral("game_panel"), game_)
-          << pane_entry(QStringLiteral("robot_panel"), robot_)
           << pane_entry(QStringLiteral("event_panel"), event_)
           << pane_entry(QStringLiteral("mode_banner"), mode_banner_)
           << pane_entry(QStringLiteral("readonly_banner"), banner_);

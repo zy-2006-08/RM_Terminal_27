@@ -21,10 +21,12 @@ void check(bool condition, const char* name) {
 constexpr int kWidth = 1280;
 constexpr int kHeight = 720;
 
-// Mirrors main.cpp's setMinimumSize(980, 620) - the smallest window the app can
-// present, so the info page must lay out cleanly here, not only at 1280x720.
-constexpr int kMinWidth = 980;
-constexpr int kMinHeight = 620;
+// Mirrors main.cpp's setMinimumSize - the smallest window the app can present, so
+// the info page must lay out cleanly here, not only at 1280x720. Raised from
+// 980x620 with the three-column roster layout; if these drift apart the test
+// resizes to a size Qt then clamps, and every geometry assertion below is void.
+constexpr int kMinWidth = 1280;
+constexpr int kMinHeight = 760;
 
 template <class T>
 Field<T> present(T value, Freshness freshness = Freshness::Fresh) {
@@ -151,26 +153,25 @@ void the_layout_fits_the_requested_screen_size() {
 }
 
 // Regression: every ratio and visibility assertion passed while the video box was
-// visibly broken - the unshrinkable 320x180 thumbnail overflowed its box at 980x620
-// and the stats label was painted on top of the picture.
+// visibly broken - the unshrinkable 320x180 thumbnail overflowed its box at the
+// minimum size and the stats label was painted on top of the picture.
 void the_thumbnail_and_its_stats_never_overlap() {
     Dashboard dashboard(test_config());
     dashboard.resize(kMinWidth, kMinHeight);
     drive_to_info(dashboard);
 
     check(dashboard.width() == kMinWidth && dashboard.height() == kMinHeight,
-          "info mode honours the 980x620 minimum without growing");
+          "info mode honours the minimum window size without growing");
 
     const VideoPane* thumbnail = find_pane(dashboard, "infoVideoPane");
     const QLabel* stats = find_label(dashboard, "videoStats");
     const QWidget* box = thumbnail->parentWidget();
 
-    // update(..., nullptr, ...) leaves the one-line "图传未启用" placeholder, which is
-    // shorter than what a live receiver produces and hid this overlap. Reproduce the
-    // real three-line shape of video_panel_text() so the box faces its true height.
-    const_cast<QLabel*>(stats)->setText(QStringLiteral("状态 online    已解码 43 帧\n"
-                                                      "包 975   丢失 0   乱序 0   重复 0\n"
-                                                      "整帧 71   不完整 0   超时 0"));
+    // update(..., nullptr, ...) leaves the one-line "图传未启用" placeholder. The tallest
+    // shape video_panel_text() can now produce is state + one fault line, which is what
+    // this box must still survive without painting over the picture.
+    const_cast<QLabel*>(stats)->setText(
+        QStringLiteral("online\n丢失 12  乱序 3  重复 1  不完整 2  超时 4"));
     settle(dashboard);
 
     check(box == stats->parentWidget(),
@@ -192,6 +193,43 @@ void the_thumbnail_and_its_stats_never_overlap() {
           "the thumbnail fits inside its box instead of overflowing it");
     check(box->rect().contains(stats->geometry()),
           "the stats label fits inside its box instead of overflowing it");
+}
+
+// 图传统计只在异常时浮现,但「浮现」必须真的发生 —— 否则等于把模块一已验证的
+// 故障可见性悄悄删掉。没有接收器时不得伪造任何计数。
+void video_stats_stay_quiet_until_something_goes_wrong() {
+    check(video_panel_text(nullptr) == QStringLiteral("图传未启用"),
+          "no receiver reports as disabled rather than as healthy");
+
+    Dashboard dashboard(test_config());
+    dashboard.resize(kWidth, kHeight);
+    drive_to_info(dashboard);
+
+    const QLabel* stats = find_label(dashboard, "videoStats");
+    for (const char* noise : {"丢失", "乱序", "重复", "不完整", "超时"}) {
+        check(!stats->text().contains(QString::fromUtf8(noise)),
+              (std::string("a healthy feed does not show the ") + noise + " counter").c_str());
+    }
+}
+
+// 累计计数器曾让开局一次丢包永久占住界面。故障行必须按新增量浮现,并在恢复后消失。
+void video_faults_surface_on_change_and_clear_on_recovery() {
+    VideoFaultTracker tracker;
+    VideoFaultCounts counts;
+    counts.missing = 42;
+
+    check(tracker.faultLine(counts, 1000).isEmpty(),
+          "a pre-existing total is taken as the baseline, not as a live fault");
+
+    counts.missing = 47;
+    const QString surfaced = tracker.faultLine(counts, 2000);
+    check(surfaced.contains(QStringLiteral("丢失 5")),
+          "a new loss surfaces the delta, not the cumulative total");
+
+    check(tracker.faultLine(counts, 2000 + kVideoFaultHoldMs - 1) == surfaced,
+          "the fault line is held long enough to be readable");
+    check(tracker.faultLine(counts, 2000 + kVideoFaultHoldMs).isEmpty(),
+          "a recovered feed clears the fault line instead of pinning it forever");
 }
 
 // (3): video mode hands the picture the screen, and the map goes away.
@@ -357,8 +395,8 @@ void the_layout_dump_is_reproducible_and_hides_unlaid_geometry() {
               index_at < window_at && window_at < panes_at,
           "the dump keeps its documented field order");
 
-    for (const char* name : {"map_pane", "info_video_pane", "video_full_pane", "game_panel",
-                             "robot_panel", "event_panel", "mode_banner", "readonly_banner"}) {
+    for (const char* name : {"map_pane", "info_video_pane", "video_full_pane",
+                             "event_panel", "mode_banner", "readonly_banner"}) {
         check(text.contains(QStringLiteral("\"name\": \"%1\"").arg(QLatin1String(name))),
               (std::string("the dump covers ") + name).c_str());
     }
@@ -380,6 +418,8 @@ int main(int argc, char* argv[]) {
         info_mode_is_map_dominant_with_a_capped_thumbnail();
         the_layout_fits_the_requested_screen_size();
         the_thumbnail_and_its_stats_never_overlap();
+        video_stats_stay_quiet_until_something_goes_wrong();
+        video_faults_surface_on_change_and_clear_on_recovery();
         video_mode_fills_the_window_and_hides_the_map();
         the_read_only_banner_survives_both_modes();
         video_mode_keeps_the_countdown_and_hp();
