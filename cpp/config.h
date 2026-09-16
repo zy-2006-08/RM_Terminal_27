@@ -30,7 +30,10 @@ struct Config {
     QString log_destination = QStringLiteral("rm_terminal.log");
     int mqtt_port = 3333;
     int udp_port = 3334;
-    int stale_window_ms = 500;
+    // 必须容得下最慢字段的两个发布周期。RobotPosition/RobotModuleStatus 是 1Hz,
+    // 500ms 的窗口比发布间隔本身还短 —— 位置刚到就被判过期,地图上每台车都常驻
+    // 「过期」,于是这个标记再也无法指示真正的断流。
+    int stale_window_ms = 2200;
     int mode_exit_hysteresis_ms = 3000;
     int event_history_capacity = 50;
     // 0 disables the stale-blind fallback entirely; see load_config in config.cpp.

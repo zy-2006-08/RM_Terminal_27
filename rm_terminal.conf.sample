@@ -28,7 +28,9 @@ mqtt_port=3333
 udp_port=3334
 
 # Field freshness window in milliseconds; a field older than this reports stale.
-stale_window_ms=500
+# Must exceed two publish intervals of the slowest field: RobotPosition is 1Hz, so
+# anything at or below 1000 marks every position stale the moment it arrives.
+stale_window_ms=2200
 
 # Minimum level written to the log: debug, info, warning, or error.
 log_level=info

@@ -47,7 +47,7 @@ required to change them. Copy `rm_terminal.conf.sample` and edit it.
 | `mqtt_host` | `127.0.0.1` | MQTT broker host for the local simulator |
 | `mqtt_port` | `3333` | MQTT broker port (2026 protocol baseline) |
 | `udp_port` | `3334` | H.265 video UDP listen port (2026 protocol baseline) |
-| `stale_window_ms` | `500` | Field freshness window; older fields report stale |
+| `stale_window_ms` | `2200` | Field freshness window; older fields report stale |
 | `log_level` | `info` | Minimum level written: `debug`, `info`, `warning`, `error` |
 | `log_destination` | `rm_terminal.log` | Log file path; records append across restarts |
 | `mode_exit_hysteresis_ms` | `3000` | Consecutive clear time before leaving video mode |

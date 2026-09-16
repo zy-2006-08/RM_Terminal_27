@@ -55,7 +55,9 @@ void missing_file_uses_documented_defaults(const QTemporaryDir& dir) {
     check(cfg.mqtt_host == QLatin1String("127.0.0.1"), "default mqtt_host");
     check(cfg.mqtt_port == 3333, "default mqtt_port");
     check(cfg.udp_port == 3334, "default udp_port");
-    check(cfg.stale_window_ms == 500, "default stale_window_ms");
+    // 2200 rather than 500: RobotPosition publishes at 1Hz, so any window at or
+    // below one publish interval marks every position stale on arrival.
+    check(cfg.stale_window_ms == 2200, "default stale_window_ms");
     check(cfg.log_level == rm_terminal::LogLevel::info, "default log_level");
     check(cfg.mode_exit_hysteresis_ms == 3000, "default mode_exit_hysteresis_ms");
     check(cfg.event_history_capacity == 50, "default event_history_capacity");
