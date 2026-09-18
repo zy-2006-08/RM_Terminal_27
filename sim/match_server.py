@@ -59,6 +59,14 @@ _CMD_NAMES = {
     0x04: "云台回中",
 }
 
+# 赛程控制指令,走已有的 CommonCommand 下行通道。编号从 0x10 起,与上面 CustomControl
+# 的 0x01..0x04 分开:两者是不同的 topic,但共用一套编号会让日志难以判读。
+# 【本地模拟词汇】2027 协议里没有「终端控制赛程」这回事,真机上赛程只由裁判系统决定。
+CTRL_BEGIN = 0x10
+CTRL_HOLD = 0x11
+CTRL_RESET = 0x12
+_CTRL_NAMES = {CTRL_BEGIN: "开赛", CTRL_HOLD: "暂停", CTRL_RESET: "复位到准备阶段"}
+
 # 编造的致盲时刻表（本地模拟，非 2027 协议）。元组为 (比赛内起始秒, 持续秒)，
 # 基准是 stage()==4 的比赛内已进行秒数，不是挂钟时间，故两次运行必然一致。
 #
@@ -87,6 +95,9 @@ _OUTPOST_MAX_HP = 1500
 # 结算动画要等满一局才看得到,演示/验收时用 RM_MATCH_SEC 缩短比赛。
 _MATCH_SEC = int(os.environ.get("RM_MATCH_SEC", "420"))
 _SETTLEMENT_SEC = int(os.environ.get("RM_SETTLEMENT_SEC", "15"))
+# 启动即开赛是默认行为:既有的 verify_mode_regression.sh 依赖它,时刻表以进程启动
+# 为基准。RM_HOLD=1 才进待命档,由操作手自己决定开赛时刻。
+_HOLD_AT_START = os.environ.get("RM_HOLD", "0") == "1"
 _STAGE_SETTLEMENT = 5
 _RED_TEAM_NAME = "电子科技大学中山学院 RoboBraver"
 _BLUE_TEAM_NAME = "哈尔滨工业大学(威海) HERO"
@@ -128,6 +139,10 @@ def _pose_tick(elapsed: float) -> float:
 class SimulatedMatch:
     def __init__(self) -> None:
         self.t0 = time.monotonic()
+        # 待命档:为真时 elapsed 冻结在 hold_at,由操作手决定何时开赛。
+        # 冻结点必须是 0.0:stage() 里 e<5 才是准备阶段,停在别的值会静默进入倒计时或比赛。
+        self.holding = _HOLD_AT_START
+        self.hold_at = 0.0
         self.hp = 400
         self.max_hp = 600
         self.heat = 0
@@ -185,7 +200,30 @@ class SimulatedMatch:
 
     @property
     def elapsed(self) -> float:
+        if self.holding:
+            return self.hold_at
         return time.monotonic() - self.t0
+
+    def begin(self) -> None:
+        """开赛:从当前冻结点继续走,不是从 0 重来。
+
+        t0 要回退 hold_at,否则暂停再开赛会把已经走过的赛程丢掉。
+        """
+        if not self.holding:
+            return
+        self.t0 = time.monotonic() - self.hold_at
+        self.holding = False
+
+    def hold(self) -> None:
+        if self.holding:
+            return
+        self.hold_at = time.monotonic() - self.t0
+        self.holding = True
+
+    def reset(self) -> None:
+        self.hold_at = 0.0
+        self.holding = True
+        self._locked_winner = None
 
     def stage(self) -> tuple[int, int]:
         """准备 5s -> 倒计时 5s -> 比赛 420s -> 结算 15s，循环往复便于长时间演示。
@@ -473,7 +511,12 @@ def _on_message(client, userdata, message):
     elif message.topic == T_COMMON_COMMAND:
         m = pb.CommonCommand()
         m.ParseFromString(message.payload)
-        print(f"[server] 收到 CommonCommand <- 终端：id={m.command_id} param={m.param}")
+        name = _CTRL_NAMES.get(m.command_id)
+        if name:
+            print(f"[server] 收到赛程控制 <- {name} (id=0x{m.command_id:02X})")
+            userdata.apply_control(m.command_id)
+        else:
+            print(f"[server] 收到 CommonCommand <- 终端：id={m.command_id} param={m.param}")
 
 
 def main() -> int:
@@ -494,6 +537,19 @@ def main() -> int:
             match.events.append((0, "云台回中", 0))
 
     match.apply_command = apply_command
+
+    def apply_control(cmd: int) -> None:
+        if cmd == CTRL_BEGIN:
+            match.begin()
+            print(f"[server] 比赛开始,赛制 {_MATCH_SEC}s")
+        elif cmd == CTRL_HOLD:
+            match.hold()
+            print(f"[server] 已暂停在比赛内 {match.hold_at:.1f}s")
+        elif cmd == CTRL_RESET:
+            match.reset()
+            print("[server] 已复位到准备阶段,等待开赛指令")
+
+    match.apply_control = apply_control
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"sim-server-{SELF_ROBOT_ID}",
                          userdata=match)

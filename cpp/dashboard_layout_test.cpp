@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QImage>
 #include <QLabel>
+#include <QPushButton>
 #include <QQuickWidget>
 #include <algorithm>
 #include <iostream>
@@ -70,6 +71,20 @@ Snapshot blinded_snapshot() {
 Snapshot clear_snapshot() {
     Snapshot snapshot = base_snapshot();
     snapshot.blind.self_base_blinded = present<bool>(false);
+    return snapshot;
+}
+
+Snapshot pre_match_snapshot() {
+    Snapshot snapshot = clear_snapshot();
+    snapshot.game.current_stage = present<std::uint32_t>(1);
+    snapshot.game.stage_countdown_sec = present<std::int32_t>(7);
+    return snapshot;
+}
+
+Snapshot settled_snapshot() {
+    Snapshot snapshot = clear_snapshot();
+    snapshot.game.current_stage = present<std::uint32_t>(5);
+    snapshot.game.winner = present<std::uint32_t>(1);
     return snapshot;
 }
 
@@ -527,6 +542,73 @@ void the_popup_also_covers_the_video_page() {
           "the popup stays inside the window in video mode");
 }
 
+// Regression: QPushButton 默认水平 Minimum，会跟两条横幅一起均分告警带隐藏时空出的
+// 横向余量。实测 1280 宽下入口被拉到 419px（sizeHint 只有 80px）。宽度断言必须比
+// sizeHint 收紧，否则按钮拉满半屏时本测试依旧全绿。
+void the_reminder_entry_hugs_its_text_at_the_right_edge() {
+    Dashboard dashboard(test_config());
+    dashboard.resize(kMinWidth, kMinHeight);
+    drive_to_info(dashboard);
+
+    auto* entry = dashboard.findChild<QPushButton*>(QStringLiteral("reminderEntry"));
+    if (!entry) throw std::runtime_error("reminderEntry not found");
+
+    // 挂上控制器后的最长状态文本。构造真控制器要拖进音频后端，而这里要验的是布局对
+    // 文本宽度的反应，直接设文本即可覆盖最坏情况。
+    entry->setText(QStringLiteral("战术提醒 · 99 条"));
+    settle(dashboard);
+
+    const QWidget* alert = find(dashboard, "alertStrip");
+    check(!alert->isVisible(), "the alert strip is hidden in the nominal case");
+    check(entry->width() == entry->sizeHint().width(),
+          "the reminder entry takes exactly its sizeHint, never the strip's slack");
+    check(entry->geometry().right() < kMinWidth,
+          "the reminder entry stays inside the minimum window width");
+
+    const QWidget* banner = find(dashboard, "readOnlyBanner");
+    check(banner->geometry().right() < entry->geometry().left(),
+          "the read-only banner never overlaps the reminder entry");
+}
+
+// Regression: 两层覆盖层都铺满整窗 + AlwaysStackOnTop,不穿透鼠标时会吞掉全屏点击。
+// 备战阶段 PreMatch 弹窗常驻,操作手按顶部「战术提醒」毫无反应 —— 而那正是唯一
+// 能改提醒的时机。断言落在 childAt() 上而不是 testAttribute():childAt() 跳过
+// 穿透控件,等于真实命中测试,照抄属性名的测试证明不了点击真能到达按钮。
+void the_overlays_never_swallow_clicks_on_the_reminder_entry() {
+    Dashboard dashboard(test_config());
+    dashboard.resize(kMinWidth, kMinHeight);
+    drive_to_info(dashboard);
+
+    auto* entry = dashboard.findChild<QPushButton*>(QStringLiteral("reminderEntry"));
+    if (!entry) throw std::runtime_error("reminderEntry not found");
+    const QWidget* popup = find(dashboard, "popupOverlay");
+    const QWidget* victory = find(dashboard, "victoryOverlay");
+
+    const QPoint target = entry->geometry().center();
+    check(dashboard.childAt(target) == entry,
+          "the reminder entry is hit-testable with no overlay up");
+
+    dashboard.update(pre_match_snapshot(), nullptr, 5000);
+    settle(dashboard);
+
+    // 覆盖层真的在最上层盖住了那个点,否则下面的命中断言是空过的。
+    check(popup->isVisible(), "the pre-match popup is up");
+    check(dashboard.popup() == Popup::PreMatch, "the dashboard reports PreMatch");
+    check(popup->geometry().contains(target),
+          "the popup host really covers the reminder entry, so the check is not vacuous");
+    check(dashboard.childAt(target) == entry,
+          "the reminder entry stays clickable through the pre-match popup");
+
+    dashboard.update(settled_snapshot(), nullptr, 5000 + 6000);
+    settle(dashboard);
+
+    check(victory->isVisible(), "the victory overlay is up");
+    check(victory->geometry().contains(target),
+          "the victory host really covers the reminder entry");
+    check(dashboard.childAt(target) == entry,
+          "the reminder entry stays clickable through the victory overlay");
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -539,6 +621,8 @@ int main(int argc, char* argv[]) {
         video_faults_surface_on_change_and_clear_on_recovery();
         video_mode_fills_the_window_and_hides_the_map();
         the_read_only_banner_survives_both_modes();
+        the_reminder_entry_hugs_its_text_at_the_right_edge();
+        the_overlays_never_swallow_clicks_on_the_reminder_entry();
         video_mode_keeps_the_countdown_and_hp();
         a_critical_event_is_listed_and_coloured();
         both_panes_receive_one_identical_frame();

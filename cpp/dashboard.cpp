@@ -2,6 +2,7 @@
 
 #include "logging.h"
 #include "presentation.h"
+#include "tactical_reminder_dialog.h"
 #include "theme.h"
 
 #include <algorithm>
@@ -14,6 +15,7 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QPainter>
+#include <QPushButton>
 #include <QQuickItem>
 #include <QRect>
 #include <QResizeEvent>
@@ -464,12 +466,25 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
 
     // 与模式横幅同一行而不是自成一行:独占一行时它出现/消失会把整个页面上下顶动,
     // 而它恰好在最需要稳定视线的时刻出现。同行还省下 720p 下不够用的垂直预算。
+    reminder_entry_ = new QPushButton(QStringLiteral("战术提醒"), this);
+    reminder_entry_->setObjectName(QStringLiteral("reminderEntry"));
+    reminder_entry_->setFixedHeight(banner_row_height);
+    // 水平锁 Fixed。QPushButton 默认是 Minimum,会跟两条横幅一起均分告警带隐藏时
+    // 空出来的横向余量 —— 实测 1280 宽下按钮被拉到 419px(sizeHint 只有 80px),
+    // 一个半屏宽的按钮。Fixed 让它只占 sizeHint,余量归横幅,按钮始终贴住右端。
+    reminder_entry_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    // 未挂控制器时不可用。可点但什么都不弹会让操作手以为功能坏了。
+    reminder_entry_->setEnabled(false);
+
     auto* banner_row = new QHBoxLayout();
     banner_row->setContentsMargins(0, 0, 0, 0);
     banner_row->setSpacing(6);
     banner_row->addWidget(banner_, 0);
     banner_row->addWidget(mode_banner_, 0);
     banner_row->addWidget(alert_strip_, 1);
+    // 告警带拿 stretch,入口按钮跟在它后面且不拉伸:按钮固定贴住右端,而告警带
+    // 的出现/消失不会把按钮左右推动。
+    banner_row->addWidget(reminder_entry_, 0);
     root->addLayout(banner_row);
 
     top_bar_ = new TopBar(this);
@@ -643,6 +658,8 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     popup_->setClearColor(Qt::transparent);
     popup_->setAttribute(Qt::WA_TranslucentBackground);
     popup_->setAttribute(Qt::WA_AlwaysStackOnTop);
+    // 必需:铺满整窗 + AlwaysStackOnTop 会吞掉全屏点击,备战阶段弹窗可见时顶部按钮全部失效。
+    popup_->setAttribute(Qt::WA_TransparentForMouseEvents);
     popup_->setSource(QUrl(QStringLiteral("qrc:/qml/PopupOverlay.qml")));
     popup_->setVisible(false);
 
@@ -652,6 +669,7 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     victory_->setClearColor(Qt::transparent);
     victory_->setAttribute(Qt::WA_TranslucentBackground);
     victory_->setAttribute(Qt::WA_AlwaysStackOnTop);
+    victory_->setAttribute(Qt::WA_TransparentForMouseEvents);
     victory_->setSource(QUrl(QStringLiteral("qrc:/qml/VictoryOverlay.qml")));
     victory_->setVisible(false);
 }
@@ -777,6 +795,31 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
         overlay->setProperty("shown", popup_shown);
     }
     if (popup_shown) popup_->raise();
+}
+
+void Dashboard::attachReminders(ReminderController* controller) {
+    reminders_ = controller;
+    reminder_entry_->setEnabled(controller != nullptr);
+    if (!controller) return;
+
+    QObject::connect(reminder_entry_, &QPushButton::clicked, this, [this] {
+        // 复用同一个对话框实例。每次新建会让「取消」和「再次打开」之间丢掉控制器
+        // 连接,也会在反复开关时堆积隐藏窗口。
+        if (!reminder_dialog_) reminder_dialog_ = new ReminderDialog(reminders_, this);
+        reminder_dialog_->loadDraft(reminders_->config());
+        reminder_dialog_->show();
+        reminder_dialog_->raise();
+        reminder_dialog_->activateWindow();
+    });
+
+    const auto sync = [this] {
+        const auto state = reminders_->uiState();
+        reminder_entry_->setText(state.master_enabled
+                                     ? QStringLiteral("战术提醒 · %1 条").arg(state.enabled_count)
+                                     : QStringLiteral("战术提醒 · 关"));
+    };
+    QObject::connect(controller, &ReminderController::stateChanged, this, sync);
+    sync();
 }
 
 std::string Dashboard::layoutDump() const {

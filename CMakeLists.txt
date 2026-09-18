@@ -30,8 +30,25 @@ target_link_libraries(terminal_domain PUBLIC terminal_proto)
 add_library(terminal_video cpp/video.cpp cpp/video_receiver.cpp cpp/video_receiver.h cpp/video_recovery.cpp cpp/video_recovery.h)
 target_include_directories(terminal_video PUBLIC cpp)
 target_link_libraries(terminal_video PUBLIC terminal_logging Qt6::Core Qt6::Network)
-add_library(terminal_presentation cpp/presentation.cpp cpp/ui_mode.cpp cpp/ui_mode.h cpp/popup_state.cpp cpp/popup_state.h cpp/game_result.cpp cpp/game_result.h cpp/field_map.cpp cpp/field_map.h cpp/top_bar_model.cpp cpp/top_bar_model.h)
+add_library(terminal_presentation cpp/presentation.cpp cpp/ui_mode.cpp cpp/ui_mode.h cpp/popup_state.cpp cpp/popup_state.h cpp/game_result.cpp cpp/game_result.h cpp/field_map.cpp cpp/field_map.h cpp/top_bar_model.cpp cpp/top_bar_model.h cpp/reminder_scheduler.cpp cpp/reminder_scheduler.h cpp/tactical_reminder.h)
 target_link_libraries(terminal_presentation PUBLIC terminal_domain terminal_logging Qt6::Core)
+
+# 战术提醒的持久化和语音后端。独立于 terminal_presentation:调度器是纯逻辑,
+# 而这一层要碰文件系统和子进程,分开后纯逻辑测试不必链接这些副作用。
+add_library(terminal_reminders
+    cpp/reminder_repository.cpp cpp/reminder_repository.h
+    cpp/reminder_playback.cpp cpp/reminder_playback.h
+    cpp/tactical_reminder_controller.cpp cpp/tactical_reminder_controller.h
+    cpp/speech_backend.h)
+target_include_directories(terminal_reminders PUBLIC cpp)
+target_link_libraries(terminal_reminders PUBLIC terminal_presentation Qt6::Core)
+# 语音后端按平台条件编译。Linux 上刻意没有后端:没有已核实的本机中文离线语音,
+# 与其接一个念不出中文的实现,不如让上层明确报告该平台没有语音。
+if(APPLE)
+    target_sources(terminal_reminders PRIVATE
+        cpp/macos_speech_backend.cpp cpp/macos_speech_backend.h)
+    target_compile_definitions(terminal_reminders PUBLIC RM_TERMINAL_HAS_SPEECH=1)
+endif()
 
 # Separate from terminal_presentation because the map pane is the first component
 # that needs Qt6::Widgets; keeping Widgets off terminal_presentation stops the
@@ -85,10 +102,18 @@ else()
         "victory overlay will fall back to a static title")
 endif()
 
+# 提醒设置界面。单独一个目标而不是并进 terminal_reminders:那个库刻意不链
+# Qt6::Widgets,好让调度/持久化/播放的测试不必链接一整套 GUI。设置界面是这套
+# 功能里唯一需要 Widgets 的部分,所以边界划在这里。
+add_library(terminal_reminder_ui
+    cpp/tactical_reminder_dialog.cpp cpp/tactical_reminder_dialog.h)
+target_link_libraries(terminal_reminder_ui PUBLIC terminal_reminders terminal_visual Qt6::Widgets)
+target_compile_definitions(terminal_reminder_ui PRIVATE QT_NO_KEYWORDS)
+
 # A library rather than sources compiled straight into the executable, so the
 # offscreen layout test can link the real Dashboard instead of a reimplementation.
 add_library(terminal_dashboard cpp/dashboard.cpp cpp/dashboard.h)
-target_link_libraries(terminal_dashboard PUBLIC terminal_map terminal_visual terminal_video Qt6::Widgets)
+target_link_libraries(terminal_dashboard PUBLIC terminal_map terminal_visual terminal_video terminal_reminder_ui Qt6::Widgets)
 target_compile_definitions(terminal_dashboard PRIVATE QT_NO_KEYWORDS)
 
 add_executable(rm_terminal
@@ -147,6 +172,32 @@ if(BUILD_TESTING)
     add_executable(battle_analysis_test cpp/battle_analysis_test.cpp)
     target_link_libraries(battle_analysis_test PRIVATE terminal_visual)
     add_test(NAME battle_analysis_metrics COMMAND battle_analysis_test)
+    # 真实 say/afplay 子进程测试,只在 macOS 注册:它断言的是本机语音后端,
+    # 在没有这些工具的平台上注册只会得到必然失败的红灯。
+    if(APPLE)
+        add_executable(reminder_audio_test cpp/reminder_audio_test.cpp)
+        target_link_libraries(reminder_audio_test PRIVATE terminal_reminders)
+        add_test(NAME reminder_audio COMMAND reminder_audio_test)
+        set_tests_properties(reminder_audio PROPERTIES TIMEOUT 120)
+    endif()
+    add_executable(reminder_playback_test cpp/reminder_playback_test.cpp)
+    target_link_libraries(reminder_playback_test PRIVATE terminal_reminders)
+    add_test(NAME reminder_playback COMMAND reminder_playback_test)
+    add_executable(reminder_repository_test cpp/reminder_repository_test.cpp)
+    target_link_libraries(reminder_repository_test PRIVATE terminal_reminders)
+    add_test(NAME reminder_repository COMMAND reminder_repository_test)
+    add_executable(reminder_scheduler_test cpp/reminder_scheduler_test.cpp)
+    target_link_libraries(reminder_scheduler_test PRIVATE terminal_presentation)
+    add_test(NAME reminder_scheduler COMMAND reminder_scheduler_test)
+    add_executable(reminder_controller_test cpp/tactical_reminder_controller_test.cpp)
+    target_link_libraries(reminder_controller_test PRIVATE terminal_reminders)
+    add_test(NAME reminder_controller COMMAND reminder_controller_test)
+    # 离屏运行:设置界面的锁定和草稿行为要在真实 QWidget 上验证,但 CI 没有显示器。
+    add_executable(reminder_dialog_test cpp/tactical_reminder_dialog_test.cpp)
+    target_link_libraries(reminder_dialog_test PRIVATE terminal_reminder_ui Qt6::Widgets)
+    target_compile_definitions(reminder_dialog_test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME reminder_dialog COMMAND reminder_dialog_test)
+    set_tests_properties(reminder_dialog PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
     add_executable(top_bar_model_test cpp/top_bar_model_test.cpp)
     target_link_libraries(top_bar_model_test PRIVATE terminal_presentation)
     add_test(NAME top_bar_model COMMAND top_bar_model_test)
@@ -158,6 +209,7 @@ if(BUILD_TESTING)
         RM_TERMINAL_DASHBOARD_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/cpp/dashboard.cpp")
     add_test(NAME dashboard_layout COMMAND dashboard_layout_test)
     set_tests_properties(dashboard_layout PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
+
     # 验收用截图工具,不注册为测试:它只产出图片,不做断言。
     add_executable(popup_shots cpp/popup_shots.cpp ${TOPBAR_RES})
     target_link_libraries(popup_shots PRIVATE terminal_dashboard Qt6::Widgets)

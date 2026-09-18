@@ -23,7 +23,12 @@
 #include <optional>
 #include <string>
 
+class QPushButton;
+
 namespace rm_terminal {
+
+class ReminderController;
+class ReminderDialog;
 
 // Shared by both layout pages. A second set of these for the video page would
 // let the two pages disagree about the same underlying values.
@@ -140,6 +145,11 @@ public:
     // source here would diverge from the one feeding Store::snapshot.
     void update(const Snapshot& snapshot, const VideoReceiver* video, MonotonicMs now);
 
+    // 提醒功能后置接入。Dashboard 在测试里被单独构造(布局测试不该被迫拉起语音
+    // 后端和配置文件),所以入口按钮先建好、控制器后挂上:没挂时按钮显示为不可用,
+    // 而不是让整个仪表盘依赖一个可选子系统。
+    void attachReminders(ReminderController* controller);
+
     UiMode mode() const { return machine_.mode(); }
     ModeReason reason() const { return machine_.reason(); }
     void forceMode(std::optional<UiMode> forced) { machine_.forceMode(forced); }
@@ -171,6 +181,12 @@ private:
     QLabel* banner_;
     QLabel* mode_banner_;
     QLabel* alert_strip_;
+
+    // 固定在横幅行右端。刻意不放进 QML 顶部栏:1280 宽度下顶部栏右侧只剩约 19px,
+    // 塞进去会压到前哨站徽标。
+    QPushButton* reminder_entry_;
+    ReminderController* reminders_ = nullptr;
+    ReminderDialog* reminder_dialog_ = nullptr;
 
     TopBar* top_bar_;
     RosterPanel* ally_roster_;

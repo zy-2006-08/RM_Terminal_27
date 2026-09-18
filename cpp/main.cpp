@@ -1,11 +1,14 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QDebug>
+#include <QDir>
 #include <QFile>
 #include <QLabel>
+#include <QStandardPaths>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
+#include <memory>
 #include <cstdio>
 #include <optional>
 #include <string>
@@ -17,9 +20,15 @@
 #include "mqtt_intake.h"
 #include "platform.h"
 #include "presentation.h"
+#include "reminder_repository.h"
 #include "store.h"
+#include "tactical_reminder_controller.h"
 #include "ui_mode.h"
 #include "video_receiver.h"
+
+#if defined(RM_TERMINAL_HAS_SPEECH)
+#include "macos_speech_backend.h"
+#endif
 
 namespace {
 
@@ -46,6 +55,16 @@ void log_shutdown(const QString& mode, int code) {
         {QStringLiteral("mode=%1").arg(mode), QStringLiteral("exit=%1").arg(code)});
     rm_terminal::set_log_sink(nullptr);
     rm_terminal::StructuredLog::close();
+}
+
+// 语音的平台边界收在这一个函数里,上层不再有 #if。
+rm_terminal::SpeechBackend* make_speech_backend(QObject* parent) {
+#if defined(RM_TERMINAL_HAS_SPEECH)
+    return new rm_terminal::MacosSpeechBackend(parent);
+#else
+    return new rm_terminal::UnavailableSpeechBackend(
+        QStringLiteral("当前平台没有已核实的本机中文离线语音，战术提醒无法播报"), parent);
+#endif
 }
 
 QStringList startup_fields(const QString& mode, const rm_terminal::Config& cfg) {
@@ -242,7 +261,28 @@ int main(int argc, char* argv[]) {
              QStringLiteral("port=%1").arg(cfg.udp_port)});
     }
 
+    // 语音后端挂在 app 上,生命周期覆盖整个进程:控制器只借用它,不拥有它。
+    auto* speech = make_speech_backend(&app);
+    rm_terminal::ReminderController reminders(
+        std::make_unique<rm_terminal::ReminderRepository>(
+            rm_terminal::ReminderRepository::defaultDirectory()),
+        speech, cfg.stale_window_ms);
+    {
+        // 音频缓存和配置分开放:缓存是可再生的派生物,清掉只会重新合成;配置是
+        // 操作手赛前填的战术,清掉就没了。混在一个目录里迟早会被一起删。
+        const auto cache_dir =
+            QDir(QStandardPaths::writableLocation(QStandardPaths::CacheLocation))
+                .filePath(QStringLiteral("reminders"));
+        const auto error = reminders.start(cache_dir);
+        if (!error.isEmpty())
+            rm_terminal::StructuredLog::write(rm_terminal::LogLevel::warning,
+                                              QStringLiteral("reminder_config"),
+                                              {QStringLiteral("state=invalid"),
+                                               QStringLiteral("error=%1").arg(error)});
+    }
+
     rm_terminal::Dashboard dashboard(cfg);
+    dashboard.attachReminders(&reminders);
     dashboard.setWindowTitle("RM Terminal");
     // Four columns plus the flanking roster cards need more width than the old
     // two-column layout; below this the map degrades to a sliver.
@@ -258,15 +298,28 @@ int main(int argc, char* argv[]) {
 
     rm_terminal::StaleReporter reporter;
     QTimer freshness_timer;
-    QObject::connect(&freshness_timer, &QTimer::timeout, [&store, &reporter, &dashboard, &video]() {
+    QObject::connect(&freshness_timer, &QTimer::timeout,
+                     [&store, &reporter, &dashboard, &video, &reminders, &intake]() {
         // One clock read per tick, shared by the snapshot and the mode machine:
         // two reads would hand the machine an instant the snapshot never saw.
         const rm_terminal::MonotonicMs now = rm_terminal::monotonic_now();
         const auto snapshot = store.snapshot(now);
         reporter.inspect(snapshot);
         dashboard.update(snapshot, &video, now);
+        // 同一个 now 和同一份快照喂给提醒:另取一次时钟会让调度看到一个快照
+        // 从未见过的时刻,而两遍之间的间隔正是按这个时刻算的。
+        reminders.observe(rm_terminal::reminder_inputs(snapshot, intake.connected()), now);
     });
     freshness_timer.start(250);
+
+    // 第二遍的到点检查。250ms 的快照节拍对 1 秒的间隔来说太粗:间隔期满的时刻
+    // 落在两次快照之间时,第二遍会被推迟到下一个快照。这个定时器只推进播放队列,
+    // 不碰调度状态,所以跑得比快照密不会影响任何时序判定。
+    QTimer reminder_timer;
+    QObject::connect(&reminder_timer, &QTimer::timeout, [&reminders]() {
+        reminders.tick(rm_terminal::monotonic_now());
+    });
+    reminder_timer.start(100);
 
     // Evidence capture renders the widget itself rather than grabbing the
     // screen: it needs no recording permission, captures nothing but this
