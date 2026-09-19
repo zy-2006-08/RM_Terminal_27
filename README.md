@@ -1,7 +1,6 @@
 # RM_Terminal_27 · 2027 RMUC 自定义终端
 
-面向 2027 赛季 RoboMaster 超级对抗赛的自定义选手端终端。目标是实际比赛可用，并争取 RM Award。
-
+面向 2027 赛季 RoboMaster 超级对抗赛的自定义选手端终端。
 仓库地址：https://github.com/zy-2006-08/RM_Terminal_27
 参赛单位：电子科技大学中山学院 RoboBraver
 
