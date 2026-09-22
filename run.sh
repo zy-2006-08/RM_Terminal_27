@@ -7,7 +7,13 @@ set -e
 cd "$(dirname "$0")"
 
 # 模拟器仍是 Python：sim/ 是终端唯一的数据源，也是 mode_regression_e2e 的依赖
-PY=(../venv/bin/python -u)
+# 只认项目内 .venv：README/BUILD.md 一直都是这么写的，克隆下来照着做就能跑。
+PY=(.venv/bin/python -u)
+if [ ! -x "${PY[0]}" ]; then
+  echo "[run] 找不到 ${PY[0]}，先建虚拟环境："
+  echo "[run]   python3 -m venv .venv && .venv/bin/pip install protobuf paho-mqtt"
+  exit 1
+fi
 BUILD_DIR="${BUILD_DIR:-build/macos}"
 TERMINAL_BIN="$BUILD_DIR/rm_terminal"
 LOSS="${1:-0}"

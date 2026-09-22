@@ -28,6 +28,7 @@ compile_commands.json
 # clangd's local index cache
 .cache/
 
-# Local virtualenv, if ever created inside the tree (run.sh expects ../venv)
+# Local virtualenv. run.sh and scripts/verify_mode_regression.sh both expect
+# .venv in the repo root; see README.md for the create-and-install commands.
 venv/
 .venv/

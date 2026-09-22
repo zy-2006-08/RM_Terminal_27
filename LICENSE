@@ -30,7 +30,7 @@ notice are reproduced below as required by that license.
 
 Derived material in this repository:
 
-  - Minimap and robot icon artwork under assets/minimap/ (bitmap assets reused
+  - Minimap and robot icon artwork under resources/images/minimap/ (bitmap assets reused
     without modification).
   - Geometry and layout constants in the following QML components, which credit
     their upstream source in a file-header comment:

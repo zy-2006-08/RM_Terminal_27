@@ -1,7 +1,8 @@
 AUTHORITATIVE TASK-4 RECEIPT
 ============================
-Supersedes every `superseded-*` file in this directory. Each number below is
-greppable from `authoritative-run.log` or `decode-ceiling.log` in this directory.
+Supersedes every `superseded-*` file that was in this directory (now pruned; see
+SUPERSEDED.md for why each was rejected). Each number below is greppable from
+`authoritative-run.log` or `decode-ceiling.log` in this directory.
 
 Host: macOS. Ubuntu: UNVERIFIED (no Ubuntu host or cross-toolchain available).
 

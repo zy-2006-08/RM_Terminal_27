@@ -60,7 +60,7 @@ def split_access_units(stream: bytes) -> list[bytes]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--file", default=str(Path(__file__).resolve().parents[1] / "assets" / "sim_feed.h265"))
+    ap.add_argument("--file", default=str(Path(__file__).resolve().parent / "assets" / "sim_feed.h265"))
     ap.add_argument("--host", default=SERVER_HOST)
     ap.add_argument("--port", type=int, default=VIDEO_UDP_PORT)
     ap.add_argument("--fps", type=float, default=30.0)

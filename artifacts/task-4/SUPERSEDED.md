@@ -1,5 +1,9 @@
 # Superseded evidence
 
+The `superseded-*` files described below were pruned from this directory. The
+reasons they were rejected are kept here as a record; the files themselves are
+recoverable from Git history.
+
 - `superseded-final-harness.log`: Pre-fix run; receiver pid 41206, no `recoveries` field, and decoder failure values 1, 2, and 3 belong to the superseded build.
 - `superseded-final-complete-harness.log`: Post-fix run, but its restart phase keeps `decoded_frames` frozen at 11, so restart recovery is not established.
 - `superseded-final-complete-receipt.txt`: Summarises the post-fix run but overstates restart recovery because `decoded_frames` stays frozen at 11 through that phase.

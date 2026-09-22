@@ -228,7 +228,7 @@ Python 图传端  ──UDP 分片──────>  重组  ──>  H.265 �
 
 **所有验证证据都来自 macOS。** 文档里任何一句都不能读成 Ubuntu 通过了。
 
-**测试视频只是占位素材。** `assets/sim_feed.h265` 是一段 1280x720 的 HEVC 场景，不是真实比赛画面，只用来验证解码和图传链路通不通。
+**测试视频只是占位素材。** `sim/assets/sim_feed.h265` 是一段 1280x720 的 HEVC 场景，不是真实比赛画面，只用来验证解码和图传链路通不通。
 
 **不要同时跑两个模拟器。** 每个 topic 的速率会翻倍，还会制造假的模式切换。速率看起来不对时，第一件事是 `ps aux | grep [m]atch_server`。
 
@@ -424,8 +424,10 @@ cp rm_terminal.conf.sample rm_terminal.conf
 | `qml/` | QML 界面组件（顶栏、花名册、主题） |
 | `proto/rm_terminal.proto` | 消息协议定义（当前为本地模拟词汇） |
 | `sim/` | Python 模拟器（赛事服务器、图传发送端） |
-| `assets/minimap/` | 地图底图和单位图标素材 |
-| `assets/sim_feed.h265` | 测试用图传视频 |
+| `resources/images/` | 界面切图素材（顶栏、血条、事件、结算） |
+| `resources/images/minimap/` | 地图底图和单位图标素材 |
+| `resources/minimap.qrc` | 地图素材的 Qt 资源清单 |
+| `sim/assets/sim_feed.h265` | 测试用图传视频 |
 | `scripts/verify_mode_regression.sh` | 62 秒模式切换端到端测试 |
 | `artifacts/` | 构建和验收证据 |
 | `BUILD.md` | 详细构建、配置、调试文档 |

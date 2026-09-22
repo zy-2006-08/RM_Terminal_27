@@ -123,8 +123,9 @@ REPRODUCE
   python3 artifacts/task-6/acceptance_harness.py
   python3 artifacts/task-5/lifecycle_harness.py
   python3 artifacts/task-5/events_harness.py
-  Screenshots are viewable directly: artifacts/task-6/screenshot-normal.png and
-  artifacts/task-6/screenshot-mqtt-down.png.
+  Screenshots (screenshot-normal.png, screenshot-mqtt-down.png,
+  screenshot-dashboard.png) were pruned from this directory and are recoverable
+  from Git history. The harness above regenerates them.
 
 KNOWN LIMITATIONS
   - Ubuntu is UNVERIFIED. BUILD.md lists the equivalent commands, but nothing in
