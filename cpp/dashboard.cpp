@@ -21,6 +21,7 @@
 #include <QResizeEvent>
 #include <QUrl>
 #include <QPair>
+#include <QMouseEvent>
 #include <QScrollArea>
 #include <QSizePolicy>
 #include <QStackedLayout>
@@ -83,6 +84,7 @@ QString reason_name(ModeReason reason) {
     case ModeReason::ForcedByCli: return QStringLiteral("ForcedByCli");
     case ModeReason::BlindDataStale: return QStringLiteral("BlindDataStale");
     case ModeReason::BlindSignalLost: return QStringLiteral("BlindSignalLost");
+    case ModeReason::ManualVideo: return QStringLiteral("ManualVideo");
     }
     return QStringLiteral("Unknown");
 }
@@ -390,6 +392,15 @@ void VideoPane::setScaling(Scaling scaling) {
     update();
 }
 
+void VideoPane::mousePressEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton) {
+        event->accept();
+        Q_EMIT clicked();
+        return;
+    }
+    QWidget::mousePressEvent(event);
+}
+
 void VideoPane::paintEvent(QPaintEvent*) {
     QPainter painter(this);
     painter.fillRect(rect(), QColor(12, 12, 14));
@@ -550,6 +561,9 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     // Half the cap, so a short window shrinks the picture instead of overlapping the
     // stats text with it. paintEvent keeps the aspect ratio at whatever height it gets.
     info_video_pane_->setMinimumSize(160, 90);
+    info_video_pane_->setCursor(Qt::PointingHandCursor);
+    info_video_pane_->setToolTip(QStringLiteral("点击放大图传"));
+    QObject::connect(info_video_pane_, &VideoPane::clicked, this, &Dashboard::showVideoPage);
 
     // 状态在画面下方而不是右侧:异常时那行故障计数很长,并排放不下就会压到画面上。
     // 常态是空串,WrappedLabel 负责把换行后的真实高度报给布局,所以空行不占高度。
@@ -642,7 +656,10 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
 
     video_full_pane_ = new VideoPane(video_page_);
     video_full_pane_->setObjectName(QStringLiteral("videoFullPane"));
+    video_full_pane_->setCursor(Qt::PointingHandCursor);
+    video_full_pane_->setToolTip(QStringLiteral("点击返回自动视图（致盲或强制图传时保持全屏）"));
     video_layout->addWidget(video_full_pane_, 1);
+    QObject::connect(video_full_pane_, &VideoPane::clicked, this, &Dashboard::showInfoPage);
 
     stack_->addWidget(info_page_);
     stack_->addWidget(video_page_);
@@ -690,8 +707,8 @@ void Dashboard::resizeEvent(QResizeEvent* event) {
 void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, MonotonicMs now) {
     const bool blind_asserted =
         snapshot.blind.self_base_blinded.value.value_or(false);
-    const ModeDecision decision =
-        machine_.step(blind_asserted, snapshot.blind.self_base_blinded.freshness, now);
+    machine_.step(blind_asserted, snapshot.blind.self_base_blinded.freshness, now);
+    const ModeDecision decision{mode(), reason()};
 
     // One record per actual transition, not per tick: a 250ms tick would write
     // 240 lines a minute and bury the switches the operator needs to find.
@@ -706,10 +723,7 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
         logged_mode_ = decision.mode;
     }
 
-    stack_->setCurrentWidget(decision.mode == UiMode::Video ? video_page_ : info_page_);
-    mode_banner_->setText(QStringLiteral("模式 %1 · 原因 %2")
-                              .arg(mode_name(decision.mode))
-                              .arg(reason_name(decision.reason)));
+    refreshPage();
 
     top_bar_->setSnapshot(snapshot);
     const std::optional<std::uint32_t> mine = self_faction(snapshot);
@@ -797,6 +811,40 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
     if (popup_shown) popup_->raise();
 }
 
+void Dashboard::showVideoPage() {
+    if (machine_.reason() != ModeReason::ForcedByCli) video_expanded_ = true;
+    refreshPage();
+}
+
+void Dashboard::showInfoPage() {
+    video_expanded_ = false;
+    refreshPage();
+}
+
+UiMode Dashboard::mode() const {
+    if (machine_.reason() == ModeReason::ForcedByCli) return machine_.mode();
+    return video_expanded_ ? UiMode::Video : machine_.mode();
+}
+
+ModeReason Dashboard::reason() const {
+    if (video_expanded_ && machine_.mode() == UiMode::Info &&
+        machine_.reason() != ModeReason::ForcedByCli) return ModeReason::ManualVideo;
+    return machine_.reason();
+}
+
+void Dashboard::forceMode(std::optional<UiMode> forced) {
+    machine_.forceMode(forced);
+    if (forced) video_expanded_ = false;
+    refreshPage();
+}
+
+void Dashboard::refreshPage() {
+    stack_->setCurrentWidget(mode() == UiMode::Video ? video_page_ : info_page_);
+    mode_banner_->setText(QStringLiteral("模式 %1 · 原因 %2")
+                              .arg(mode_name(mode()))
+                              .arg(reason_name(reason())));
+}
+
 void Dashboard::attachReminders(ReminderController* controller) {
     reminders_ = controller;
     reminder_entry_->setEnabled(controller != nullptr);
@@ -858,8 +906,8 @@ std::string Dashboard::layoutDump() const {
                           "  \"window\": {\"width\": %5, \"height\": %6},\n"
                           "  \"panes\": [\n%7\n  ]\n"
                           "}\n")
-        .arg(mode_name(machine_.mode()))
-        .arg(reason_name(machine_.reason()))
+        .arg(mode_name(mode()))
+        .arg(reason_name(reason()))
         .arg(banner_->isVisible() ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(stack_->currentIndex())
         .arg(width())

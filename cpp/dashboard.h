@@ -24,6 +24,7 @@
 #include <string>
 
 class QPushButton;
+class QMouseEvent;
 
 namespace rm_terminal {
 
@@ -119,7 +120,11 @@ public:
     // can confirm both panes received the same frame.
     const QImage& currentFrame() const { return image_; }
 
+Q_SIGNALS:
+    void clicked();
+
 protected:
+    void mousePressEvent(QMouseEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
 
 private:
@@ -150,9 +155,12 @@ public:
     // 而不是让整个仪表盘依赖一个可选子系统。
     void attachReminders(ReminderController* controller);
 
-    UiMode mode() const { return machine_.mode(); }
-    ModeReason reason() const { return machine_.reason(); }
-    void forceMode(std::optional<UiMode> forced) { machine_.forceMode(forced); }
+    UiMode mode() const;
+    ModeReason reason() const;
+    void forceMode(std::optional<UiMode> forced);
+
+    void showVideoPage();
+    void showInfoPage();
 
     Popup popup() const { return popups_.popup(); }
 
@@ -168,6 +176,7 @@ protected:
     void resizeEvent(QResizeEvent* event) override;
 
 private:
+    void refreshPage();
     // Two VideoPane instances, one per page, sharing the single resident
     // VideoReceiver. The same pane is deliberately NOT reparented between pages:
     // the reason is engineering determinism, avoiding a simultaneous
@@ -221,6 +230,7 @@ private:
     PopupStateMachine popups_;
     Popup logged_popup_ = Popup::None;
     VideoFaultTracker video_faults_;
+    bool video_expanded_ = false;
 };
 
 }

@@ -12,6 +12,8 @@ Item {
 
     property int robotId: 0
     property bool isBlue: false
+    property bool isAlly: true
+    property bool factionKnown: false
     property int liveState: 0        // 0=NoData 1=Alive 2=Kia
     property bool hasHp: false
     property int currentHp: 0
@@ -23,6 +25,8 @@ Item {
     readonly property bool kia: liveState === 2
     readonly property bool noData: liveState === 0
     readonly property bool online: liveState !== 0
+    readonly property bool lowHealthAlert: factionKnown && !isAlly && liveState === 1
+        && hasHp && maxHp > 0 && currentHp > 0 && currentHp / maxHp <= 0.25
     readonly property int shownId: robotId > 100 ? robotId - 100 : robotId
     readonly property real ratio: (hasHp && maxHp > 0)
         ? Math.max(0, Math.min(1, currentHp / maxHp)) : 0
@@ -42,6 +46,27 @@ Item {
         border.color: root.online ? "#333333" : Qt.rgba(1, 1, 1, 0.07)
         border.width: 1
         color: Qt.rgba(0.1, 0.1, 0.15, 0.6)
+    }
+
+    Rectangle {
+        id: lowHealthRing
+        objectName: "lowHealthRing"
+        anchors.fill: card
+        anchors.margins: 1
+        radius: card.radius
+        color: "transparent"
+        border.color: Theme.danger
+        border.width: 2
+        opacity: root.lowHealthAlert ? pulseOpacity : 0
+        visible: opacity > 0
+
+        property real pulseOpacity: 0.25
+        SequentialAnimation on pulseOpacity {
+            running: root.lowHealthAlert
+            loops: Animation.Infinite
+            NumberAnimation { to: 0.9; duration: 650; easing.type: Easing.InOutSine }
+            NumberAnimation { to: 0.25; duration: 650; easing.type: Easing.InOutSine }
+        }
     }
 
     // 顶栏同款机器人卡。关掉卡内窄血条,本行下方另画一条宽条。

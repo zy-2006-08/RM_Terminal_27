@@ -2,9 +2,12 @@
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QDir>
 #include <QFile>
 #include <QImage>
 #include <QLabel>
+#include <QMouseEvent>
+#include <QPainter>
 #include <QPushButton>
 #include <QQuickWidget>
 #include <algorithm>
@@ -16,6 +19,13 @@
 using namespace rm_terminal;
 
 namespace {
+bool qml_error = false;
+
+void messages(QtMsgType type, const QMessageLogContext&, const QString& message) {
+    if ((type == QtWarningMsg || type == QtCriticalMsg) &&
+        (message.contains("qrc:/") || message.contains("QQml"))) qml_error = true;
+    std::cerr << message.toStdString() << '\n';
+}
 
 void check(bool condition, const char* name) {
     if (!condition) throw std::runtime_error(name);
@@ -224,6 +234,89 @@ void the_thumbnail_and_its_stats_never_overlap() {
           "the thumbnail fits inside its box instead of overflowing it");
     check(box->rect().contains(stats->geometry()),
           "the stats label fits inside its box instead of overflowing it");
+}
+
+void clicking_video_panes_switches_the_visible_page() {
+    Dashboard dashboard(test_config());
+    dashboard.resize(kMinWidth, kMinHeight);
+    drive_to_info(dashboard);
+
+    auto* thumbnail = const_cast<VideoPane*>(find_pane(dashboard, "infoVideoPane"));
+    auto* full = const_cast<VideoPane*>(find_pane(dashboard, "videoFullPane"));
+    const auto click = [&](VideoPane* pane, Qt::MouseButton button = Qt::LeftButton) {
+        const QPoint local = pane->rect().center();
+        check(dashboard.childAt(pane->mapTo(&dashboard, local)) == pane,
+              "native hit testing reaches the video pane");
+        QMouseEvent event(QEvent::MouseButtonPress, local,
+                          pane->mapTo(pane->window(), local), pane->mapToGlobal(local),
+                          button, button, Qt::NoModifier);
+        QApplication::sendEvent(pane, &event);
+        settle(dashboard);
+    };
+    const auto capture = [&](const QString& name) {
+        const QString directory = qEnvironmentVariable("RM_UI_EVIDENCE_DIR");
+        if (directory.isEmpty()) return;
+        QImage shot = grab_rendered(&dashboard);
+        QPainter painter(&shot);
+        for (auto* quick : dashboard.findChildren<QQuickWidget*>()) {
+            if (quick->isVisible() && quick->status() == QQuickWidget::Ready)
+                painter.drawImage(QRect(quick->mapTo(&dashboard, QPoint()), quick->size()),
+                                  quick->grabFramebuffer());
+        }
+        painter.end();
+        check(QDir().mkpath(directory) && shot.save(directory + "/" + name + ".png"),
+              "native dashboard PNG saved");
+    };
+    check(thumbnail->isVisible() && !full->isVisible(),
+          "info mode starts with only the thumbnail visible");
+
+    check(thumbnail->cursor().shape() == Qt::PointingHandCursor &&
+              !thumbnail->toolTip().isEmpty() && !full->toolTip().isEmpty(),
+          "video click affordances are present");
+    capture("dashboard-info");
+    click(thumbnail, Qt::RightButton);
+    check(dashboard.mode() == UiMode::Info, "right click does not expand video");
+    click(thumbnail);
+    check(full->isVisible() && !thumbnail->isVisible(),
+          "clicking the thumbnail opens the full video page");
+    check(dashboard.mode() == UiMode::Video, "manual expansion reports the actual visible mode");
+    check(dashboard.reason() == ModeReason::ManualVideo &&
+              dashboard.layoutDump().find("ManualVideo") != std::string::npos &&
+              find_label(dashboard, "modeBanner")->text().contains("ManualVideo"),
+          "manual mode reason, dump and banner agree");
+    capture("dashboard-expanded");
+    dashboard.update(clear_snapshot(), nullptr, 4800);
+    settle(dashboard);
+    check(full->isVisible(), "manual expansion persists across updates");
+
+    click(full);
+    check(thumbnail->isVisible() && !full->isVisible(),
+          "clicking the full video returns to the info page");
+    dashboard.update(clear_snapshot(), nullptr, 4900);
+    check(dashboard.mode() == UiMode::Info, "collapse persists across clear refresh");
+    capture("dashboard-returned");
+    dashboard.update(blinded_snapshot(), nullptr, 5050);
+    settle(dashboard);
+    check(full->isVisible(), "return does not pin Info over automatic blind Video");
+    click(full);
+    check(full->isVisible(), "full click cannot defeat automatic blind Video");
+    capture("dashboard-blind");
+    dashboard.forceMode(UiMode::Info);
+    settle(dashboard);
+    click(thumbnail);
+    dashboard.update(blinded_snapshot(), nullptr, 5300);
+    check(dashboard.mode() == UiMode::Info && dashboard.reason() == ModeReason::ForcedByCli,
+          "CLI Info wins over click and blind refresh");
+    dashboard.forceMode(UiMode::Video);
+    settle(dashboard);
+    click(full);
+    dashboard.update(clear_snapshot(), nullptr, 5550);
+    check(dashboard.mode() == UiMode::Video && dashboard.reason() == ModeReason::ForcedByCli,
+          "CLI Video wins over collapse and clear refresh");
+    dashboard.forceMode(std::nullopt);
+    check(dashboard.mode() == UiMode::Video, "releasing CLI retains blind exit hysteresis");
+    dashboard.update(clear_snapshot(), nullptr, 8800);
+    check(dashboard.mode() == UiMode::Info, "automatic mode resumes after CLI release");
 }
 
 // 图传统计只在异常时浮现,但「浮现」必须真的发生 —— 否则等于把模块一已验证的
@@ -613,10 +706,12 @@ void the_overlays_never_swallow_clicks_on_the_reminder_entry() {
 
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
+    qInstallMessageHandler(messages);
     try {
         info_mode_is_map_dominant_with_a_capped_thumbnail();
         the_layout_fits_the_requested_screen_size();
         the_thumbnail_and_its_stats_never_overlap();
+        clicking_video_panes_switches_the_visible_page();
         video_stats_stay_quiet_until_something_goes_wrong();
         video_faults_surface_on_change_and_clear_on_recovery();
         video_mode_fills_the_window_and_hides_the_map();
@@ -630,6 +725,7 @@ int main(int argc, char* argv[]) {
         the_layout_dump_is_reproducible_and_hides_unlaid_geometry();
         a_blocking_popup_renders_above_both_pages_without_moving_the_layout();
         the_popup_also_covers_the_video_page();
+        check(!qml_error, "all dashboard QML loads and runs without warnings");
     } catch (const std::exception& error) {
         std::cerr << "FAIL " << error.what() << '\n';
         return 1;

@@ -46,19 +46,23 @@ Panel {
                          / Math.max(1, root.entries.length))
 
         Repeater {
-            model: root.entries
+            // Snapshot lists are replaced every tick; a count model preserves pulse phase.
+            model: root.entries.length
             RosterRow {
+                readonly property var entry: root.entries[index]
                 width: rows.width
                 height: rows.rowHeight
-                robotId: modelData.id
+                robotId: entry.id
                 isBlue: root.isBlue
-                liveState: modelData.live
-                hasHp: modelData.hasHp
-                currentHp: modelData.hp
-                maxHp: modelData.maxHp
-                robotClass: modelData.cls
-                hasPosition: modelData.hasPosition
-                positionStale: modelData.positionStale
+                isAlly: root.isAlly
+                factionKnown: root.factionKnown
+                liveState: entry.live
+                hasHp: entry.hasHp
+                currentHp: entry.hp
+                maxHp: entry.maxHp
+                robotClass: entry.cls
+                hasPosition: entry.hasPosition
+                positionStale: entry.positionStale
             }
         }
     }

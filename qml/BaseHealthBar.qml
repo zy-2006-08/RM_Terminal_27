@@ -4,7 +4,7 @@ import "."
 // 基地血条。分层结构照 ClearWei/RM26_Client 的 BaseHealthBar.qml(MIT):
 // bottom(空槽) → middle(深层) → top(浅层) → border(边框) → light(高光)。
 // 官方把血量分深浅两层,所以掉血时先掉浅层再掉深层,而不是一条单色缩短。
-SItem {
+Item {
     id: root
     property int currentHealth: 0
     property int maxHealth: 0

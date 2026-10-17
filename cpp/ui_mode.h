@@ -19,6 +19,7 @@ enum class ModeReason {
     ForcedByCli,              // --force-mode, evidence capture only
     BlindDataStale,           // blind data untrustworthy; picture held on purpose
     BlindSignalLost,          // stale for too long; gave up and returned to Info
+    ManualVideo,              // operator expanded the thumbnail
 };
 
 struct ModeDecision {

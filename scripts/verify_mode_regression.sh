@@ -4,9 +4,9 @@
 # wrong clock or the wrong freshness still flaps, and only a real run catches that.
 #
 # Timeline it relies on (sim/match_server.py:67 _BLIND_SCHEDULE):
-#   stage()==4 begins at sim elapsed 10s; blind runs match-internal [30s, 42s).
-#   So, relative to simulator start: blind ASSERTS at +40s, CLEARS at +52s, and the
-#   terminal's 3000ms exit hysteresis puts the return to info at ~+55s.
+#   stage()==4 begins at sim elapsed 4s; blind runs match-internal [30s, 42s).
+#   So, relative to simulator start: blind ASSERTS at +34s, CLEARS at +46s, and the
+#   terminal's 3000ms exit hysteresis puts the return to info at ~+49s.
 # The run therefore has to reach +60s to observe the exit at all.
 #
 # Exits non-zero on any failed assertion, and prints an actual-vs-expected table.
@@ -137,8 +137,8 @@ sim_t0 = float(os.environ["RM_SIM_T0"])
 log_path = os.environ["RM_LOG"]
 sim_log_path = os.environ["RM_SIM_LOG"]
 
-# Expected, derived from sim/match_server.py:67 and the 3000ms default hysteresis.
-BLIND_ASSERT_AT = 40.0
+# Expected, derived from sim/match_server.py and the 3000ms default hysteresis.
+BLIND_ASSERT_AT = 34.0
 BLIND_DURATION = 12.0
 EXIT_HYSTERESIS = 3.0
 ENTER_TOLERANCE = 2.0
