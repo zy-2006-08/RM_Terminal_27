@@ -65,14 +65,22 @@ _CMD_NAMES = {
 CTRL_BEGIN = 0x10
 CTRL_HOLD = 0x11
 CTRL_RESET = 0x12
-_CTRL_NAMES = {CTRL_BEGIN: "开赛", CTRL_HOLD: "暂停", CTRL_RESET: "复位到准备阶段"}
+CTRL_SEEK = 0x13    # param = 目标赛程秒数
+CTRL_SPEED = 0x14   # param = 倍速 x10(20 表示 2.0 倍)
+_CTRL_NAMES = {
+    CTRL_BEGIN: "开赛",
+    CTRL_HOLD: "暂停",
+    CTRL_RESET: "复位到准备阶段",
+    CTRL_SEEK: "跳转赛程",
+    CTRL_SPEED: "设置倍速",
+}
 
 # 编造的致盲时刻表（本地模拟，非 2027 协议）。元组为 (比赛内起始秒, 持续秒)，
 # 基准是 stage()==4 的比赛内已进行秒数，不是挂钟时间，故两次运行必然一致。
 #
-# 第一段起点取 30s（= 进程启动后 40s，因为 stage()==4 从挂钟 10s 才开始）是刻意
+# 第一段起点取 30s（= 进程启动后 34s，因为 stage()==4 从挂钟 4s 才开始）是刻意
 # 的：致盲 12s + 终端 3s 退出滞回必须在 60s 验收窗口内跑完，否则只能观察到进入
-# 而观察不到退出。若把起点改成比赛内 40s（= 启动后 50s），退出会落在 65s，60s
+# 而观察不到退出。若把起点改成比赛内 40s（= 启动后 44s），退出会落在 59s，60s
 # 的验收就只剩一条切换记录、无法证明滞回真的会放行。
 _BLIND_SCHEDULE: tuple[tuple[float, float], ...] = ((30.0, 12.0), (150.0, 12.0))
 
@@ -139,8 +147,9 @@ def _pose_tick(elapsed: float) -> float:
 class SimulatedMatch:
     def __init__(self) -> None:
         self.t0 = time.monotonic()
+        self.speed = 1.0
         # 待命档:为真时 elapsed 冻结在 hold_at,由操作手决定何时开赛。
-        # 冻结点必须是 0.0:stage() 里 e<5 才是准备阶段,停在别的值会静默进入倒计时或比赛。
+        # 冻结点必须是 0.0:stage() 里 e<4 才是倒计时,停在别的值会静默进入比赛。
         self.holding = _HOLD_AT_START
         self.hold_at = 0.0
         self.hp = 400
@@ -202,41 +211,53 @@ class SimulatedMatch:
     def elapsed(self) -> float:
         if self.holding:
             return self.hold_at
-        return time.monotonic() - self.t0
+        return self.hold_at + (time.monotonic() - self.t0) * self.speed
 
     def begin(self) -> None:
         """开赛:从当前冻结点继续走,不是从 0 重来。
 
-        t0 要回退 hold_at,否则暂停再开赛会把已经走过的赛程丢掉。
+        hold_at 是 t0 时刻的赛程值,开赛只换基准时刻;若改成从 0 重来,
+        暂停再开赛会把已经走过的赛程丢掉。
         """
         if not self.holding:
             return
-        self.t0 = time.monotonic() - self.hold_at
+        self.t0 = time.monotonic()
         self.holding = False
 
     def hold(self) -> None:
         if self.holding:
             return
-        self.hold_at = time.monotonic() - self.t0
+        self.hold_at = self.elapsed
         self.holding = True
 
     def reset(self) -> None:
         self.hold_at = 0.0
+        self.t0 = time.monotonic()
         self.holding = True
         self._locked_winner = None
 
+    def seek(self, target: float) -> None:
+        """跳到赛程内指定秒。暂停/运行都可用,跳完接着走。"""
+        self.hold_at = max(0.0, target)
+        self.t0 = time.monotonic()
+        self._locked_winner = None
+
+    def set_speed(self, speed: float) -> None:
+        """换倍速:先把当前赛程值结算到 hold_at,避免改速瞬间跳变。"""
+        self.hold_at = self.elapsed
+        self.t0 = time.monotonic()
+        self.speed = max(0.1, speed)
+
     def stage(self) -> tuple[int, int]:
-        """准备 5s -> 倒计时 5s -> 比赛 420s -> 结算 15s，循环往复便于长时间演示。
+        """倒计时 4s -> 比赛 420s -> 结算 15s，循环往复便于长时间演示。
 
         结算阶段必须真的出现：终端的结算动画只在 stage==5 且 winner 有效时播放，
         少了这一段就永远验证不到胜负画面。
         """
         e = self.elapsed
-        if e < 5:
-            return 1, int(5 - e)
-        if e < 10:
-            return 3, int(10 - e)
-        cycle = (e - 10) % (_MATCH_SEC + _SETTLEMENT_SEC)
+        if e < 4:
+            return 3, int(4 - e)
+        cycle = (e - 4) % (_MATCH_SEC + _SETTLEMENT_SEC)
         if cycle < _MATCH_SEC:
             return 4, int(_MATCH_SEC - cycle)
         return 5, int(_MATCH_SEC + _SETTLEMENT_SEC - cycle)
@@ -434,7 +455,7 @@ class SimulatedMatch:
             return None
         # 周期必须与 stage() 完全一致。写死 420 会与含结算段的真实周期错开,
         # 致盲时刻表随之漂移,表现为 UI 模式在一局内多切一次。
-        return (self.elapsed - 10) % (_MATCH_SEC + _SETTLEMENT_SEC)
+        return (self.elapsed - 4) % (_MATCH_SEC + _SETTLEMENT_SEC)
 
     def tick_blind(self) -> None:
         """按 _BLIND_SCHEDULE 推进编造的致盲状态（本地模拟，非 2027 协议）。
@@ -514,7 +535,7 @@ def _on_message(client, userdata, message):
         name = _CTRL_NAMES.get(m.command_id)
         if name:
             print(f"[server] 收到赛程控制 <- {name} (id=0x{m.command_id:02X})")
-            userdata.apply_control(m.command_id)
+            userdata.apply_control(m.command_id, m.param)
         else:
             print(f"[server] 收到 CommonCommand <- 终端：id={m.command_id} param={m.param}")
 
@@ -538,7 +559,7 @@ def main() -> int:
 
     match.apply_command = apply_command
 
-    def apply_control(cmd: int) -> None:
+    def apply_control(cmd: int, param: int = 0) -> None:
         if cmd == CTRL_BEGIN:
             match.begin()
             print(f"[server] 比赛开始,赛制 {_MATCH_SEC}s")
@@ -548,6 +569,12 @@ def main() -> int:
         elif cmd == CTRL_RESET:
             match.reset()
             print("[server] 已复位到准备阶段,等待开赛指令")
+        elif cmd == CTRL_SEEK:
+            match.seek(float(param))
+            print(f"[server] 赛程跳到 {match.elapsed:.1f}s")
+        elif cmd == CTRL_SPEED:
+            match.set_speed(max(1, param) / 10.0)
+            print(f"[server] 倍速设为 {match.speed:.1f}x")
 
     match.apply_control = apply_control
 
