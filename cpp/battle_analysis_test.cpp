@@ -1,5 +1,6 @@
 #include "battle_analysis.h"
 
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 
@@ -185,6 +186,70 @@ void fortress_hold_distinguishes_neutral_from_missing() {
           "without a faction the holder cannot be oriented");
 }
 
+// 阵地编码 0..4 是服务器契约,映射错一个就会把敌方基地画成我方的。四阵地顺序
+// 同时钉住:红前哨、蓝前哨、红基地、蓝基地。
+void zone_codes_map_to_four_slots() {
+    Snapshot snapshot;
+    snapshot.game.red_outpost_zone = present<std::uint32_t>(2);
+    snapshot.game.blue_outpost_zone = present<std::uint32_t>(0);
+    snapshot.game.red_base_zone = present<std::uint32_t>(3);
+    snapshot.game.blue_base_zone = present<std::uint32_t>(4);
+
+    const ZoneBoard board = zone_board(snapshot);
+    check(board.zones[0].name == QStringLiteral("红方前哨区"), "slot 0 is the red outpost");
+    check(board.zones[1].name == QStringLiteral("蓝方前哨区"), "slot 1 is the blue outpost");
+    check(board.zones[2].name == QStringLiteral("红方基地区"), "slot 2 is the red base");
+    check(board.zones[3].name == QStringLiteral("蓝方基地区"), "slot 3 is the blue base");
+    check(board.zones[0].control == ZoneControl::RedFull, "code 2 is red full control");
+    check(board.zones[1].control == ZoneControl::Neutral, "code 0 is uncontrolled");
+    check(board.zones[2].control == ZoneControl::BlueTemporary, "code 3 is blue temporary");
+    check(board.zones[3].control == ZoneControl::BlueFull, "code 4 is blue full control");
+    check(zone_control_text(ZoneControl::RedTemporary) == QStringLiteral("红方临时"),
+          "temporary control has its own text");
+}
+
+// 未控(协议给 0)和没收到这一帧是两件事,和堡垒归属同样的区分。
+void absent_zone_stays_unknown() {
+    Snapshot snapshot;
+    snapshot.game.red_outpost_zone = present<std::uint32_t>(0);
+    const ZoneBoard board = zone_board(snapshot);
+    check(board.zones[0].control == ZoneControl::Neutral, "present zero is neutral");
+    check(board.zones[1].control == ZoneControl::Unknown, "absent zone is unknown");
+    check(zone_control_text(ZoneControl::Unknown) == QStringLiteral("--"),
+          "unknown zone renders as placeholder, not uncontrolled");
+}
+
+// 后勤系数 = 剩余血量 / 最大血量;最大血量缺失时不可计算,高于上限时封顶 1。
+void logistics_is_remaining_health_share() {
+    Snapshot snapshot;
+    snapshot.game.red_base_hp = present<std::uint32_t>(15000);
+    snapshot.game.red_base_max_hp = present<std::uint32_t>(20000);
+    snapshot.game.blue_base_hp = present<std::uint32_t>(20000);
+    snapshot.game.blue_base_max_hp = present<std::uint32_t>(20000);
+    ZoneBoard board = zone_board(snapshot);
+    check(board.red_logistics && std::abs(*board.red_logistics - 0.75) < 1e-9,
+          "damaged red base yields 0.75 logistics");
+    check(board.blue_logistics && std::abs(*board.blue_logistics - 1.0) < 1e-9,
+          "full blue base yields 1.0 logistics");
+
+    const Snapshot empty;
+    board = zone_board(empty);
+    check(!board.red_logistics.has_value(), "missing base hp yields no logistics");
+}
+
+// 全局区一行里三类数据各自缺失时都显示 --,不能把缺失画成 0。
+void global_line_marks_missing_values() {
+    Snapshot snapshot;
+    snapshot.game.red_control_points = present<std::uint32_t>(12);
+    snapshot.game.blue_reinforce_chances = present<std::uint32_t>(2);
+    const ZoneBoard board = zone_board(snapshot);
+    check(board.red_control_points == 12, "control points come from the server");
+    check(!board.blue_control_points.has_value(), "absent control points stay nullopt");
+    const QString text = zone_global_text(board);
+    check(text.contains(QStringLiteral("红 12")), "present control points render");
+    check(text.contains(QStringLiteral("--")), "absent values render as placeholder");
+}
+
 }  // namespace
 
 int main() {
@@ -196,6 +261,10 @@ int main() {
         unknown_faction_yields_no_metrics_values();
         equal_values_read_as_even();
         fortress_hold_distinguishes_neutral_from_missing();
+        zone_codes_map_to_four_slots();
+        absent_zone_stays_unknown();
+        logistics_is_remaining_health_share();
+        global_line_marks_missing_values();
     } catch (const std::exception& error) {
         std::cerr << "FAIL " << error.what() << '\n';
         return 1;

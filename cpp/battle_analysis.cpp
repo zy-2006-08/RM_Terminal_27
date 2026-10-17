@@ -4,6 +4,8 @@
 
 #include <QString>
 
+#include <algorithm>
+
 namespace rm_terminal {
 
 namespace {
@@ -96,6 +98,76 @@ QString metric_stance_text(MetricStance stance) {
         case MetricStance::Unknown: break;
     }
     return QStringLiteral("等待数据");
+}
+
+ZoneBoard zone_board(const Snapshot& snapshot) {
+    const GameFields<Field>& g = snapshot.game;
+    ZoneBoard board;
+    board.zones = {{{QStringLiteral("红方前哨区"), ZoneControl::Unknown},
+                    {QStringLiteral("蓝方前哨区"), ZoneControl::Unknown},
+                    {QStringLiteral("红方基地区"), ZoneControl::Unknown},
+                    {QStringLiteral("蓝方基地区"), ZoneControl::Unknown}}};
+
+    const Field<std::uint32_t>* raw[4] = {&g.red_outpost_zone, &g.blue_outpost_zone,
+                                          &g.red_base_zone, &g.blue_base_zone};
+    for (std::size_t i = 0; i < 4; ++i) {
+        if (raw[i]->quality != Quality::Valid || !raw[i]->value) continue;
+        switch (*raw[i]->value) {
+            case 0: board.zones[i].control = ZoneControl::Neutral; break;
+            case 1: board.zones[i].control = ZoneControl::RedTemporary; break;
+            case 2: board.zones[i].control = ZoneControl::RedFull; break;
+            case 3: board.zones[i].control = ZoneControl::BlueTemporary; break;
+            case 4: board.zones[i].control = ZoneControl::BlueFull; break;
+            default: break;
+        }
+    }
+
+    auto point = [](const Field<std::uint32_t>& f)
+        -> std::optional<std::uint32_t> {
+        return f.quality == Quality::Valid ? f.value : std::nullopt;
+    };
+    board.red_control_points = point(g.red_control_points);
+    board.blue_control_points = point(g.blue_control_points);
+    board.red_reinforce = point(g.red_reinforce_chances);
+    board.blue_reinforce = point(g.blue_reinforce_chances);
+
+    auto logistics = [](const Field<std::uint32_t>& hp,
+                        const Field<std::uint32_t>& max_hp) -> std::optional<double> {
+        if (hp.quality != Quality::Valid || !hp.value) return std::nullopt;
+        if (max_hp.quality != Quality::Valid || !max_hp.value || *max_hp.value == 0)
+            return std::nullopt;
+        // 基地血量高于上限(服务器异常)时按满血处理,避免后勤系数超过 1。
+        return std::min(1.0, static_cast<double>(*hp.value) / *max_hp.value);
+    };
+    board.red_logistics = logistics(g.red_base_hp, g.red_base_max_hp);
+    board.blue_logistics = logistics(g.blue_base_hp, g.blue_base_max_hp);
+    return board;
+}
+
+QString zone_control_text(ZoneControl control) {
+    switch (control) {
+        case ZoneControl::Neutral: return QStringLiteral("未控");
+        case ZoneControl::RedTemporary: return QStringLiteral("红方临时");
+        case ZoneControl::RedFull: return QStringLiteral("红方完全");
+        case ZoneControl::BlueTemporary: return QStringLiteral("蓝方临时");
+        case ZoneControl::BlueFull: return QStringLiteral("蓝方完全");
+        case ZoneControl::Unknown: break;
+    }
+    return QStringLiteral("--");
+}
+
+QString zone_global_text(const ZoneBoard& board) {
+    const QString unknown = QStringLiteral("--");
+    auto number = [&unknown](const std::optional<std::uint32_t>& v) {
+        return v ? QString::number(*v) : unknown;
+    };
+    auto ratio = [&unknown](const std::optional<double>& v) {
+        return v ? QString::number(*v, 'f', 2) : unknown;
+    };
+    return QStringLiteral("控制度 红 %1 / 蓝 %2 ｜ 加固 红 %3 / 蓝 %4 ｜ 后勤 红 %5 / 蓝 %6")
+        .arg(number(board.red_control_points), number(board.blue_control_points),
+             number(board.red_reinforce), number(board.blue_reinforce),
+             ratio(board.red_logistics), ratio(board.blue_logistics));
 }
 
 }  // namespace rm_terminal

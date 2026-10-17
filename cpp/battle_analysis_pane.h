@@ -13,6 +13,7 @@ public:
 
     void setMetrics(const std::vector<AnalysisMetric>& metrics);
     void setFortressHold(FortressHold hold);
+    void setZoneBoard(const ZoneBoard& board);
 
     QSize sizeHint() const override;
 
@@ -22,6 +23,7 @@ protected:
 private:
     std::vector<AnalysisMetric> metrics_;
     FortressHold hold_ = FortressHold::Unknown;
+    ZoneBoard board_;
 };
 
 }

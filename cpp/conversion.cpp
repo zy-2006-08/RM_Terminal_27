@@ -62,6 +62,16 @@ bool convert(GameFields<Field>& state, const inbound::GameStatus& patch, Monoton
     MERGE(blue_kills, any_value);
     MERGE(red_energy_activations, any_value);
     MERGE(blue_energy_activations, any_value);
+    // 阵地状态只有 0..4 五个合法值,未知编码一律拒绝:画成「未控」会谎报战场。
+    const auto zone = between(0, 4);
+    MERGE(red_outpost_zone, zone);
+    MERGE(blue_outpost_zone, zone);
+    MERGE(red_base_zone, zone);
+    MERGE(blue_base_zone, zone);
+    MERGE(red_control_points, any_value);
+    MERGE(blue_control_points, any_value);
+    MERGE(red_reinforce_chances, any_value);
+    MERGE(blue_reinforce_chances, any_value);
     return ok;
 }
 bool convert(DynamicFields<Field>& state, const inbound::RobotDynamicStatus& patch, MonotonicMs now) {

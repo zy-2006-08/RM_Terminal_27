@@ -70,6 +70,7 @@ CTRL_SEEK = 0x13    # param = 目标赛程秒数
 CTRL_SPEED = 0x14   # param = 倍速 x10(20 表示 2.0 倍)
 CTRL_SET_HP = 0x15  # param = 机器人ID x1000 + 血量
 CTRL_AUTO_HP = 0x16 # param = 0 关闭随机掉血,1 开启
+CTRL_SET_ZONE = 0x17 # param = 阵地序号 x10 + 状态(0未控 1红临时 2红完全 3蓝临时 4蓝完全)
 _CTRL_NAMES = {
     CTRL_BEGIN: "开赛",
     CTRL_HOLD: "暂停",
@@ -78,7 +79,18 @@ _CTRL_NAMES = {
     CTRL_SPEED: "设置倍速",
     CTRL_SET_HP: "设置机器人血量",
     CTRL_AUTO_HP: "随机掉血开关",
+    CTRL_SET_ZONE: "设置阵地状态",
 }
+
+# 阵地顺序与 GameStatus 的四个字段一一对应,写死顺序是因为控制指令按序号寻址。
+_ZONE_NAMES = ("红方前哨区", "蓝方前哨区", "红方基地区", "蓝方基地区")
+_ZONE_STATE_NAMES = ("未控", "红方临时", "红方完全", "蓝方临时", "蓝方完全")
+_ZONE_RED_FULL = 2
+_ZONE_BLUE_FULL = 4
+# 完全控制前哨 +1/秒、基地 +3/秒；加固每满一分钟双方各 +1。
+_ZONE_OUTPOST_RATE = 1
+_ZONE_BASE_RATE = 3
+_REINFORCE_PERIOD_SEC = 60.0
 
 # 编造的致盲时刻表（本地模拟，非 2027 协议）。元组为 (比赛内起始秒, 持续秒)，
 # 基准是 stage()==4 的比赛内已进行秒数，不是挂钟时间，故两次运行必然一致。
@@ -192,6 +204,16 @@ class SimulatedMatch:
         self.blue_fortress_sec = 0
         self.fortress_holder = 0
         self._fortress_accum = 0.0
+        # 4 个阵地按 _ZONE_NAMES 的顺序存放状态。控制度和加固按比赛秒结算,
+        # 不能按 tick 计数：5 倍速下每个 tick 走 0.5 秒，规则会被悄悄放大。
+        self.zones = [0, 0, 0, 0]
+        self.red_control_points = 0
+        self.blue_control_points = 0
+        self.red_reinforce_chances = 0
+        self.blue_reinforce_chances = 0
+        self._zone_accum = 0.0
+        self._reinforce_accum = 0.0
+        self._zone_last = 0.0
         # 击杀数同样绑定到真实致死事件（见 _register_kill），不独立造数：
         # 否则会出现击杀数上涨却无人掉血的自相矛盾画面。
         self.red_kills = 0
@@ -269,6 +291,13 @@ class SimulatedMatch:
         self.other_hp[robot_id] = max(0, min(self.other_max_hp[robot_id], hp))
         return True
 
+    def set_zone(self, index: int, state: int) -> bool:
+        """手动设置阵地状态。返回 False 表示阵地序号或状态值非法。"""
+        if not 0 <= index < len(self.zones) or not 0 <= state < len(_ZONE_STATE_NAMES):
+            return False
+        self.zones[index] = state
+        return True
+
     def stage(self) -> tuple[int, int]:
         """倒计时 4s -> 比赛 420s -> 结算 15s，循环往复便于长时间演示。
 
@@ -323,6 +352,8 @@ class SimulatedMatch:
 
     def tick_10hz(self) -> None:
         if self.stage()[0] != 4:
+            # 非比赛阶段也要对齐时基,否则开赛瞬间会一次性补发整段准备时间的控制度。
+            self._zone_last = self.elapsed
             return
         if self.target_locked and self.ammo > 0 and self.rng.random() < 0.3:
             self.ammo -= 1
@@ -345,6 +376,30 @@ class SimulatedMatch:
             self.coin += 20
         self.tick_field_hp()
         self.tick_fortress()
+        self.tick_zones()
+
+    def tick_zones(self) -> None:
+        """按比赛秒结算控制度与加固机会。"""
+        now = self.elapsed
+        delta = min(max(now - self._zone_last, 0.0), 1.0)
+        self._zone_last = now
+
+        self._zone_accum += delta
+        steps = int(self._zone_accum)
+        if steps:
+            self._zone_accum -= steps
+            for index, state in enumerate(self.zones):
+                rate = _ZONE_BASE_RATE if index >= 2 else _ZONE_OUTPOST_RATE
+                if state == _ZONE_RED_FULL:
+                    self.red_control_points += rate * steps
+                elif state == _ZONE_BLUE_FULL:
+                    self.blue_control_points += rate * steps
+
+        self._reinforce_accum += delta
+        while self._reinforce_accum >= _REINFORCE_PERIOD_SEC:
+            self._reinforce_accum -= _REINFORCE_PERIOD_SEC
+            self.red_reinforce_chances += 1
+            self.blue_reinforce_chances += 1
 
     def tick_fortress(self) -> None:
         if self.rng.random() < 0.01:
@@ -462,6 +517,14 @@ class SimulatedMatch:
         self.blue_kills = 0
         self.red_energy_activations = 0
         self.blue_energy_activations = 0
+        self.zones = [0, 0, 0, 0]
+        self.red_control_points = 0
+        self.blue_control_points = 0
+        self.red_reinforce_chances = 0
+        self.blue_reinforce_chances = 0
+        self._zone_accum = 0.0
+        self._reinforce_accum = 0.0
+        self._zone_last = 0.0
 
     def field_health(self) -> list[tuple[int, int, int, int]]:
         out: list[tuple[int, int, int, int]] = [
@@ -607,6 +670,12 @@ def main() -> int:
         elif cmd == CTRL_AUTO_HP:
             match.auto_hp = bool(param)
             print(f"[server] 随机掉血{'开启' if match.auto_hp else '关闭'}")
+        elif cmd == CTRL_SET_ZONE:
+            zone, state = divmod(param, 10)
+            if match.set_zone(zone, state):
+                print(f"[server] {_ZONE_NAMES[zone]} -> {_ZONE_STATE_NAMES[state]}")
+            else:
+                print(f"[server] 非法阵地设置 序号={zone} 状态={state}", file=sys.stderr)
 
     match.apply_control = apply_control
 
@@ -690,6 +759,12 @@ def main() -> int:
             red_kills=match.red_kills, blue_kills=match.blue_kills,
             red_energy_activations=match.red_energy_activations,
             blue_energy_activations=match.blue_energy_activations,
+            red_outpost_zone=match.zones[0], blue_outpost_zone=match.zones[1],
+            red_base_zone=match.zones[2], blue_base_zone=match.zones[3],
+            red_control_points=match.red_control_points,
+            blue_control_points=match.blue_control_points,
+            red_reinforce_chances=match.red_reinforce_chances,
+            blue_reinforce_chances=match.blue_reinforce_chances,
         ))
         client.publish(T_SIM_AUTO_HP, b"1" if match.auto_hp else b"0", retain=True)
 

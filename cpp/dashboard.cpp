@@ -735,6 +735,7 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
     enemy_roster_->setEntries(build_roster(snapshot, enemy_faction));
     analysis_->setMetrics(build_analysis_metrics(snapshot));
     analysis_->setFortressHold(fortress_hold(snapshot));
+    analysis_->setZoneBoard(zone_board(snapshot));
 
     const QString alerts = alert_strip_text(snapshot, video);
     alert_strip_->setVisible(!alerts.isEmpty());

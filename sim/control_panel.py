@@ -34,9 +34,14 @@ ROBOT_IDS = {name: robot_id for name, robot_id in ROBOTS}
 MAX_HP = 600
 STAGE_NAMES = {3: "准备倒计时", 4: "比赛中", 5: "结算"}
 COUNTDOWN_SEC = 4
+ZONES = ["红方前哨区", "蓝方前哨区", "红方基地区", "蓝方基地区"]
+ZONE_SHORT = ["前哨红", "前哨蓝", "基地红", "基地蓝"]
+ZONE_STATES = ["未控", "红方临时", "红方完全", "蓝方临时", "蓝方完全"]
 
 state = {"online": False, "stage": None, "remain": 0, "elapsed": 0,
-         "changed_at": 0.0, "action": "就绪", "hp": {}}
+         "changed_at": 0.0, "action": "就绪", "hp": {},
+         "zones": [0, 0, 0, 0], "control": (0, 0), "reinforce": (0, 0),
+         "base": (0, 5000, 0, 5000)}
 
 
 def mmss(seconds: float) -> str:
@@ -50,6 +55,11 @@ def parse_time(text: str) -> int:
         minutes, _, rest = text.partition(":")
         return int(minutes) * 60 + int(float(rest))
     return int(float(text))
+
+
+def logistics(hp: int, max_hp: int) -> str:
+    """后勤系数 λ = 1 - 基地已损失血量/基地最大血量,也就是剩余血量占比。"""
+    return f"{max(0.0, min(1.0, hp / max_hp)) * 100:.0f}%" if max_hp else "--"
 
 
 root = tk.Tk()
@@ -160,6 +170,25 @@ def toggle_auto() -> None:
 tk.Checkbutton(robot, text="随机掉血(关掉后手动设的血量不再变化)",
                variable=auto_hp, command=toggle_auto).pack(pady=(0, 4))
 
+zone = tk.LabelFrame(root, text="阵地")
+zone.pack(fill="x", padx=8, pady=6)
+
+zone_row = tk.Frame(zone)
+zone_row.pack(pady=4)
+zone_selected = tk.StringVar(value=ZONES[2])
+zone_state = tk.StringVar(value=ZONE_STATES[0])
+tk.OptionMenu(zone_row, zone_selected, *ZONES).pack(side="left")
+tk.OptionMenu(zone_row, zone_state, *ZONE_STATES).pack(side="left", padx=4)
+
+
+def set_zone() -> None:
+    index = ZONES.index(zone_selected.get())
+    value = ZONE_STATES.index(zone_state.get())
+    act(f"{zone_selected.get()} → {zone_state.get()}", "zone", str(index), str(value))
+
+
+button(zone_row, "设置阵地", set_zone).pack(side="left", padx=2)
+
 
 def on_message(_client, _userdata, message) -> None:
     if message.topic == T_GAME_STATUS:
@@ -173,6 +202,13 @@ def on_message(_client, _userdata, message) -> None:
         state["stage"] = status_msg.current_stage
         state["remain"] = status_msg.stage_countdown_sec
         state["elapsed"] = status_msg.stage_elapsed_sec
+        state["zones"] = [status_msg.red_outpost_zone, status_msg.blue_outpost_zone,
+                          status_msg.red_base_zone, status_msg.blue_base_zone]
+        state["control"] = (status_msg.red_control_points, status_msg.blue_control_points)
+        state["reinforce"] = (status_msg.red_reinforce_chances,
+                              status_msg.blue_reinforce_chances)
+        state["base"] = (status_msg.red_base_hp, status_msg.red_base_max_hp,
+                         status_msg.blue_base_hp, status_msg.blue_base_max_hp)
     elif message.topic == T_SIM_AUTO_HP:
         auto_hp.set(message.payload == b"1")
     elif message.topic == T_ROBOT_HEALTH_SET:
@@ -217,7 +253,16 @@ def tick() -> None:
     hp = state["hp"].get(robot_id)
     hp_text = f"{selected.get()} 血量 {hp[0]} / {hp[1]}" if hp else f"{selected.get()} 血量未知"
     hp_text += f" · 随机掉血 {'开' if auto_hp.get() else '关'}"
-    status.config(text=f"{head}\n{hp_text}\n最近操作: {state['action']}")
+    red_base, red_max, blue_base, blue_max = state["base"]
+    zone_text = "阵地 " + " ".join(
+        f"{short}:{ZONE_STATES[value]}"
+        for short, value in zip(ZONE_SHORT, state["zones"]))
+    global_text = (f"控制 红{state['control'][0]} 蓝{state['control'][1]}"
+                   f" · 加固 红{state['reinforce'][0]} 蓝{state['reinforce'][1]}"
+                   f" · 后勤 红{logistics(red_base, red_max)}"
+                   f" 蓝{logistics(blue_base, blue_max)}")
+    status.config(text=f"{head}\n{hp_text}\n{zone_text}\n{global_text}\n"
+                       f"最近操作: {state['action']}")
     root.after(250, tick)
 
 

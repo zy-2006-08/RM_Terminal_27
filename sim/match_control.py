@@ -8,6 +8,7 @@
     .venv/bin/python sim/match_control.py speed 3 # 3 倍速
     .venv/bin/python sim/match_control.py hp 101 300   # 蓝 1 号重装血量改为 300
     .venv/bin/python sim/match_control.py auto 0       # 关掉随机掉血,便于手动摆状态
+    .venv/bin/python sim/match_control.py zone 2 2     # 红基地设为红方完全控制(状态 0-4)
 
 配合 RM_HOLD=1 启动 match_server.py:那样服务器起来后停在准备阶段等指令,
 不发 start 就一直不开赛。不带 RM_HOLD 则维持既有的启动即开赛行为。
@@ -27,7 +28,8 @@ import paho.mqtt.client as mqtt
 import rm_terminal_pb2 as pb
 from sim.constants import MQTT_PORT, SERVER_HOST, T_COMMON_COMMAND
 from sim.match_server import (
-    CTRL_AUTO_HP, CTRL_BEGIN, CTRL_HOLD, CTRL_RESET, CTRL_SEEK, CTRL_SET_HP, CTRL_SPEED,
+    CTRL_AUTO_HP, CTRL_BEGIN, CTRL_HOLD, CTRL_RESET, CTRL_SEEK, CTRL_SET_HP,
+    CTRL_SET_ZONE, CTRL_SPEED,
 )
 
 _ACTIONS = {
@@ -38,6 +40,7 @@ _ACTIONS = {
     "speed": (CTRL_SPEED, "设置倍速"),
     "hp": (CTRL_SET_HP, "设置机器人血量"),
     "auto": (CTRL_AUTO_HP, "随机掉血开关"),
+    "zone": (CTRL_SET_ZONE, "设置阵地状态"),
 }
 _NEEDS_VALUE = {"seek": 1.0, "speed": 10.0}
 
@@ -71,6 +74,13 @@ def main() -> int:
         except IndexError:
             print("auto 需要 0 或 1", file=sys.stderr)
             return 2
+    elif action == "zone":
+        try:
+            zone, state = int(args[1]), int(args[2])
+        except (IndexError, ValueError):
+            print("zone 需要阵地 0-3 和状态 0-4,例如: zone 2 2", file=sys.stderr)
+            return 2
+        param = zone * 10 + state
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="sim-control")
     try:

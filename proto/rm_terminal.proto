@@ -54,6 +54,20 @@ message GameStatus {
   optional uint32 blue_kills         = 29;
   optional uint32 red_energy_activations  = 30;
   optional uint32 blue_energy_activations = 31;
+  // 2027 规则：4 个阵地（前哨/基地 × 红/蓝）各自的控制状态。
+  // 0未控 1红方临时 2红方完全 3蓝方临时 4蓝方完全。
+  // 临时/完全是占领进度，所以不能退化成 0/1/2 的阵营编码。
+  // RM2027 正式协议未发布，字段编号为本地模拟词汇，不得视为正式合同。
+  optional uint32 red_outpost_zone   = 32;
+  optional uint32 blue_outpost_zone  = 33;
+  optional uint32 red_base_zone      = 34;
+  optional uint32 blue_base_zone     = 35;
+  // 控制度累计值。完全控制前哨 +1/秒、完全控制基地 +3/秒，服务器按秒累加。
+  optional uint32 red_control_points  = 36;
+  optional uint32 blue_control_points = 37;
+  // 加固机会，每满一分钟双方各 +1，可累积。
+  optional uint32 red_reinforce_chances  = 38;
+  optional uint32 blue_reinforce_chances = 39;
 }
 
 // ---------------------------------------------------------------

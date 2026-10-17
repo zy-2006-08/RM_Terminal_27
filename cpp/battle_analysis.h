@@ -3,6 +3,7 @@
 #include "domain.h"
 
 #include <QString>
+#include <array>
 #include <optional>
 #include <vector>
 
@@ -38,5 +39,27 @@ std::optional<std::int64_t> metric_diff(const AnalysisMetric& metric);
 MetricStance metric_stance(const AnalysisMetric& metric);
 QString metric_value_text(std::optional<std::int64_t> value);
 QString metric_stance_text(MetricStance stance);
+
+// 2027 规则：4 个阵地（前哨/基地 × 红/蓝）各自的占领进度。
+// Unknown 是「没收到这一帧」，与真实的未控（协议明确给了 0）必须分开。
+enum class ZoneControl { Unknown, Neutral, RedTemporary, RedFull, BlueTemporary, BlueFull };
+
+struct ZoneStatus {
+    QString name;
+    ZoneControl control = ZoneControl::Unknown;
+};
+
+// 全局区：双方控制度、加固机会与后勤系数。控制度和加固由服务器累计下发，
+// 后勤系数由基地剩余血量占比推出（λ = 1 - 已损失/最大血量）。
+struct ZoneBoard {
+    std::array<ZoneStatus, 4> zones{};
+    std::optional<std::uint32_t> red_control_points, blue_control_points;
+    std::optional<std::uint32_t> red_reinforce, blue_reinforce;
+    std::optional<double> red_logistics, blue_logistics;
+};
+
+ZoneBoard zone_board(const Snapshot& snapshot);
+QString zone_control_text(ZoneControl control);
+QString zone_global_text(const ZoneBoard& board);
 
 }

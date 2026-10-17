@@ -17,12 +17,16 @@ constexpr int kBannerHeight = 34;
 constexpr int kBannerGap = 6;
 constexpr int kCardGap = 6;
 constexpr int kCardHeight = 62;
+// 阵地区两行(四阵地 + 全局区)。挤进横幅会把堡垒归属压成一行,单独一条更清楚。
+constexpr int kZoneGap = 4;
+constexpr int kZoneHeight = 28;
 constexpr int kMetricCount = 4;
 constexpr int kIconSize = 11;
 constexpr int kIconGap = 4;
 // 最小高度按内容反推,和 self_status_pane 同样的理由:写死高度会让面板把窗口最小
 // 高度顶到 720 以上,dashboard_layout 的 720p 断言就是守这个。改布局只改这里。
-constexpr int kContentHeight = kBannerHeight + kBannerGap + kCardHeight;
+constexpr int kContentHeight =
+    kBannerHeight + kBannerGap + kCardHeight + kZoneGap + kZoneHeight;
 // 全屏下这一格分到的高度远超 kContentHeight,按定高绘制会在卡片下方留一大片空白。
 // 按实际高度等比放大,并封顶 1.8 倍 —— 再大字号就会盖过顶栏比分的视觉层级。
 constexpr qreal kMaxScale = 1.8;
@@ -40,6 +44,18 @@ QColor stance_colour(MetricStance stance) {
         case MetricStance::Behind: return theme::kDanger;
         case MetricStance::Even: return theme::kTextSecondary;
         case MetricStance::Unknown: break;
+    }
+    return theme::kTextMuted;
+}
+
+QColor zone_colour(ZoneControl control) {
+    switch (control) {
+        case ZoneControl::RedTemporary: return theme::kRedDim;
+        case ZoneControl::RedFull: return theme::kRed;
+        case ZoneControl::BlueTemporary: return theme::kBlueDim;
+        case ZoneControl::BlueFull: return theme::kBlue;
+        case ZoneControl::Neutral: return theme::kTextSecondary;
+        case ZoneControl::Unknown: break;
     }
     return theme::kTextMuted;
 }
@@ -137,6 +153,11 @@ void BattleAnalysisPane::setFortressHold(FortressHold hold) {
     update();
 }
 
+void BattleAnalysisPane::setZoneBoard(const ZoneBoard& board) {
+    board_ = board;
+    update();
+}
+
 QSize BattleAnalysisPane::sizeHint() const { return QSize(460, kContentHeight); }
 
 void BattleAnalysisPane::paintEvent(QPaintEvent*) {
@@ -223,6 +244,25 @@ void BattleAnalysisPane::paintEvent(QPaintEvent*) {
                       metric, stance);
         ++index;
     }
+
+    // 阵地区:第一行四个阵地按归属上色,第二行服务器累计的全局值。
+    const int zone_top = top + card_h + scaled(kZoneGap, scale);
+    const int line_h = scaled(kZoneHeight, scale) / 2;
+    painter.setFont(theme::labelFont(scaled(9, scale)));
+
+    int x = 0;
+    for (const ZoneStatus& zone : board_.zones) {
+        const QString text = QStringLiteral("%1 %2").arg(zone.name, zone_control_text(zone.control));
+        const int text_w = painter.fontMetrics().horizontalAdvance(text);
+        painter.setPen(zone_colour(zone.control));
+        painter.drawText(QRect(x, zone_top, text_w, line_h),
+                         Qt::AlignLeft | Qt::AlignVCenter, text);
+        x += text_w + scaled(10, scale);
+    }
+
+    painter.setPen(theme::kTextMuted);
+    painter.drawText(QRect(0, zone_top + line_h, w, line_h),
+                     Qt::AlignLeft | Qt::AlignVCenter, zone_global_text(board_));
 }
 
 }  // namespace rm_terminal

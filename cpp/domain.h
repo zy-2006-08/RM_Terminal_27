@@ -38,6 +38,9 @@ template<template<class> class F> struct GameFields {
     F<std::uint32_t> red_fortress_sec, blue_fortress_sec, fortress_holder;
     F<std::uint32_t> red_kills, blue_kills;
     F<std::uint32_t> red_energy_activations, blue_energy_activations;
+    F<std::uint32_t> red_outpost_zone, blue_outpost_zone, red_base_zone, blue_base_zone;
+    F<std::uint32_t> red_control_points, blue_control_points;
+    F<std::uint32_t> red_reinforce_chances, blue_reinforce_chances;
     auto fields() { return std::tie(current_round, total_rounds, red_score, blue_score,
         current_stage, stage_countdown_sec, stage_elapsed_sec, is_paused, winner, end_reason,
         red_base_hp, red_base_max_hp, blue_base_hp, blue_base_max_hp,
@@ -45,7 +48,10 @@ template<template<class> class F> struct GameFields {
         red_team_name, blue_team_name,
         red_economy, blue_economy, red_total_damage, blue_total_damage,
         red_fortress_sec, blue_fortress_sec, fortress_holder,
-        red_kills, blue_kills, red_energy_activations, blue_energy_activations); }
+        red_kills, blue_kills, red_energy_activations, blue_energy_activations,
+        red_outpost_zone, blue_outpost_zone, red_base_zone, blue_base_zone,
+        red_control_points, blue_control_points,
+        red_reinforce_chances, blue_reinforce_chances); }
 };
 template<template<class> class F> struct DynamicFields {
     F<std::uint32_t> current_hp, max_hp, shooter_heat_17mm, shooter_heat_limit;
