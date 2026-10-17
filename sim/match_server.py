@@ -67,12 +67,16 @@ CTRL_HOLD = 0x11
 CTRL_RESET = 0x12
 CTRL_SEEK = 0x13    # param = 目标赛程秒数
 CTRL_SPEED = 0x14   # param = 倍速 x10(20 表示 2.0 倍)
+CTRL_SET_HP = 0x15  # param = 机器人ID x1000 + 血量
+CTRL_AUTO_HP = 0x16 # param = 0 关闭随机掉血,1 开启
 _CTRL_NAMES = {
     CTRL_BEGIN: "开赛",
     CTRL_HOLD: "暂停",
     CTRL_RESET: "复位到准备阶段",
     CTRL_SEEK: "跳转赛程",
     CTRL_SPEED: "设置倍速",
+    CTRL_SET_HP: "设置机器人血量",
+    CTRL_AUTO_HP: "随机掉血开关",
 }
 
 # 编造的致盲时刻表（本地模拟，非 2027 协议）。元组为 (比赛内起始秒, 持续秒)，
@@ -148,6 +152,7 @@ class SimulatedMatch:
     def __init__(self) -> None:
         self.t0 = time.monotonic()
         self.speed = 1.0
+        self.auto_hp = True
         # 待命档:为真时 elapsed 冻结在 hold_at,由操作手决定何时开赛。
         # 冻结点必须是 0.0:stage() 里 e<4 才是倒计时,停在别的值会静默进入比赛。
         self.holding = _HOLD_AT_START
@@ -247,6 +252,16 @@ class SimulatedMatch:
         self.hold_at = self.elapsed
         self.t0 = time.monotonic()
         self.speed = max(0.1, speed)
+
+    def set_hp(self, robot_id: int, hp: int) -> bool:
+        """手动改血量。返回 False 表示没有这台机器人。"""
+        if robot_id == SELF_ROBOT_ID:
+            self.hp = max(0, min(self.max_hp, hp))
+            return True
+        if robot_id not in self.other_hp:
+            return False
+        self.other_hp[robot_id] = max(0, min(self.other_max_hp[robot_id], hp))
+        return True
 
     def stage(self) -> tuple[int, int]:
         """倒计时 4s -> 比赛 420s -> 结算 15s，循环往复便于长时间演示。
@@ -359,6 +374,8 @@ class SimulatedMatch:
         每 tick 1% 概率给 red_score += 1 的累计计数，跑几分钟就攒到几百，和真实
         赛制的 0-3 局分完全不是一个量级。
         """
+        if not self.auto_hp:
+            return
         for robot_id, hp in self.other_hp.items():
             if hp == 0:
                 if self.rng.random() < 0.04:
@@ -575,6 +592,15 @@ def main() -> int:
         elif cmd == CTRL_SPEED:
             match.set_speed(max(1, param) / 10.0)
             print(f"[server] 倍速设为 {match.speed:.1f}x")
+        elif cmd == CTRL_SET_HP:
+            robot_id, hp = divmod(param, 1000)
+            if match.set_hp(robot_id, hp):
+                print(f"[server] {_robot_name(robot_id)} 血量设为 {hp}")
+            else:
+                print(f"[server] 未知机器人 ID {robot_id},血量未改", file=sys.stderr)
+        elif cmd == CTRL_AUTO_HP:
+            match.auto_hp = bool(param)
+            print(f"[server] 随机掉血{'开启' if match.auto_hp else '关闭'}")
 
     match.apply_control = apply_control
 

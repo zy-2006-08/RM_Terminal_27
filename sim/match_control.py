@@ -6,6 +6,8 @@
     .venv/bin/python sim/match_control.py reset   # 复位回准备阶段
     .venv/bin/python sim/match_control.py seek 60 # 跳到赛程第 60 秒
     .venv/bin/python sim/match_control.py speed 3 # 3 倍速
+    .venv/bin/python sim/match_control.py hp 101 300   # 蓝 1 号重装血量改为 300
+    .venv/bin/python sim/match_control.py auto 0       # 关掉随机掉血,便于手动摆状态
 
 配合 RM_HOLD=1 启动 match_server.py:那样服务器起来后停在准备阶段等指令,
 不发 start 就一直不开赛。不带 RM_HOLD 则维持既有的启动即开赛行为。
@@ -24,7 +26,9 @@ import paho.mqtt.client as mqtt
 
 import rm_terminal_pb2 as pb
 from sim.constants import MQTT_PORT, SERVER_HOST, T_COMMON_COMMAND
-from sim.match_server import CTRL_BEGIN, CTRL_HOLD, CTRL_RESET, CTRL_SEEK, CTRL_SPEED
+from sim.match_server import (
+    CTRL_AUTO_HP, CTRL_BEGIN, CTRL_HOLD, CTRL_RESET, CTRL_SEEK, CTRL_SET_HP, CTRL_SPEED,
+)
 
 _ACTIONS = {
     "start": (CTRL_BEGIN, "开赛"),
@@ -32,6 +36,8 @@ _ACTIONS = {
     "reset": (CTRL_RESET, "复位到准备阶段"),
     "seek": (CTRL_SEEK, "跳转赛程"),
     "speed": (CTRL_SPEED, "设置倍速"),
+    "hp": (CTRL_SET_HP, "设置机器人血量"),
+    "auto": (CTRL_AUTO_HP, "随机掉血开关"),
 }
 _NEEDS_VALUE = {"seek": 1.0, "speed": 10.0}
 
@@ -52,6 +58,19 @@ def main() -> int:
         except (IndexError, ValueError):
             print(f"{action} 需要一个数值参数,例如: {action} 2", file=sys.stderr)
             return 2
+    elif action == "hp":
+        try:
+            robot_id, hp = int(args[1]), int(args[2])
+        except (IndexError, ValueError):
+            print("hp 需要机器人 ID 和血量,例如: hp 101 300", file=sys.stderr)
+            return 2
+        param = robot_id * 1000 + hp
+    elif action == "auto":
+        try:
+            param = 1 if args[1] in ("1", "on") else 0
+        except IndexError:
+            print("auto 需要 0 或 1", file=sys.stderr)
+            return 2
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="sim-control")
     try:
@@ -69,7 +88,7 @@ def main() -> int:
     info.wait_for_publish(timeout=5)
     client.loop_stop()
     client.disconnect()
-    print(f"已发送: {label} {args[1]}" if action in _NEEDS_VALUE else f"已发送: {label}")
+    print(f"已发送: {label} {' '.join(args[1:])}".strip())
     return 0
 
 

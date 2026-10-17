@@ -25,3 +25,10 @@ assert m.elapsed == frozen
 m.seek(6)
 assert m.stage() == (4, 418), m.stage()
 print("clock ok")
+
+m.set_hp(101, 123)
+assert m.other_hp[101] == 123
+m.set_hp(3, 9999)
+assert m.hp == m.max_hp
+assert m.set_hp(999, 100) is False
+print("hp ok")
