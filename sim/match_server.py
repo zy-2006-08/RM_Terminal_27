@@ -44,6 +44,7 @@ from sim.constants import (
     T_CUSTOM_CONTROL,
     T_EVENT,
     T_GAME_STATUS,
+    T_SIM_AUTO_HP,
     T_ROBOT_DYNAMIC,
     T_ROBOT_MODULE,
     T_ROBOT_POSITION,
@@ -107,6 +108,8 @@ _OUTPOST_MAX_HP = 1500
 # 结算动画要等满一局才看得到,演示/验收时用 RM_MATCH_SEC 缩短比赛。
 _MATCH_SEC = int(os.environ.get("RM_MATCH_SEC", "420"))
 _SETTLEMENT_SEC = int(os.environ.get("RM_SETTLEMENT_SEC", "15"))
+# 开赛前的准备倒计时。它的秒数不属于比赛时间,stage() 从这里切开。
+_COUNTDOWN_SEC = 4
 # 启动即开赛是默认行为:既有的 verify_mode_regression.sh 依赖它,时刻表以进程启动
 # 为基准。RM_HOLD=1 才进待命档,由操作手自己决定开赛时刻。
 _HOLD_AT_START = os.environ.get("RM_HOLD", "0") == "1"
@@ -226,6 +229,9 @@ class SimulatedMatch:
         """
         if not self.holding:
             return
+        # 准备阶段那 4 秒倒计时不是比赛时间:复位后按「开赛」应当直接进比赛,
+        # 否则操作手还要空等一次倒计时。
+        self.hold_at = max(self.hold_at, float(_COUNTDOWN_SEC))
         self.t0 = time.monotonic()
         self.holding = False
 
@@ -270,9 +276,9 @@ class SimulatedMatch:
         少了这一段就永远验证不到胜负画面。
         """
         e = self.elapsed
-        if e < 4:
-            return 3, int(4 - e)
-        cycle = (e - 4) % (_MATCH_SEC + _SETTLEMENT_SEC)
+        if e < _COUNTDOWN_SEC:
+            return 3, int(_COUNTDOWN_SEC - e)
+        cycle = (e - _COUNTDOWN_SEC) % (_MATCH_SEC + _SETTLEMENT_SEC)
         if cycle < _MATCH_SEC:
             return 4, int(_MATCH_SEC - cycle)
         return 5, int(_MATCH_SEC + _SETTLEMENT_SEC - cycle)
@@ -472,7 +478,7 @@ class SimulatedMatch:
             return None
         # 周期必须与 stage() 完全一致。写死 420 会与含结算段的真实周期错开,
         # 致盲时刻表随之漂移,表现为 UI 模式在一局内多切一次。
-        return (self.elapsed - 4) % (_MATCH_SEC + _SETTLEMENT_SEC)
+        return (self.elapsed - _COUNTDOWN_SEC) % (_MATCH_SEC + _SETTLEMENT_SEC)
 
     def tick_blind(self) -> None:
         """按 _BLIND_SCHEDULE 推进编造的致盲状态（本地模拟，非 2027 协议）。
@@ -685,6 +691,7 @@ def main() -> int:
             red_energy_activations=match.red_energy_activations,
             blue_energy_activations=match.blue_energy_activations,
         ))
+        client.publish(T_SIM_AUTO_HP, b"1" if match.auto_hp else b"0", retain=True)
 
     def send_health_set() -> None:
         m = pb.RobotHealthSet()

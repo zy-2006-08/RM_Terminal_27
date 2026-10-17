@@ -8,6 +8,9 @@ LOG=/tmp/rm_accept_server.log
 cleanup() {
   pkill -f 'sim.match_server' 2>/dev/null || true
   pkill -f 'mosquitto -p 3333' 2>/dev/null || true
+  # 控制面板会自己重连到任意 3333 broker,留在后台会往验收环境里发指令(曾把
+  # 断言里的 123 血覆盖成 200),所以和服务器一起清掉。
+  pkill -f 'sim/control_panel.py' 2>/dev/null || true
 }
 trap cleanup EXIT
 cleanup

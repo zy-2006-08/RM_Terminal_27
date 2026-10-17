@@ -41,6 +41,8 @@ T_TELEMETRY = "RobotTelemetry"        # 机器人 -> 终端（对应 0x0310）
 T_BLIND_STATUS = "BlindStatus"
 T_ROBOT_POSITION_SET = "RobotPositionSet"
 T_ROBOT_HEALTH_SET = "RobotHealthSet"
+# 仅模拟器使用:服务器把随机掉血开关回显出来,控制面板的勾选状态才不会和服务器分叉。
+T_SIM_AUTO_HP = "sim/AutoHP"
 
 # 终端 -> 机器人 / 服务器。原生终端是只读的，永不发布这两个 topic；
 # 模拟器订阅它们只为断言「终端确实没有发出任何控制指令」。

@@ -295,6 +295,10 @@ int main(int argc, char* argv[]) {
     const rm_terminal::MonotonicMs startup_now = rm_terminal::monotonic_now();
     dashboard.update(store.snapshot(startup_now), &video, startup_now);
     dashboard.show();
+    // 从 Terminal / Finder 脚本拉起时进程没有前台权限，窗口会藏在别的窗口后面，
+    // 看起来像「双击没反应」。raise + activateWindow 把它顶到最前。
+    dashboard.raise();
+    dashboard.activateWindow();
 
     rm_terminal::StaleReporter reporter;
     QTimer freshness_timer;
