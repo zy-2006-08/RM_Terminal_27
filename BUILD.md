@@ -312,31 +312,47 @@ Debug and Release verification artifacts:
 - `artifacts/task-2/domain-verification.log` — Debug/Release build, CTest,
   smoke, direct domain checks, malformed argument matrix, and cleanup receipt
 
-## Ubuntu (unverified on the macOS QA host)
+## Ubuntu
 
 ```sh
-sudo apt-get install build-essential cmake qt6-base-dev
-cmake -S . -B build/ubuntu
-cmake --build build/ubuntu
+sudo apt-get install build-essential cmake \
+  qt6-base-dev qt6-declarative-dev qt6-svg-dev \
+  qml6-module-qtquick qml6-module-qtquick-layouts \
+  libprotobuf-dev protobuf-compiler libabsl-dev \
+  libmosquitto-dev mosquitto ffmpeg \
+  python3-venv python3-tk fonts-noto-cjk
+cmake -S . -B build/ubuntu -DCMAKE_BUILD_TYPE=Release
+cmake --build build/ubuntu --parallel
 ctest --test-dir build/ubuntu --output-on-failure
 build/ubuntu/rm_terminal --safe-smoke
 ```
 
-The Ubuntu commands above are the deployment-candidate path only; Ubuntu
-execution is unverified in this environment. The smoke mode creates a
-`QCoreApplication`, reports the startup state, and exits without opening
-a window or network transport.
+`qt6-base-dev` alone is not enough: `CMakeLists.txt` needs Qml/Quick/QuickWidgets
+(`qt6-declarative-dev`), and the QML under `qml/` imports `QtQuick` and
+`QtQuick.Layouts` at runtime, which come from the two `qml6-module-*` packages. `ffmpeg` decodes the video
+feed, `python3-tk` is needed by `sim/control_panel.py`, and `fonts-noto-cjk`
+supplies the Chinese glyphs.
+
+`run.sh`, `启动.command`, `回放录像.command` and `scripts/verify_mode_regression.sh`
+pick `build/ubuntu` on Linux and `build/macos` on macOS, so no `BUILD_DIR` is
+needed. The `.command` files are plain bash; on Linux run them with
+`bash 启动.command`. Recordings live in `~/.local/share/rm_terminal/recordings`
+and `回放录像.command` lists them by number instead of the macOS file picker.
+
+Linux has no speech backend (`RM_TERMINAL_HAS_SPEECH` is macOS only), so the
+`reminder_audio` test is not registered there and tactical reminders are silent.
 
 ## 平台验证状态 (platform verification status)
 
 | Platform | Build | CTest | Dynamic run (simulator, dual mode, video) |
 | --- | --- | --- | --- |
 | macOS (arm64, Homebrew Qt6) | verified | verified, Debug and Release | verified |
-| Ubuntu | **DEFERRED** | **DEFERRED** | **DEFERRED** |
+| Ubuntu 26.04 (x86_64, Qt 6.10.2, Wayland) | verified, Release | verified, 25/25 + `mode_regression_e2e` | verified |
 
-Ubuntu verification is DEFERRED: no Ubuntu host, container, or cross-toolchain is
-available on the QA machine, so nothing in this repository demonstrates an Ubuntu
-build, test run, or dynamic run. The Ubuntu commands are a deployment candidate to
-be executed later, and no statement here may be read as an Ubuntu pass. Every
-timing number, screenshot, and receipt in `artifacts/` and `.omo/evidence/` was
-produced on macOS.
+Ubuntu was verified on 2026-10-23 at commit `d1730fe`: Release build, the 25-test
+default CTest suite, `--safe-smoke`, `python -m unittest` over `sim/`,
+`scripts/verify_mode_regression.sh` (PASS, video entered at +33.09s, held 15.00s),
+`bash 启动.command` with the control panel against a live simulator, offscreen
+`--screenshot` in both modes with decoded video, and `--replay` of a recording.
+The Debug build is not yet verified on Ubuntu. The timing numbers, screenshots,
+and receipts in `artifacts/` and `.omo/evidence/` were produced on macOS.

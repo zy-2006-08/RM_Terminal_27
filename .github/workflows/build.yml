@@ -7,9 +7,39 @@ on:
   workflow_dispatch:
 
 jobs:
-  # macOS only. BUILD.md marks macOS as the sole verified platform and Ubuntu as
-  # DEFERRED with no host to validate it; adding an unverified ubuntu job here
-  # would manufacture a green check for a build nobody has ever run.
+  # Pinned to 26.04 rather than ubuntu-latest: that is the release BUILD.md records
+  # as verified (Qt 6.10.2), and ubuntu-latest moves under us during its migration.
+  ubuntu:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # qml6-module-* provide the QtQuick imports that dashboard_layout and
+      # roster_runtime load at runtime. No ffmpeg, same reason as the macOS job.
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake \
+            qt6-base-dev qt6-declarative-dev qt6-svg-dev \
+            qml6-module-qtquick qml6-module-qtquick-layouts \
+            libprotobuf-dev protobuf-compiler libabsl-dev \
+            libmosquitto-dev fonts-noto-cjk
+
+      - name: Configure
+        run: cmake -S . -B build/ci -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build/ci --parallel
+
+      - name: Test
+        run: ctest --test-dir build/ci --output-on-failure
+
+      - name: Smoke
+        run: build/ci/rm_terminal --safe-smoke
+
   macos:
     runs-on: macos-15
     timeout-minutes: 30

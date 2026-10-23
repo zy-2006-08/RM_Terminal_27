@@ -15,7 +15,11 @@ set -u -o pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-BINARY="${RM_TERMINAL_BINARY:-$REPO_ROOT/build/macos/rm_terminal}"
+case "$(uname -s)" in
+    Darwin) BUILD_DIR=build/macos ;;
+    *)      BUILD_DIR=build/ubuntu ;;
+esac
+BINARY="${RM_TERMINAL_BINARY:-$REPO_ROOT/$BUILD_DIR/rm_terminal}"
 VENV_PY="${RM_TERMINAL_PYTHON:-$REPO_ROOT/.venv/bin/python}"
 BROKER_PORT=3333
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/rm-mode-regression.XXXXXX")"
@@ -40,7 +44,7 @@ trap cleanup EXIT INT TERM
 fail() { printf 'FAIL %s\n' "$*" >&2; exit 1; }
 
 [ -x "$BINARY" ] || fail "terminal binary not found or not executable: $BINARY
-  build it first: cmake --build build/macos --target rm_terminal
+  build it first: cmake --build $BUILD_DIR --target rm_terminal
   (rm_terminal is the executable; terminal_dashboard is a static library)"
 [ -x "$VENV_PY" ] || fail "simulator python not found: $VENV_PY
   create it first: python3 -m venv .venv && .venv/bin/pip install protobuf paho-mqtt"

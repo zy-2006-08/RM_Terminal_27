@@ -14,7 +14,11 @@ if [ ! -x "${PY[0]}" ]; then
   echo "[run]   python3 -m venv .venv && .venv/bin/pip install protobuf paho-mqtt"
   exit 1
 fi
-BUILD_DIR="${BUILD_DIR:-build/macos}"
+case "$(uname -s)" in
+  Darwin) DEFAULT_BUILD_DIR=build/macos ;;
+  *)      DEFAULT_BUILD_DIR=build/ubuntu ;;
+esac
+BUILD_DIR="${BUILD_DIR:-$DEFAULT_BUILD_DIR}"
 TERMINAL_BIN="$BUILD_DIR/rm_terminal"
 LOSS="${1:-0}"
 LOGS=/tmp/rm_terminal_logs
