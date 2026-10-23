@@ -353,6 +353,11 @@ Ubuntu was verified on 2026-10-23 at commit `d1730fe`: Release build, the 25-tes
 default CTest suite, `--safe-smoke`, `python -m unittest` over `sim/`,
 `scripts/verify_mode_regression.sh` (PASS, video entered at +33.09s, held 15.00s),
 `bash 启动.command` with the control panel against a live simulator, offscreen
-`--screenshot` in both modes with decoded video, and `--replay` of a recording.
+`--screenshot` in both modes with decoded video, and `--replay` of recordings
+ended both by closing the window and by Ctrl-C.
+
+A recording cut off mid-record (crash, `kill -9`, power loss) still replays: the
+player stops at the last complete record and the status bar says
+`录像结尾不完整`.
 The Debug build is not yet verified on Ubuntu. The timing numbers, screenshots,
 and receipts in `artifacts/` and `.omo/evidence/` were produced on macOS.

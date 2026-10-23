@@ -67,6 +67,7 @@ private:
     bool active_ = false;
     bool finished_ = false;
     bool paused_ = false;
+    bool truncated_tail_ = false;
 };
 
 }  // namespace rm_terminal

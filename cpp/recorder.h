@@ -82,6 +82,8 @@ public:
     // 读到文件尾返回 false 且 atEnd()==true;读到截断/非法记录返回 false 且 error() 非空。
     bool next(RecordingRecord* out, QString* error = nullptr);
     bool atEnd() const { return eof_; }
+    // 错误是"最后一条只写了一半"(进程被杀时的正常结局),而不是内容损坏。
+    bool truncatedTail() const { return truncated_tail_; }
     const QJsonObject& metadata() const { return metadata_; }
     const QString& error() const { return error_; }
 
@@ -90,6 +92,7 @@ private:
     QJsonObject metadata_;
     QString error_;
     bool eof_ = false;
+    bool truncated_tail_ = false;
 };
 
 }  // namespace rm_terminal

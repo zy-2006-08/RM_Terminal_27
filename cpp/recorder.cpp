@@ -260,6 +260,7 @@ bool RecordingReader::open(const QString& path, QString* error) {
     metadata_ = QJsonObject();
     error_.clear();
     eof_ = false;
+    truncated_tail_ = false;
     file_.setFileName(path);
     if (!file_.open(QIODevice::ReadOnly)) {
         error_ = QStringLiteral("cannot open recording: %1").arg(file_.errorString());
@@ -325,6 +326,7 @@ bool RecordingReader::next(RecordingRecord* out, QString* error) {
     }
     if (got != static_cast<qint64>(sizeof(header))) {
         eof_ = true;
+        truncated_tail_ = true;
         error_ = QStringLiteral("truncated record header");
         if (error) *error = error_;
         return false;
@@ -344,6 +346,7 @@ bool RecordingReader::next(RecordingRecord* out, QString* error) {
     QByteArray topic(static_cast<qsizetype>(topic_size), Qt::Uninitialized);
     if (topic_size > 0 && !read_exact(file_, topic.data(), topic_size)) {
         eof_ = true;
+        truncated_tail_ = true;
         error_ = QStringLiteral("truncated topic");
         if (error) *error = error_;
         return false;
@@ -351,6 +354,7 @@ bool RecordingReader::next(RecordingRecord* out, QString* error) {
     QByteArray payload(static_cast<qsizetype>(payload_size), Qt::Uninitialized);
     if (payload_size > 0 && !read_exact(file_, payload.data(), payload_size)) {
         eof_ = true;
+        truncated_tail_ = true;
         error_ = QStringLiteral("truncated payload");
         if (error) *error = error_;
         return false;

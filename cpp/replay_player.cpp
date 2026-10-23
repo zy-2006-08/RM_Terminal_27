@@ -61,7 +61,9 @@ bool ReplayPlayer::start(const QString& path, QString* error) {
     }
     RecordingRecord record;
     while (scan.next(&record)) duration_us_ = static_cast<qint64>(record.time_us);
-    if (!scan.error().isEmpty()) {
+    // 终端被 kill 时最后一条只写了一半;播到最后一条完整记录即可,不能整份拒绝。
+    truncated_tail_ = scan.truncatedTail();
+    if (!scan.error().isEmpty() && !truncated_tail_) {
         if (error) *error = scan.error();
         return false;
     }
@@ -96,6 +98,7 @@ bool ReplayPlayer::readNext() {
     }
 
     pending_.reset();
+    if (reader_.truncatedTail()) error_.clear();
     if (error_.isEmpty() && reader_.atEnd()) {
         finished_ = true;
         active_ = false;
@@ -247,7 +250,10 @@ QString ReplayPlayer::statusText() const {
     if (!error_.isEmpty()) return QStringLiteral("回放失败：%1").arg(error_);
     if (!active_ && !finished_) return QString();
     if (finished_) {
-        return QStringLiteral("▶ 回放结束 %1 · %2 条").arg(clock_text(durationMs())).arg(records_);
+        return QStringLiteral("▶ 回放结束 %1 · %2 条%3")
+            .arg(clock_text(durationMs()))
+            .arg(records_)
+            .arg(truncated_tail_ ? QStringLiteral(" · 录像结尾不完整") : QString());
     }
     return QStringLiteral("%1 回放 %2 / %3 · %4x")
         .arg(paused_ ? QStringLiteral("⏸") : QStringLiteral("▶"),

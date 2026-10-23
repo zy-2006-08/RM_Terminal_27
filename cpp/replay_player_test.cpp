@@ -8,6 +8,7 @@
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFile>
 #include <QTemporaryDir>
 #include <QThread>
 
@@ -98,6 +99,25 @@ int main(int argc, char* argv[]) {
 
     player.togglePause();
     check(player.positionMs() < 20, "play after finish restarts from zero");
+    player.stop();
+
+    // 终端被强杀时文件尾会留下半条记录。完整的部分必须照常回放。
+    QFile file(path);
+    check(file.open(QIODevice::Append), "can append a partial record");
+    file.write("12345", 5);
+    file.close();
+
+    rm_terminal::Store cut_store(3000);
+    rm_terminal::ReplayPlayer cut(cut_store, video);
+    check(cut.start(path, &error), "recording with a truncated tail still starts");
+    check(cut.durationMs() == duration, "duration ends at the last complete record");
+    cut.setSpeed(4.0);
+    process_for(500);
+    check(cut.finished(), "truncated recording plays to its end");
+    check(cut_store.snapshot(rm_terminal::monotonic_now()).game.red_score.value == 9,
+          "every complete record before the cut is applied");
+    check(cut.statusText().contains(QStringLiteral("结尾不完整")),
+          "status tells the operator the tail was cut");
 
     std::printf("replay_player_test: all checks passed\n");
     return 0;
