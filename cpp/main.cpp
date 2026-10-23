@@ -10,9 +10,12 @@
 #include <QStringList>
 #include <QTimer>
 #include <memory>
+#include <csignal>
 #include <cstdio>
 #include <optional>
 #include <string>
+
+#include <signal.h>
 
 #include "clock.h"
 #include "config.h"
@@ -63,6 +66,22 @@ bool prepare_runtime(const QString& config_path, rm_terminal::Config* cfg) {
         rm_terminal::StructuredLog::write(level, event, fields);
     });
     return true;
+}
+
+// Ctrl-C/kill 的默认动作是直接终止进程,析构函数不跑,录像最后一条会只写一半。
+// 信号处理函数里只能做异步信号安全的事,所以只记下信号号,由主线程定时器去 quit。
+// SA_RESETHAND:第二次 Ctrl-C 恢复默认动作,卡死时仍能强行结束。
+volatile std::sig_atomic_t g_quit_signal = 0;
+
+extern "C" void remember_quit_signal(int signal_number) { g_quit_signal = signal_number; }
+
+void install_quit_signals() {
+    struct sigaction action {};
+    action.sa_handler = remember_quit_signal;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_RESETHAND;
+    for (const int signal_number : {SIGINT, SIGTERM, SIGHUP})
+        sigaction(signal_number, &action, nullptr);
 }
 
 void log_shutdown(const QString& mode, int code) {
@@ -273,6 +292,18 @@ int main(int argc, char* argv[]) {
     if (!prepare_runtime(config_path, &cfg)) return rm_terminal::kExitConfigError;
     rm_terminal::StructuredLog::write(rm_terminal::LogLevel::info, QStringLiteral("startup"),
                                       startup_fields(QStringLiteral("terminal"), cfg));
+
+    install_quit_signals();
+    QTimer quit_signal_poll;
+    QObject::connect(&quit_signal_poll, &QTimer::timeout, &app, [&app]() {
+        if (g_quit_signal == 0) return;
+        rm_terminal::StructuredLog::write(
+            rm_terminal::LogLevel::info, QStringLiteral("quit_signal"),
+            {QStringLiteral("signal=%1").arg(static_cast<int>(g_quit_signal))});
+        g_quit_signal = 0;
+        app.quit();
+    });
+    quit_signal_poll.start(100);
 
     rm_terminal::Store store(cfg.stale_window_ms);
     rm_terminal::MqttIntake intake(store, cfg.mqtt_host, cfg.mqtt_port,

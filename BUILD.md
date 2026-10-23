@@ -110,7 +110,12 @@ ts=<ISO8601 UTC with ms> level=<level> event=<token> key=value ...
 
 Event tokens: `startup`, `shutdown`, `reconnect_mqtt`, `reconnect_udp`,
 `decode_failure`, `stale_data`, `packet_loss`,
-`ui_mode_switch`.
+`ui_mode_switch`, `quit_signal`.
+
+`quit_signal` records which signal (`2` SIGINT, `15` SIGTERM, `1` SIGHUP) asked the
+terminal to exit. The first such signal quits through the event loop so the
+recording is closed on a record boundary; a second one uses the default action and
+kills the process at once.
 
 `ui_mode_switch` carries `from`, `to`, `reason`, and `blind_freshness`, and is
 written only when the mode actually changes, not on every 250ms refresh tick.
