@@ -38,9 +38,17 @@ void age(Group& group, MonotonicMs now, MonotonicMs threshold) {
 bool valid_source(std::optional<RobotId> source) { return source && source->value > 0; }
 }
 
-Store::Store(MonotonicMs stale_after_ms, std::size_t event_capacity) : threshold_(stale_after_ms) {
+Store::Store(MonotonicMs stale_after_ms, std::size_t event_capacity)
+    : threshold_(stale_after_ms), event_capacity_(event_capacity) {
     if (threshold_ <= 0) throw std::invalid_argument("freshness threshold must be positive");
     state_.events = EventHistory(event_capacity);
+}
+void Store::reset() {
+    Snapshot fresh;
+    state_ = fresh;
+    state_.events = EventHistory(event_capacity_);
+    latest_ = 0;
+    last_event_.reset();
 }
 bool Store::advance(MonotonicMs now) {
     if (now < latest_) return false;

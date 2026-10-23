@@ -219,18 +219,23 @@ void absent_zone_stays_unknown() {
           "unknown zone renders as placeholder, not uncontrolled");
 }
 
-// 后勤系数 = 剩余血量 / 最大血量;最大血量缺失时不可计算,高于上限时封顶 1。
-void logistics_is_remaining_health_share() {
+// 后勤系数 λ = 1 - 基地损失血量 / 20000,满血为 1、基地摧毁时为 0.5。
+void logistics_is_half_at_zero_base() {
     Snapshot snapshot;
-    snapshot.game.red_base_hp = present<std::uint32_t>(15000);
-    snapshot.game.red_base_max_hp = present<std::uint32_t>(20000);
-    snapshot.game.blue_base_hp = present<std::uint32_t>(20000);
-    snapshot.game.blue_base_max_hp = present<std::uint32_t>(20000);
+    snapshot.game.red_base_hp = present<std::uint32_t>(5000);
+    snapshot.game.red_base_max_hp = present<std::uint32_t>(10000);
+    snapshot.game.blue_base_hp = present<std::uint32_t>(10000);
+    snapshot.game.blue_base_max_hp = present<std::uint32_t>(10000);
     ZoneBoard board = zone_board(snapshot);
     check(board.red_logistics && std::abs(*board.red_logistics - 0.75) < 1e-9,
-          "damaged red base yields 0.75 logistics");
+           "half-damaged red base yields 0.75 logistics");
     check(board.blue_logistics && std::abs(*board.blue_logistics - 1.0) < 1e-9,
-          "full blue base yields 1.0 logistics");
+           "full blue base yields 1.0 logistics");
+
+    snapshot.game.red_base_hp = present<std::uint32_t>(0);
+    board = zone_board(snapshot);
+    check(board.red_logistics && std::abs(*board.red_logistics - 0.5) < 1e-9,
+          "destroyed red base yields 0.5 logistics");
 
     const Snapshot empty;
     board = zone_board(empty);
@@ -263,7 +268,7 @@ int main() {
         fortress_hold_distinguishes_neutral_from_missing();
         zone_codes_map_to_four_slots();
         absent_zone_stays_unknown();
-        logistics_is_remaining_health_share();
+        logistics_is_half_at_zero_base();
         global_line_marks_missing_values();
     } catch (const std::exception& error) {
         std::cerr << "FAIL " << error.what() << '\n';

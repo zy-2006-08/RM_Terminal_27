@@ -55,6 +55,7 @@ void missing_file_uses_documented_defaults(const QTemporaryDir& dir) {
     check(cfg.mqtt_host == QLatin1String("127.0.0.1"), "default mqtt_host");
     check(cfg.mqtt_port == 3333, "default mqtt_port");
     check(cfg.udp_port == 3334, "default udp_port");
+    check(cfg.self_robot_id == 3, "default self_robot_id");
     // 2200 rather than 500: RobotPosition publishes at 1Hz, so any window at or
     // below one publish interval marks every position stale on arrival.
     check(cfg.stale_window_ms == 2200, "default stale_window_ms");
@@ -73,6 +74,7 @@ void every_key_is_honoured(const QTemporaryDir& dir) {
                                          "mqtt_host = 10.0.0.5\n"
                                          "mqtt_port=4444\n"
                                          "udp_port=5555\n"
+                                         "self_robot_id=104\n"
                                          "stale_window_ms=700\n"
                                          "log_level=debug\n"
                                          "log_destination=custom.log\n"
@@ -90,6 +92,7 @@ void every_key_is_honoured(const QTemporaryDir& dir) {
     check(cfg.mqtt_host == QLatin1String("10.0.0.5"), "override mqtt_host");
     check(cfg.mqtt_port == 4444, "override mqtt_port");
     check(cfg.udp_port == 5555, "override udp_port");
+    check(cfg.self_robot_id == 104, "override self_robot_id");
     check(cfg.stale_window_ms == 700, "override stale_window_ms");
     check(cfg.log_level == rm_terminal::LogLevel::debug, "override log_level");
     check(cfg.log_destination == QLatin1String("custom.log"), "override log_destination");
@@ -211,7 +214,7 @@ void level_filtering_drops_quiet_records(const QTemporaryDir& dir) {
     rm_terminal::StructuredLog::write(rm_terminal::LogLevel::warning,
                                       QStringLiteral("decode_failure"));
     rm_terminal::StructuredLog::write(rm_terminal::LogLevel::error,
-                                      QStringLiteral("readonly_block"));
+                                      QStringLiteral("replay"));
     rm_terminal::StructuredLog::close();
     // Then: only warning and error survive.
     const QStringList lines = read_lines(path);
@@ -220,7 +223,7 @@ void level_filtering_drops_quiet_records(const QTemporaryDir& dir) {
     check(!joined.contains(QLatin1String("event=stale_data")), "debug filtered out");
     check(!joined.contains(QLatin1String("event=startup")), "info filtered out");
     check(joined.contains(QLatin1String("event=decode_failure")), "warning retained");
-    check(joined.contains(QLatin1String("event=readonly_block")), "error retained");
+    check(joined.contains(QLatin1String("event=replay")), "error retained");
 }
 
 void reopen_appends_and_is_leak_safe(const QTemporaryDir& dir) {
@@ -281,6 +284,13 @@ void sink_reaches_the_log_without_deadlock(const QTemporaryDir& dir) {
           "sink preserves fields");
 }
 
+void self_robot_id_validation() {
+    check(rm_terminal::valid_self_robot_id(3), "valid self_robot_id 3");
+    check(rm_terminal::valid_self_robot_id(107), "valid self_robot_id 107");
+    check(!rm_terminal::valid_self_robot_id(2), "reject self_robot_id 2");
+    check(!rm_terminal::valid_self_robot_id(100), "reject self_robot_id 100");
+}
+
 void log_level_names_round_trip() {
     // Given: every supported level.
     const rm_terminal::LogLevel levels[] = {rm_terminal::LogLevel::debug,
@@ -322,6 +332,7 @@ int main(int argc, char* argv[]) {
     writes_after_close_are_dropped(dir);
     sink_reaches_the_log_without_deadlock(dir);
     log_level_names_round_trip();
+    self_robot_id_validation();
 
     if (failures != 0) {
         fprintf(stderr, "config_test: %d check(s) failed\n", failures);

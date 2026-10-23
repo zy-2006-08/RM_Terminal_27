@@ -61,10 +61,12 @@ void TopBar::apply(const TopBarModel& model) {
     root->setProperty("redOutpostMaxHp",
                       model.red.outpost_max_hp ? *model.red.outpost_max_hp : 0u);
     root->setProperty("redOutpostHasHp", model.red.has_outpost_hp());
+    root->setProperty("redOutpostBlue", model.red.outpost_controlled_by_blue);
     root->setProperty("blueOutpostHp", model.blue.outpost_hp ? *model.blue.outpost_hp : 0u);
     root->setProperty("blueOutpostMaxHp",
                       model.blue.outpost_max_hp ? *model.blue.outpost_max_hp : 0u);
     root->setProperty("blueOutpostHasHp", model.blue.has_outpost_hp());
+    root->setProperty("blueOutpostBlue", model.blue.outpost_controlled_by_blue);
 
     root->setProperty("redTeamName", model.red.team_name);
     root->setProperty("blueTeamName", model.blue.team_name);

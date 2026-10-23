@@ -21,6 +21,7 @@ Item {
     property int maxHp: 0
     property bool hasData: false
     property bool isBlue: false
+    property bool mirrored: isBlue
 
     // 参考端按 92x52 等比缩放全部内部尺寸,改外框时内部自动跟随。
     readonly property real contentScale: Math.min(width / 92, height / 52)
@@ -49,8 +50,8 @@ Item {
         smooth: true
         width: Math.round(50 * root.contentScale)
         height: Math.round(15 * root.contentScale)
-        anchors.left: root.isBlue ? undefined : bg.left
-        anchors.right: root.isBlue ? bg.right : undefined
+        anchors.left: root.mirrored ? undefined : bg.left
+        anchors.right: root.mirrored ? bg.right : undefined
         anchors.leftMargin: Math.round(10 * root.contentScale)
         anchors.rightMargin: Math.round(10 * root.contentScale)
         anchors.top: bg.top
@@ -61,8 +62,8 @@ Item {
     // 已击毁时显示状态词而不是 0:一个孤零零的 0 容易被误读成数据缺失。
     Text {
         id: hpText
-        anchors.left: root.isBlue ? undefined : bg.left
-        anchors.right: root.isBlue ? bg.right : undefined
+        anchors.left: root.mirrored ? undefined : bg.left
+        anchors.right: root.mirrored ? bg.right : undefined
         anchors.leftMargin: Math.round(24 * root.contentScale)
         anchors.rightMargin: Math.round(24 * root.contentScale)
         anchors.bottom: hpBar.top
@@ -72,7 +73,7 @@ Item {
         color: root.hasData ? "#FFFFFF" : Theme.textMuted
         font.pixelSize: Math.round((root.fallen ? 10 : 13) * root.contentScale)
         font.bold: true
-        horizontalAlignment: root.isBlue ? Text.AlignRight : Text.AlignLeft
+        horizontalAlignment: root.mirrored ? Text.AlignRight : Text.AlignLeft
         elide: Text.ElideRight
         style: Text.Outline
         styleColor: "#101214"
@@ -84,8 +85,8 @@ Item {
         smooth: true
         width: Math.round(12 * root.contentScale)
         height: Math.round(14 * root.contentScale)
-        anchors.left: root.isBlue ? undefined : hpText.right
-        anchors.right: root.isBlue ? hpText.left : undefined
+        anchors.left: root.mirrored ? undefined : hpText.right
+        anchors.right: root.mirrored ? hpText.left : undefined
         anchors.leftMargin: Math.round(6 * root.contentScale)
         anchors.rightMargin: Math.round(6 * root.contentScale)
         anchors.verticalCenter: hpText.verticalCenter
@@ -96,8 +97,8 @@ Item {
     Item {
         id: hpBar
         anchors.bottom: bg.bottom
-        anchors.left: root.isBlue ? bg.left : undefined
-        anchors.right: root.isBlue ? undefined : bg.right
+        anchors.left: root.mirrored ? bg.left : undefined
+        anchors.right: root.mirrored ? undefined : bg.right
         anchors.leftMargin: Math.round(3 * root.contentScale)
         anchors.rightMargin: Math.round(3 * root.contentScale)
         width: Math.round(64 * root.contentScale)

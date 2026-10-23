@@ -8,6 +8,7 @@
 #include <algorithm>
 
 #include <QColor>
+#include <QComboBox>
 #include <QDateTime>
 #include <QFont>
 #include <QFontMetrics>
@@ -23,7 +24,9 @@
 #include <QPair>
 #include <QMouseEvent>
 #include <QScrollArea>
+#include <QSignalBlocker>
 #include <QSizePolicy>
+#include <QSlider>
 #include <QStackedLayout>
 #include <QStringList>
 #include <QVBoxLayout>
@@ -435,14 +438,6 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     // 根层边距/间距纯装饰却吃掉约 30px 垂直预算,而 720p 下内容区正好差这一截。
     root->setContentsMargins(6, 4, 6, 4);
     root->setSpacing(4);
-    banner_ = new QLabel(QStringLiteral("只读模拟 · READ-ONLY SIMULATION SAFE · 无控制下发通道"), this);
-    banner_->setStyleSheet(QStringLiteral(
-        "background:#0d2818; color:#40d68a; padding:5px; font-weight:bold;"
-        " border:1px solid #1b5236; border-radius:3px;"));
-    banner_->setObjectName(QStringLiteral("readOnlyBanner"));
-
-    // Sits alongside the read-only banner and never replaces it: the read-only
-    // guarantee has to stay on screen in every mode.
     mode_banner_ = new QLabel(this);
     mode_banner_->setStyleSheet(QStringLiteral(
         "background:#101a26; color:#40d0e8; padding:4px; font-weight:bold;"
@@ -460,17 +455,13 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     alert_strip_->setFont(theme::labelFont(11, true));
     alert_strip_->setVisible(false);
 
-    // 三者高度锁死在同一个值:告警带天生比另外两条高,不锁的话它一出现就顶高整行,
+    // 高度锁死在同一个值:告警带天生比模式横幅高,不锁的话它一出现就顶高整行,
     // 在 720p 恰好把窗口挤过屏幕高度。删掉 setFixedHeight 会静默复现该 bug。
     mode_banner_->setText(QStringLiteral("模式"));
     alert_strip_->setText(QStringLiteral("告警"));
-    // max 而不是 min:三条锁同一高度是为了让告警带出现时不顶高整行,而 min 会把内容
-    // 最长的只读横幅压到比它 sizeHint 更矮,中英混排的字直接垂直重叠。max 同样锁住
-    // 行高,且没有任何一条被压扁。
-    const int banner_row_height = std::max({banner_->sizeHint().height(),
-                                            mode_banner_->sizeHint().height(),
-                                            alert_strip_->sizeHint().height()});
-    banner_->setFixedHeight(banner_row_height);
+    // max 而不是 min:按较高的 sizeHint 锁行高,任何一条都不会被压扁。
+    const int banner_row_height = std::max(mode_banner_->sizeHint().height(),
+                                           alert_strip_->sizeHint().height());
     mode_banner_->setFixedHeight(banner_row_height);
     alert_strip_->setFixedHeight(banner_row_height);
     alert_strip_->clear();
@@ -487,12 +478,17 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     // 未挂控制器时不可用。可点但什么都不弹会让操作手以为功能坏了。
     reminder_entry_->setEnabled(false);
 
+    recording_status_ = new QLabel(this);
+    recording_status_->setObjectName(QStringLiteral("recordingStatus"));
+    recording_status_->setFixedHeight(banner_row_height);
+    recording_status_->setVisible(false);
+
     auto* banner_row = new QHBoxLayout();
     banner_row->setContentsMargins(0, 0, 0, 0);
     banner_row->setSpacing(6);
-    banner_row->addWidget(banner_, 0);
     banner_row->addWidget(mode_banner_, 0);
     banner_row->addWidget(alert_strip_, 1);
+    banner_row->addWidget(recording_status_, 0);
     // 告警带拿 stretch,入口按钮跟在它后面且不拉伸:按钮固定贴住右端,而告警带
     // 的出现/消失不会把按钮左右推动。
     banner_row->addWidget(reminder_entry_, 0);
@@ -530,6 +526,8 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     map_column->addWidget(map_heading);
     map_ = new MapPane(map_box);
     map_->setObjectName(QStringLiteral("mapPane"));
+    // 自机专有数据(发弹量/热量/底盘功率/自瞄)只有 RobotDynamicStatus 携带,
+    // 花名册里其余九台永远是 "--",所以单独一块放在地图下方。
     // stretch 归 addStretch 而不是地图:给地图拉伸权会把差额画成上下黑边。
     map_column->addWidget(map_, 0);
     map_column->addStretch(1);
@@ -664,6 +662,74 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     stack_->addWidget(info_page_);
     stack_->addWidget(video_page_);
     root->addLayout(stack_, 1);
+
+    // 播放器式控制条。只存在于回放,实况下隐藏,不占布局高度。
+    replay_bar_ = new QWidget(this);
+    replay_bar_->setObjectName(QStringLiteral("replayBar"));
+    replay_bar_->setStyleSheet(QStringLiteral(
+        "QWidget#replayBar{background:#101014;border-top:1px solid #263042;}"
+        "QWidget#replayBar QLabel{color:#c8c8d0;}"
+        "QWidget#replayBar QPushButton{background:#1b2230;color:#e8e8ee;"
+        "border:1px solid #2c3648;border-radius:3px;padding:2px 10px;font-weight:bold;}"
+        "QWidget#replayBar QComboBox{background:#1b2230;color:#e8e8ee;"
+        "border:1px solid #2c3648;border-radius:3px;padding:2px 6px;}"));
+    replay_bar_->setMinimumHeight(40);
+    auto* replay_row = new QHBoxLayout(replay_bar_);
+    replay_row->setContentsMargins(8, 4, 8, 4);
+    replay_row->setSpacing(8);
+
+    replay_play_ = new QPushButton(QStringLiteral("⏸"), replay_bar_);
+    replay_play_->setObjectName(QStringLiteral("replayPlay"));
+    replay_play_->setFixedWidth(40);
+    replay_row->addWidget(replay_play_);
+
+    replay_slider_ = new QSlider(Qt::Horizontal, replay_bar_);
+    replay_slider_->setObjectName(QStringLiteral("replaySlider"));
+    replay_slider_->setRange(0, 0);
+    replay_slider_->setSingleStep(1000);
+    replay_slider_->setPageStep(10000);
+    replay_slider_->setStyleSheet(QStringLiteral(
+        "QSlider::groove:horizontal{height:4px;background:#2a3040;border-radius:2px;}"
+        "QSlider::sub-page:horizontal{background:#40d0e8;border-radius:2px;}"
+        "QSlider::handle:horizontal{width:12px;margin:-5px 0;border-radius:6px;"
+        "background:#e8e8ee;}"));
+    replay_row->addWidget(replay_slider_, 1);
+
+    replay_time_ = new QLabel(QStringLiteral("00:00 / 00:00"), replay_bar_);
+    replay_time_->setObjectName(QStringLiteral("replayTime"));
+    replay_row->addWidget(replay_time_);
+
+    auto* replay_speed_label = new QLabel(QStringLiteral("倍速"), replay_bar_);
+    replay_speed_label->setObjectName(QStringLiteral("replaySpeedLabel"));
+    replay_row->addWidget(replay_speed_label);
+
+    replay_speed_ = new QComboBox(replay_bar_);
+    replay_speed_->setObjectName(QStringLiteral("replaySpeed"));
+    for (const double speed : {0.5, 1.0, 2.0, 4.0})
+        replay_speed_->addItem(QStringLiteral("%1x").arg(speed), speed);
+    replay_speed_->setCurrentIndex(1);
+    replay_speed_->setFixedWidth(72);
+    replay_speed_->setToolTip(QStringLiteral("播放速度：0.5x / 1x / 2x / 4x"));
+    replay_row->addWidget(replay_speed_);
+
+    QObject::connect(replay_play_, &QPushButton::clicked, this, [this] {
+        if (replay_pause_) replay_pause_();
+    });
+    QObject::connect(replay_slider_, &QSlider::sliderReleased, this, [this] {
+        if (replay_seek_) replay_seek_(replay_slider_->value());
+    });
+    QObject::connect(replay_slider_, &QSlider::valueChanged, this, [this](int value) {
+        if (replay_slider_->isSliderDown()) return;
+        if (replay_seek_) replay_seek_(value);
+    });
+    QObject::connect(replay_speed_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+                     [this](int index) {
+                         if (replay_speed_handler_)
+                             replay_speed_handler_(replay_speed_->itemData(index).toDouble());
+                     });
+
+    replay_bar_->setVisible(false);
+    root->addWidget(replay_bar_);
 
     // 不进任何 layout:一个会改变布局的弹窗等于在最紧张的时刻把整屏控件推位,
     // 操作手的肌肉记忆随之失效。它悬浮在最上层,几何由 resizeEvent 单独维护。
@@ -846,6 +912,60 @@ void Dashboard::refreshPage() {
                               .arg(reason_name(reason())));
 }
 
+void Dashboard::setRecordingStatus(const QString& text) {
+    if (recording_status_->text() == text) return;
+    recording_status_->setText(text);
+    recording_status_->setVisible(!text.isEmpty());
+    const bool alarm = text.startsWith(QStringLiteral("● REC")) ||
+                       text.startsWith(QStringLiteral("回放失败"));
+    recording_status_->setStyleSheet(
+        alarm ? QStringLiteral("background:#2a0d12; color:#ff8b8b; padding:4px;"
+                              " font-weight:bold; border:1px solid #7a1f2b;"
+                              " border-radius:3px;")
+             : QStringLiteral("background:#0d1f2a; color:#7fe3f2; padding:4px;"
+                              " font-weight:bold; border:1px solid #1f5a7a;"
+                              " border-radius:3px;"));
+}
+
+void Dashboard::showReplayControls(bool visible) {
+    replay_bar_->setVisible(visible);
+}
+
+void Dashboard::setReplayProgress(qint64 position_ms, qint64 duration_ms) {
+    const int maximum = static_cast<int>(std::max<qint64>(duration_ms, 0));
+    // 程序化更新不能反过来触发 seek:那会把一次进度刷新变成一次重开录像。
+    const QSignalBlocker blocker(replay_slider_);
+    if (replay_slider_->maximum() != maximum) replay_slider_->setRange(0, maximum);
+    if (!replay_slider_->isSliderDown())
+        replay_slider_->setValue(static_cast<int>(std::clamp<qint64>(position_ms, 0, maximum)));
+
+    const auto clock = [](qint64 milliseconds) {
+        const qint64 seconds = std::max<qint64>(0, milliseconds) / 1000;
+        return QStringLiteral("%1:%2")
+            .arg(seconds / 60, 2, 10, QLatin1Char('0'))
+            .arg(seconds % 60, 2, 10, QLatin1Char('0'));
+    };
+    replay_time_->setText(
+        QStringLiteral("%1 / %2").arg(clock(position_ms), clock(duration_ms)));
+}
+
+void Dashboard::setReplayPaused(bool paused) {
+    replay_play_->setText(paused ? QStringLiteral("▶") : QStringLiteral("⏸"));
+    replay_play_->setToolTip(paused ? QStringLiteral("继续播放") : QStringLiteral("暂停"));
+}
+
+void Dashboard::setReplaySeekHandler(std::function<void(qint64)> handler) {
+    replay_seek_ = std::move(handler);
+}
+
+void Dashboard::setReplayPauseHandler(std::function<void()> handler) {
+    replay_pause_ = std::move(handler);
+}
+
+void Dashboard::setReplaySpeedHandler(std::function<void(double)> handler) {
+    replay_speed_handler_ = std::move(handler);
+}
+
 void Dashboard::attachReminders(ReminderController* controller) {
     reminders_ = controller;
     reminder_entry_->setEnabled(controller != nullptr);
@@ -894,22 +1014,19 @@ std::string Dashboard::layoutDump() const {
           << pane_entry(QStringLiteral("info_video_pane"), info_video_pane_)
           << pane_entry(QStringLiteral("video_full_pane"), video_full_pane_)
           << pane_entry(QStringLiteral("event_panel"), event_)
-          << pane_entry(QStringLiteral("mode_banner"), mode_banner_)
-          << pane_entry(QStringLiteral("readonly_banner"), banner_);
+          << pane_entry(QStringLiteral("mode_banner"), mode_banner_);
 
     // The window box is included because the "video fills the screen" criterion is a
     // ratio against it; without it that check would need a hard-coded size.
     return QStringLiteral("{\n"
                           "  \"mode\": \"%1\",\n"
                           "  \"reason\": \"%2\",\n"
-                          "  \"readonly_banner_visible\": %3,\n"
-                          "  \"stacked_index\": %4,\n"
-                          "  \"window\": {\"width\": %5, \"height\": %6},\n"
-                          "  \"panes\": [\n%7\n  ]\n"
+                          "  \"stacked_index\": %3,\n"
+                          "  \"window\": {\"width\": %4, \"height\": %5},\n"
+                          "  \"panes\": [\n%6\n  ]\n"
                           "}\n")
         .arg(mode_name(mode()))
         .arg(reason_name(reason()))
-        .arg(banner_->isVisible() ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(stack_->currentIndex())
         .arg(width())
         .arg(height())

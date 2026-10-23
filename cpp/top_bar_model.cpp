@@ -58,6 +58,13 @@ TopBarModel top_bar_model(const Snapshot& snapshot) {
     model.blue.outpost_hp = game.blue_outpost_hp.value;
     model.blue.outpost_max_hp = game.blue_outpost_max_hp.value;
 
+    auto outpost_blue = [](const Field<std::uint32_t>& zone, bool fallback) {
+        if (zone.quality != Quality::Valid || !zone.value) return fallback;
+        return *zone.value == 3u || *zone.value == 4u;
+    };
+    model.red.outpost_controlled_by_blue = outpost_blue(game.red_outpost_zone, false);
+    model.blue.outpost_controlled_by_blue = outpost_blue(game.blue_outpost_zone, true);
+
     // 队名缺失时留空,由 QML 回落到「红方/蓝方」,不编造校名。
     // domain 层刻意不依赖 Qt(见 CMakeLists 的分层说明),所以队名在域内是
     // std::string,到这一层才转成 QString。

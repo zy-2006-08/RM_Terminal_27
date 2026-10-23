@@ -73,7 +73,7 @@ foreach(case IN ITEMS unknown extra duplicate positional empty
     string(LENGTH "${error}" error_length)
     string(FIND "${error}" "${expect}" expect_at)
     if(NOT result STREQUAL "2" OR NOT output STREQUAL "" OR
-       error_length EQUAL 0 OR error_length GREATER 256 OR error MATCHES "SIMULATION SAFE")
+       error_length EQUAL 0 OR error_length GREATER 256)
         message(FATAL_ERROR "${case}: exit=${result}; stdout=${output}; stderr=${error}")
     endif()
     if(expect_at EQUAL -1)

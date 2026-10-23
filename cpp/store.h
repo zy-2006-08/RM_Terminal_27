@@ -17,6 +17,9 @@ public:
     bool apply(const inbound::RobotPositionSet& patch, MonotonicMs now);
     bool apply(const inbound::RobotHealthSet& patch, MonotonicMs now);
     Snapshot snapshot(MonotonicMs now) const;
+    // 回放跳转从零重建。只重新喂入目标之前的记录会留下目标之后的字段值,
+    // 画面会显示「未来」的数据。
+    void reset();
 
 private:
     bool advance(MonotonicMs now);
@@ -29,6 +32,7 @@ private:
 
     Snapshot state_;
     MonotonicMs threshold_;
+    std::size_t event_capacity_;
     MonotonicMs latest_ = 0;
     std::optional<EventKey> last_event_;
 };

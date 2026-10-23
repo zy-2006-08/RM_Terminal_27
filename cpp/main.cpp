@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFile>
 #include <QLabel>
+#include <QScreen>
 #include <QStandardPaths>
 #include <QString>
 #include <QStringList>
@@ -20,7 +21,9 @@
 #include "mqtt_intake.h"
 #include "platform.h"
 #include "presentation.h"
+#include "recorder.h"
 #include "reminder_repository.h"
+#include "replay_player.h"
 #include "store.h"
 #include "tactical_reminder_controller.h"
 #include "ui_mode.h"
@@ -37,6 +40,19 @@ bool prepare_runtime(const QString& config_path, rm_terminal::Config* cfg) {
     if (!rm_terminal::load_config(config_path, cfg, &error)) {
         fprintf(stderr, "config error: %s\n", error.toUtf8().constData());
         return false;
+    }
+    const QString self_id = qEnvironmentVariable("RM_SELF_ID");
+    if (!self_id.isEmpty()) {
+        bool ok = false;
+        const int id = self_id.toInt(&ok);
+        if (!ok || !rm_terminal::valid_self_robot_id(id)) {
+            fprintf(stderr,
+                    "config error: invalid RM_SELF_ID=%s; expected 1, 3, 4, 6, 7, "
+                    "101, 103, 104, 106, or 107\n",
+                    self_id.toUtf8().constData());
+            return false;
+        }
+        cfg->self_robot_id = id;
     }
     if (!rm_terminal::StructuredLog::open(cfg->log_destination, cfg->log_level, &error)) {
         fprintf(stderr, "log error: %s\n", error.toUtf8().constData());
@@ -73,6 +89,7 @@ QStringList startup_fields(const QString& mode, const rm_terminal::Config& cfg) 
             QStringLiteral("mqtt_host=%1").arg(cfg.mqtt_host),
             QStringLiteral("mqtt_port=%1").arg(cfg.mqtt_port),
             QStringLiteral("udp_port=%1").arg(cfg.udp_port),
+            QStringLiteral("self_robot_id=%1").arg(cfg.self_robot_id),
             QStringLiteral("stale_window_ms=%1").arg(cfg.stale_window_ms)};
 }
 
@@ -156,6 +173,25 @@ int main(int argc, char* argv[]) {
         return rm_terminal::kExitBadArguments;
     }
 
+    QString replay_path;
+    const int replay_at = args.indexOf(QLatin1String("--replay"));
+    if (replay_at >= 0) {
+        if (replay_at + 1 >= args.size()) {
+            qCritical().noquote() << "Missing path after --replay";
+            return rm_terminal::kExitBadArguments;
+        }
+        replay_path = args.at(replay_at + 1);
+        args.removeAt(replay_at + 1);
+        args.removeAt(replay_at);
+    }
+    if (args.contains(QLatin1String("--replay"))) {
+        qCritical().noquote() << "Duplicate --replay is not supported";
+        return rm_terminal::kExitBadArguments;
+    }
+
+    // 测试会拉起真实程序,默认自动录制曾把验收产物写进用户录像目录。
+    const bool no_record = args.removeOne(QLatin1String("--no-record"));
+
     const bool safe_smoke = args.size() == 1 && args.at(0) == QLatin1String("--safe-smoke");
     const bool diagnostic = args.size() == 4 && args.at(0) == QLatin1String("--diagnostic");
 
@@ -172,18 +208,20 @@ int main(int argc, char* argv[]) {
                                  " --safe-smoke or --diagnostic";
         return rm_terminal::kExitBadArguments;
     }
+    if (!replay_path.isEmpty() && (safe_smoke || diagnostic)) {
+        qCritical().noquote() << "--replay requires the GUI; it cannot combine with"
+                                 " --safe-smoke or --diagnostic";
+        return rm_terminal::kExitBadArguments;
+    }
 
     if (safe_smoke) {
         QCoreApplication app(argc, argv);
-        qInfo().noquote() << "RM terminal: READ-ONLY SIMULATION SAFE; platform="
+        qInfo().noquote() << "RM terminal: safe smoke; platform="
                           << rm_terminal::platform_name();
         rm_terminal::Config cfg;
         if (!prepare_runtime(config_path, &cfg)) return rm_terminal::kExitConfigError;
         rm_terminal::StructuredLog::write(rm_terminal::LogLevel::info, QStringLiteral("startup"),
                                           startup_fields(QStringLiteral("safe_smoke"), cfg));
-        rm_terminal::StructuredLog::write(
-            rm_terminal::LogLevel::warning, QStringLiteral("readonly_block"),
-            {QStringLiteral("reason=safe_smoke"), QStringLiteral("transport=none")});
         log_shutdown(QStringLiteral("safe_smoke"), rm_terminal::kExitSuccess);
         return rm_terminal::kExitSuccess;
     }
@@ -202,7 +240,7 @@ int main(int argc, char* argv[]) {
         rm_terminal::StructuredLog::write(rm_terminal::LogLevel::info, QStringLiteral("startup"),
                                           startup_fields(QStringLiteral("diagnostic"), cfg));
         rm_terminal::Store store(cfg.stale_window_ms);
-        rm_terminal::MqttIntake intake(store, args.at(1), port);
+        rm_terminal::MqttIntake intake(store, args.at(1), port, cfg.self_robot_id);
         QObject::connect(&intake, &rm_terminal::MqttIntake::diagnostic,
                          [](const QString& text) { qInfo().noquote() << text; });
         if (!intake.start()) {
@@ -225,7 +263,7 @@ int main(int argc, char* argv[]) {
     if (!args.isEmpty()) {
         qCritical().noquote() << "Unknown argument; supported: --safe-smoke, --config <path>,"
                                  " --screenshot <path>, --force-mode <info|video>,"
-                                 " --dump-layout <path>,"
+                                 " --replay <path>, --dump-layout <path>, --no-record,"
                                  " --diagnostic <host> <port> <seconds>";
         return rm_terminal::kExitBadArguments;
     }
@@ -237,28 +275,74 @@ int main(int argc, char* argv[]) {
                                       startup_fields(QStringLiteral("terminal"), cfg));
 
     rm_terminal::Store store(cfg.stale_window_ms);
-    rm_terminal::MqttIntake intake(store, cfg.mqtt_host, cfg.mqtt_port);
+    rm_terminal::MqttIntake intake(store, cfg.mqtt_host, cfg.mqtt_port,
+                                   cfg.self_robot_id);
     QObject::connect(&intake, &rm_terminal::MqttIntake::diagnostic,
                      [](const QString& text) { qInfo().noquote() << text; });
-    if (!intake.start()) {
+
+    rm_terminal::Recorder recorder;
+    intake.setMessageObserver([&recorder](const QString& topic, const QByteArray& payload) {
+        recorder.recordMqtt(topic, payload);
+    });
+
+    if (replay_path.isEmpty() && !no_record) {
+        rm_terminal::RecordingMetadata metadata;
+        metadata.self_robot_id = cfg.self_robot_id;
+        metadata.mqtt_host = cfg.mqtt_host;
+        metadata.mqtt_port = cfg.mqtt_port;
+        metadata.udp_port = cfg.udp_port;
+        const QString recordings =
+            QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
+                .filePath(QStringLiteral("recordings"));
+        QString record_error;
+        if (!recorder.start(recordings, metadata, &record_error)) {
+            qWarning().noquote() << "recording unavailable:" << record_error;
+        } else {
+            qInfo().noquote() << "recording:" << recorder.path();
+        }
+    }
+
+    if (replay_path.isEmpty() && !intake.start()) {
         rm_terminal::StructuredLog::write(
             rm_terminal::LogLevel::warning, QStringLiteral("reconnect_mqtt"),
             {QStringLiteral("state=unavailable"),
              QStringLiteral("host=%1").arg(cfg.mqtt_host),
              QStringLiteral("port=%1").arg(cfg.mqtt_port)});
-        rm_terminal::StructuredLog::write(
-            rm_terminal::LogLevel::warning, QStringLiteral("readonly_block"),
-            {QStringLiteral("reason=mqtt_unavailable"), QStringLiteral("transport=none")});
     }
 
     rm_terminal::VideoReceiver video;
-    rm_terminal::VideoEndpoint endpoint;
-    endpoint.port = static_cast<quint16>(cfg.udp_port);
-    if (!video.start(endpoint)) {
-        rm_terminal::StructuredLog::write(
-            rm_terminal::LogLevel::warning, QStringLiteral("reconnect_udp"),
-            {QStringLiteral("state=start_failed"),
-             QStringLiteral("port=%1").arg(cfg.udp_port)});
+    video.setDatagramObserver([&recorder](const QByteArray& datagram) {
+        recorder.recordVideo(datagram);
+    });
+
+    std::unique_ptr<rm_terminal::ReplayPlayer> replay;
+    if (!replay_path.isEmpty()) {
+        if (!video.startInjected()) {
+            rm_terminal::StructuredLog::write(
+                rm_terminal::LogLevel::warning, QStringLiteral("reconnect_udp"),
+                {QStringLiteral("state=replay_decoder_failed")});
+        }
+        replay = std::make_unique<rm_terminal::ReplayPlayer>(store, video);
+        QString replay_error;
+        if (!replay->start(replay_path, &replay_error)) {
+            qCritical().noquote() << "replay failed:" << replay_error;
+            rm_terminal::StructuredLog::write(
+                rm_terminal::LogLevel::error, QStringLiteral("replay"),
+                {QStringLiteral("state=open_failed"),
+                 QStringLiteral("path=%1").arg(replay_path)});
+            log_shutdown(QStringLiteral("replay"), rm_terminal::kExitStartFailure);
+            return rm_terminal::kExitStartFailure;
+        }
+        qInfo().noquote() << "replaying:" << replay_path;
+    } else {
+        rm_terminal::VideoEndpoint endpoint;
+        endpoint.port = static_cast<quint16>(cfg.udp_port);
+        if (!video.start(endpoint)) {
+            rm_terminal::StructuredLog::write(
+                rm_terminal::LogLevel::warning, QStringLiteral("reconnect_udp"),
+                {QStringLiteral("state=start_failed"),
+                 QStringLiteral("port=%1").arg(cfg.udp_port)});
+        }
     }
 
     // 语音后端挂在 app 上,生命周期覆盖整个进程:控制器只借用它,不拥有它。
@@ -288,12 +372,37 @@ int main(int argc, char* argv[]) {
     // two-column layout; below this the map degrades to a sliver.
     dashboard.setMinimumSize(1280, 760);
     dashboard.resize(1440, 900);
+    // 有些屏幕的可用高度装不下 900 的窗口，底部的回放控制条会被挤出屏幕。
+    // 实跑时按可用区域收一点，离屏截图仍保持固定的 1440x900。
+    if (QGuiApplication::platformName() != QLatin1String("offscreen")) {
+        if (const QScreen* screen = QGuiApplication::primaryScreen()) {
+            const QRect available = screen->availableGeometry();
+            const int width = std::min(1440, available.width());
+            const int height = std::clamp(available.height() - 60, 760, 900);
+            dashboard.resize(width, height);
+            dashboard.move(available.x() + (available.width() - width) / 2,
+                           available.y() + 30);
+        }
+    }
     // Applied before the first update() so the forced layout holds from the very
     // first tick; injecting it afterwards would render one automatic frame first
     // and put the wrong layout in a capture taken at a short delay.
     if (forced_mode.has_value()) dashboard.forceMode(forced_mode);
     const rm_terminal::MonotonicMs startup_now = rm_terminal::monotonic_now();
     dashboard.update(store.snapshot(startup_now), &video, startup_now);
+    dashboard.setRecordingStatus(replay ? replay->statusText() : recorder.statusText());
+    if (replay) {
+        dashboard.showReplayControls(true);
+        dashboard.setReplayPaused(replay->paused());
+        dashboard.setReplayProgress(replay->positionMs(), replay->durationMs());
+        dashboard.setReplaySeekHandler([&replay](qint64 position_ms) { replay->seek(position_ms); });
+        dashboard.setReplayPauseHandler([&replay] { replay->togglePause(); });
+        dashboard.setReplaySpeedHandler([&replay](double speed) { replay->setSpeed(speed); });
+        QObject::connect(replay.get(), &rm_terminal::ReplayPlayer::progress, &dashboard,
+                         &rm_terminal::Dashboard::setReplayProgress);
+        QObject::connect(replay.get(), &rm_terminal::ReplayPlayer::pausedChanged, &dashboard,
+                         &rm_terminal::Dashboard::setReplayPaused);
+    }
     dashboard.show();
     // 从 Terminal / Finder 脚本拉起时进程没有前台权限，窗口会藏在别的窗口后面，
     // 看起来像「双击没反应」。raise + activateWindow 把它顶到最前。
@@ -303,13 +412,15 @@ int main(int argc, char* argv[]) {
     rm_terminal::StaleReporter reporter;
     QTimer freshness_timer;
     QObject::connect(&freshness_timer, &QTimer::timeout,
-                     [&store, &reporter, &dashboard, &video, &reminders, &intake]() {
+                     [&store, &reporter, &dashboard, &video, &reminders, &intake,
+                      &recorder, &replay]() {
         // One clock read per tick, shared by the snapshot and the mode machine:
         // two reads would hand the machine an instant the snapshot never saw.
         const rm_terminal::MonotonicMs now = rm_terminal::monotonic_now();
         const auto snapshot = store.snapshot(now);
         reporter.inspect(snapshot);
         dashboard.update(snapshot, &video, now);
+        dashboard.setRecordingStatus(replay ? replay->statusText() : recorder.statusText());
         // 同一个 now 和同一份快照喂给提醒:另取一次时钟会让调度看到一个快照
         // 从未见过的时刻,而两遍之间的间隔正是按这个时刻算的。
         reminders.observe(rm_terminal::reminder_inputs(snapshot, intake.connected()), now);

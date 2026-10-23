@@ -9,8 +9,8 @@ enum class LogLevel { debug, info, warning, error };
 // Emits one greppable record per event:
 //   ts=<ISO8601 with ms> level=<level> event=<token> key=value ...
 // The only sink is a local file. Operator-facing banners go to stderr through
-// qInfo/qCritical instead. A network sink would give the read-only terminal an
-// egress path and breach the module-1 control boundary, so there is none.
+// qInfo/qCritical instead. A network sink would give the terminal a second
+// egress path, so there is none.
 class StructuredLog {
 public:
     static bool open(const QString& destination, LogLevel minimum, QString* error = nullptr);

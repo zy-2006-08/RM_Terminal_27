@@ -136,8 +136,9 @@ ZoneBoard zone_board(const Snapshot& snapshot) {
         if (hp.quality != Quality::Valid || !hp.value) return std::nullopt;
         if (max_hp.quality != Quality::Valid || !max_hp.value || *max_hp.value == 0)
             return std::nullopt;
-        // 基地血量高于上限(服务器异常)时按满血处理,避免后勤系数超过 1。
-        return std::min(1.0, static_cast<double>(*hp.value) / *max_hp.value);
+        // λ = 1 - (基地损失血量) / 20000,并限制在规则规定的 [0.5, 1.0]。
+        const double lost_hp = static_cast<double>(*max_hp.value) - *hp.value;
+        return std::clamp(1.0 - lost_hp / 20000.0, 0.5, 1.0);
     };
     board.red_logistics = logistics(g.red_base_hp, g.red_base_max_hp);
     board.blue_logistics = logistics(g.blue_base_hp, g.blue_base_max_hp);

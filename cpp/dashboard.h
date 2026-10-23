@@ -20,10 +20,13 @@
 #include <QString>
 #include <QWidget>
 #include <cstddef>
+#include <functional>
 #include <optional>
 #include <string>
 
+class QComboBox;
 class QPushButton;
+class QSlider;
 class QMouseEvent;
 
 namespace rm_terminal {
@@ -155,6 +158,18 @@ public:
     // 而不是让整个仪表盘依赖一个可选子系统。
     void attachReminders(ReminderController* controller);
 
+    // 空字符串隐藏。实况录制是红点,回放是青色播放标记。
+    void setRecordingStatus(const QString& text);
+
+    // 回放控制栏只在回放模式出现。用回调而不是 Dashboard 信号,避免这个只做
+    // 展示的控件反向依赖主程序里的 ReplayPlayer。
+    void showReplayControls(bool visible);
+    void setReplayProgress(qint64 position_ms, qint64 duration_ms);
+    void setReplayPaused(bool paused);
+    void setReplaySeekHandler(std::function<void(qint64)> handler);
+    void setReplayPauseHandler(std::function<void()> handler);
+    void setReplaySpeedHandler(std::function<void(double)> handler);
+
     UiMode mode() const;
     ModeReason reason() const;
     void forceMode(std::optional<UiMode> forced);
@@ -187,15 +202,24 @@ private:
     QWidget* info_page_;
     QWidget* video_page_;
 
-    QLabel* banner_;
     QLabel* mode_banner_;
     QLabel* alert_strip_;
 
     // 固定在横幅行右端。刻意不放进 QML 顶部栏:1280 宽度下顶部栏右侧只剩约 19px,
     // 塞进去会压到前哨站徽标。
     QPushButton* reminder_entry_;
+    QLabel* recording_status_;
     ReminderController* reminders_ = nullptr;
     ReminderDialog* reminder_dialog_ = nullptr;
+
+    QWidget* replay_bar_;
+    QPushButton* replay_play_;
+    QSlider* replay_slider_;
+    QLabel* replay_time_;
+    QComboBox* replay_speed_;
+    std::function<void(qint64)> replay_seek_;
+    std::function<void()> replay_pause_;
+    std::function<void(double)> replay_speed_handler_;
 
     TopBar* top_bar_;
     RosterPanel* ally_roster_;

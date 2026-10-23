@@ -22,7 +22,7 @@ constexpr int kExitEvidenceFailure = 5;
 // RM_TERMINAL_CONFIG is supplied.
 constexpr const char* kDefaultConfigFileName = "rm_terminal.conf";
 
-// Read-only runtime configuration. Defaults mirror the 2026 local-simulation
+// Immutable runtime configuration. Defaults mirror the 2026 local-simulation
 // baseline in core/constants.py so the native terminal and the Python
 // simulator agree with no config file present.
 struct Config {
@@ -30,6 +30,8 @@ struct Config {
     QString log_destination = QStringLiteral("rm_terminal.log");
     int mqtt_port = 3333;
     int udp_port = 3334;
+    // 2027 阵容编号：红 1/3/4/6/7，蓝方 +100。决定解码器把哪台车当成自机。
+    int self_robot_id = 3;
     // 必须容得下最慢字段的两个发布周期。RobotPosition/RobotModuleStatus 是 1Hz,
     // 500ms 的窗口比发布间隔本身还短 —— 位置刚到就被判过期,地图上每台车都常驻
     // 「过期」,于是这个标记再也无法指示真正的断流。
@@ -50,6 +52,9 @@ struct Config {
 // returns false and `error` receives a message naming the offending key, its
 // value, and the line number.
 bool load_config(const QString& path, Config* out, QString* error);
+
+// 2027 阵容编号：红 1/3/4/6/7，蓝方 +100。
+bool valid_self_robot_id(int id);
 
 bool parse_log_level(const QString& name, LogLevel* out);
 

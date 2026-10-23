@@ -112,8 +112,8 @@ QRect field_region() {
 }
 
 std::vector<MapRobot> full_roster() {
-    return {robot(3, 1, 8.0, 5.0, true), robot(4, 1, 10.0, 9.0), robot(5, 1, 6.0, 11.0),
-            robot(103, 2, 20.0, 5.0),    robot(104, 2, 22.0, 9.0), robot(105, 2, 24.0, 11.0)};
+    return {robot(3, 1, 8.0, 5.0, true), robot(4, 1, 10.0, 9.0), robot(6, 1, 6.0, 11.0),
+            robot(103, 2, 20.0, 5.0),    robot(104, 2, 22.0, 9.0), robot(106, 2, 24.0, 11.0)};
 }
 
 // (1) Faction colouring must actually reach the canvas for both sides.
@@ -204,8 +204,8 @@ void markers_carry_a_visible_badge() {
     const Projected at = project(default_field_extent(), view, 14.0, 7.5);
     const QRect core(static_cast<int>(at.point.x) - 12, static_cast<int>(at.point.y) - 12, 25, 25);
 
-    // 1..3 carry a digit badge; 4 is 空中 and 5 is 哨兵, which carry a class icon.
-    for (std::uint32_t id : {1u, 2u, 3u, 4u, 5u}) {
+    // 1, 3, and 4 carry a digit badge; 6 is 空中 and 7 is 哨兵, which carry a class icon.
+    for (std::uint32_t id : {1u, 3u, 4u, 6u, 7u}) {
         const QImage with_badge = render({robot(id, 1, 14.0, 7.5)});
         check(count_drawn(with_badge, core) > 0, "the marker centre carries a badge");
     }
@@ -332,9 +332,9 @@ void missing_self_is_called_out_specifically() {
 // Ordering must be stable so the map does not reshuffle between ticks.
 void markers_are_sorted_by_id() {
     const std::vector<MapMarker> markers = markers_from(
-        {robot(105, 2, 24.0, 11.0), robot(3, 1, 8.0, 5.0, true), robot(4, 1, 10.0, 9.0)});
+        {robot(106, 2, 24.0, 11.0), robot(3, 1, 8.0, 5.0, true), robot(4, 1, 10.0, 9.0)});
     check(markers.size() == 3, "every robot is kept");
-    check(markers[0].id.value == 3 && markers[1].id.value == 4 && markers[2].id.value == 105,
+    check(markers[0].id.value == 3 && markers[1].id.value == 4 && markers[2].id.value == 106,
           "markers are ordered by ascending id");
 }
 

@@ -20,28 +20,41 @@ sys.path.insert(0, str(ROOT / "generated"))
 import paho.mqtt.client as mqtt
 
 import rm_terminal_pb2 as pb
-from sim.constants import (MQTT_PORT, SERVER_HOST, T_GAME_STATUS, T_ROBOT_HEALTH_SET,
+from sim.constants import (MQTT_PORT, SELF_ROBOT_ID, SERVER_HOST, T_BLIND_STATUS,
+                           T_GAME_STATUS, T_ROBOT_HEALTH_SET, T_ROBOT_RESPAWN,
                            T_SIM_AUTO_HP)
 
 PY = ROOT / ".venv" / "bin" / "python"
 CTRL = ROOT / "sim" / "match_control.py"
 
 ROBOTS = [
-    ("红1 重装", 1), ("红2 步兵", 2), ("红3 步兵(自机)", 3), ("红4 空中", 4), ("红5 哨兵", 5),
-    ("蓝1 重装", 101), ("蓝2 步兵", 102), ("蓝3 步兵", 103), ("蓝4 空中", 104), ("蓝5 哨兵", 105),
+    ("红1 重装", 1), ("红3 步兵", 3), ("红4 步兵", 4),
+    ("红6 空中", 6), ("红7 哨兵", 7),
+    ("蓝1 重装", 101), ("蓝3 步兵", 103), ("蓝4 步兵", 104),
+    ("蓝6 空中", 106), ("蓝7 哨兵", 107),
 ]
+ROBOTS = [(f"{name}(自机)" if robot_id == SELF_ROBOT_ID else name, robot_id)
+          for name, robot_id in ROBOTS]
 ROBOT_IDS = {name: robot_id for name, robot_id in ROBOTS}
-MAX_HP = 600
-STAGE_NAMES = {3: "准备倒计时", 4: "比赛中", 5: "结算"}
-COUNTDOWN_SEC = 4
+SELF_NAME = next(name for name, robot_id in ROBOTS if robot_id == SELF_ROBOT_ID)
+STAGE_NAMES = {0: "赛外", 1: "准备", 2: "裁判系统自检", 3: "倒计时",
+               4: "比赛中", 5: "结算"}
+ZONE_STATES = ["未控", "红方临时", "红方完全", "蓝方临时", "蓝方完全"]
+ZONE_ALLOWED = [ZONE_STATES[1:], ZONE_STATES[1:],
+                ["红方完全", "蓝方临时"], ["蓝方完全", "红方临时"]]
 ZONES = ["红方前哨区", "蓝方前哨区", "红方基地区", "蓝方基地区"]
 ZONE_SHORT = ["前哨红", "前哨蓝", "基地红", "基地蓝"]
-ZONE_STATES = ["未控", "红方临时", "红方完全", "蓝方临时", "蓝方完全"]
+STRUCTURES = ["红方基地", "蓝方基地", "红方前哨站", "蓝方前哨站"]
+FORTRESS_STATES = ["自动", "未占领", "红方", "蓝方"]
+BLIND_SIDES = ["红方", "蓝方"]
+DART_TARGETS = ["前哨站", "基地固定目标", "基地随机固定目标",
+                "基地随机移动目标", "基地末端移动目标"]
 
 state = {"online": False, "stage": None, "remain": 0, "elapsed": 0,
          "changed_at": 0.0, "action": "就绪", "hp": {},
          "zones": [0, 0, 0, 0], "control": (0, 0), "reinforce": (0, 0),
-         "base": (0, 5000, 0, 5000)}
+         "base": (0, 10000, 0, 10000), "fortress": 0, "blind": (0, 0),
+         "respawn": (False, 0, 0, False, 0, False)}
 
 
 def mmss(seconds: float) -> str:
@@ -58,15 +71,18 @@ def parse_time(text: str) -> int:
 
 
 def logistics(hp: int, max_hp: int) -> str:
-    """后勤系数 λ = 1 - 基地已损失血量/基地最大血量,也就是剩余血量占比。"""
-    return f"{max(0.0, min(1.0, hp / max_hp)) * 100:.0f}%" if max_hp else "--"
+    """规则 5.6.1：λ = 1 - 基地已损失血量/20000，限制在 [0.5, 1.0]。"""
+    if not max_hp:
+        return "--"
+    value = 1.0 - (max_hp - hp) / 20000.0
+    return f"{max(0.5, min(1.0, value)) * 100:.0f}%"
 
 
 root = tk.Tk()
 root.title("RM2027 模拟器控制台")
 
 status = tk.Label(root, text="", anchor="w", justify="left", relief="groove",
-                  bg="white", fg="black")
+                  bg="#1e1e1e", fg="#e6e6e6")
 status.pack(side="bottom", fill="x", padx=8, pady=(2, 6))
 
 
@@ -85,14 +101,17 @@ def button(parent, text, command):
     return tk.Button(parent, text=text, width=8, command=command)
 
 
-schedule = tk.LabelFrame(root, text="赛程")
+schedule = tk.LabelFrame(root, text="裁判赛程")
 schedule.pack(fill="x", padx=8, pady=6)
 
 row = tk.Frame(schedule)
 row.pack(pady=4)
-button(row, "开赛", lambda: act("开赛", "start")).pack(side="left", padx=2)
+button(row, "准备", lambda: act("进入准备阶段", "prep")).pack(side="left", padx=2)
+button(row, "自检", lambda: act("进入裁判系统自检", "check")).pack(side="left", padx=2)
+button(row, "倒计时", lambda: act("进入倒计时", "countdown")).pack(side="left", padx=2)
+button(row, "继续", lambda: act("继续赛程", "resume")).pack(side="left", padx=2)
 button(row, "暂停", lambda: act("暂停", "pause")).pack(side="left", padx=2)
-button(row, "复位", lambda: act("复位到准备阶段", "reset")).pack(side="left", padx=2)
+button(row, "复位", lambda: act("复位到赛外", "reset")).pack(side="left", padx=2)
 
 
 def do_seek() -> None:
@@ -109,7 +128,7 @@ def do_seek() -> None:
         state["action"] = "还没收到服务器状态"
         return
     target = state["elapsed"] + (state["remain"] - remaining)
-    target = max(COUNTDOWN_SEC, target)
+    target = max(0, target)
     act(f"比赛时钟设为 {mmss(remaining)}", "seek", str(target))
 
 
@@ -129,15 +148,15 @@ for value in ("1", "2", "5", "10"):
     button(speed_row, f"{value}x",
            lambda v=value: act(f"倍速设为 {v}x", "speed", v)).pack(side="left", padx=2)
 
-robot = tk.LabelFrame(root, text="机器人")
+robot = tk.LabelFrame(root, text="自机射击与机器人")
 robot.pack(fill="x", padx=8, pady=6)
 
 robot_row = tk.Frame(robot)
 robot_row.pack(pady=4)
-selected = tk.StringVar(value=ROBOTS[0][0])
+selected = tk.StringVar(value=SELF_NAME)
 tk.OptionMenu(robot_row, selected, *[name for name, _ in ROBOTS]).pack(side="left")
 hp_entry = tk.Entry(robot_row, width=6)
-hp_entry.insert(0, str(MAX_HP))
+hp_entry.insert(0, "400")
 hp_entry.pack(side="left", padx=4)
 
 
@@ -157,9 +176,42 @@ def set_hp_from_entry() -> None:
 
 button(robot_row, "设定血量", set_hp_from_entry).pack(side="left", padx=2)
 button(robot_row, "阵亡", lambda: set_hp(0, "设为")).pack(side="left", padx=2)
-button(robot_row, "复活", lambda: set_hp(MAX_HP, "设为")).pack(side="left", padx=2)
+button(robot_row, "复活", lambda: set_hp(robot_max_hp(), "设为")).pack(side="left", padx=2)
 
-auto_hp = tk.BooleanVar(value=True)
+
+def robot_max_hp() -> int:
+    return state["hp"].get(ROBOT_IDS[selected.get()], (0, 400))[1]
+
+
+shoot_row = tk.Frame(robot)
+shoot_row.pack(pady=(0, 4))
+tk.Label(shoot_row, text="射击口径").pack(side="left")
+caliber = tk.StringVar(value="17")
+tk.OptionMenu(shoot_row, caliber, "17", "42").pack(side="left")
+count_entry = tk.Entry(shoot_row, width=4)
+count_entry.insert(0, "1")
+count_entry.pack(side="left", padx=4)
+button(shoot_row, "射击",
+       lambda: act("射击锁定目标", "shoot", caliber.get(),
+                   count_entry.get())).pack(side="left", padx=2)
+
+tool_row = tk.Frame(robot)
+tool_row.pack(pady=(0, 4))
+button(tool_row, "装42mm",
+       lambda: act("安装 42mm 模块", "module")).pack(side="left", padx=2)
+tk.Label(tool_row, text="兑换发数").pack(side="left", padx=(6, 0))
+buy_entry = tk.Entry(tool_row, width=5)
+buy_entry.insert(0, "100")
+buy_entry.pack(side="left", padx=4)
+button(tool_row, "买弹",
+       lambda: act(f"兑换 {caliber.get()}mm x{buy_entry.get()}",
+                   "buy", caliber.get(), buy_entry.get())).pack(side="left", padx=2)
+button(tool_row, "买活",
+       lambda: act("金币兑换立即复活", "pay-revive")).pack(side="left", padx=2)
+button(tool_row, "自机刷卡",
+       lambda: act("自机刷卡解除虚弱", "card")).pack(side="left", padx=2)
+
+auto_hp = tk.BooleanVar(value=False)
 
 
 def toggle_auto() -> None:
@@ -170,15 +222,28 @@ def toggle_auto() -> None:
 tk.Checkbutton(robot, text="随机掉血(关掉后手动设的血量不再变化)",
                variable=auto_hp, command=toggle_auto).pack(pady=(0, 4))
 
-zone = tk.LabelFrame(root, text="阵地")
+zone = tk.LabelFrame(root, text="测试注入 · 阵地")
 zone.pack(fill="x", padx=8, pady=6)
 
 zone_row = tk.Frame(zone)
 zone_row.pack(pady=4)
 zone_selected = tk.StringVar(value=ZONES[2])
-zone_state = tk.StringVar(value=ZONE_STATES[0])
+zone_state = tk.StringVar(value=ZONE_ALLOWED[2][0])
 tk.OptionMenu(zone_row, zone_selected, *ZONES).pack(side="left")
-tk.OptionMenu(zone_row, zone_state, *ZONE_STATES).pack(side="left", padx=4)
+zone_state_menu = tk.OptionMenu(zone_row, zone_state, *ZONE_ALLOWED[2])
+zone_state_menu.pack(side="left", padx=4)
+
+
+def refresh_zone_states(*_args) -> None:
+    options = ZONE_ALLOWED[ZONES.index(zone_selected.get())]
+    menu = zone_state_menu["menu"]
+    menu.delete(0, "end")
+    for name in options:
+        menu.add_command(label=name, command=lambda v=name: zone_state.set(v))
+    zone_state.set(options[0])
+
+
+zone_selected.trace_add("write", refresh_zone_states)
 
 
 def set_zone() -> None:
@@ -187,7 +252,95 @@ def set_zone() -> None:
     act(f"{zone_selected.get()} → {zone_state.get()}", "zone", str(index), str(value))
 
 
+def hold_zone() -> None:
+    index = ZONES.index(zone_selected.get())
+    value = ZONE_STATES.index(zone_state.get())
+    threading.Thread(
+        target=act,
+        args=(f"{zone_selected.get()} 持续激活 6 秒", "hold",
+              str(index), str(value), "6"),
+        daemon=True,
+    ).start()
+
+
 button(zone_row, "设置阵地", set_zone).pack(side="left", padx=2)
+tk.Button(zone_row, text="持续激活 6s", command=hold_zone).pack(side="left", padx=2)
+
+reinforce_row = tk.Frame(zone)
+reinforce_row.pack(pady=(0, 4))
+tk.Label(reinforce_row, text="加固机会(需累计命中≥10)").pack(side="left")
+button(reinforce_row, "红方消耗",
+       lambda: act("红方消耗加固机会", "reinforce", "1")).pack(side="left", padx=2)
+button(reinforce_row, "蓝方消耗",
+       lambda: act("蓝方消耗加固机会", "reinforce", "2")).pack(side="left", padx=2)
+
+structure = tk.LabelFrame(root, text="测试注入 · 建筑与堡垒")
+structure.pack(fill="x", padx=8, pady=6)
+
+structure_row = tk.Frame(structure)
+structure_row.pack(pady=4)
+structure_selected = tk.StringVar(value=STRUCTURES[0])
+structure_entry = tk.Entry(structure_row, width=6)
+structure_entry.insert(0, "10000")
+tk.OptionMenu(structure_row, structure_selected, *STRUCTURES).pack(side="left")
+structure_entry.pack(side="left", padx=4)
+
+
+def set_structure_hp() -> None:
+    try:
+        value = int(structure_entry.get())
+    except ValueError:
+        state["action"] = "建筑血量要填数字"
+        return
+    index = STRUCTURES.index(structure_selected.get())
+    act(f"{structure_selected.get()} 血量设为 {value}",
+        "structure", str(index), str(value))
+
+
+button(structure_row, "设定血量", set_structure_hp).pack(side="left", padx=2)
+
+fortress_row = tk.Frame(structure)
+fortress_row.pack(pady=(0, 4))
+tk.Label(fortress_row, text="堡垒").pack(side="left")
+fortress_selected = tk.StringVar(value=FORTRESS_STATES[1])
+tk.OptionMenu(fortress_row, fortress_selected, *FORTRESS_STATES).pack(side="left")
+
+
+def set_fortress() -> None:
+    name = fortress_selected.get()
+    value = "auto" if name == "自动" else str(FORTRESS_STATES.index(name) - 1)
+    act(f"堡垒 → {name}", "fortress", value)
+
+
+button(fortress_row, "设置堡垒", set_fortress).pack(side="left", padx=2)
+
+dart = tk.LabelFrame(root, text="飞镖")
+dart.pack(fill="x", padx=8, pady=6)
+blind_row = tk.Frame(dart)
+blind_row.pack(pady=4)
+tk.Label(blind_row, text="阵营(中镖/发射)").pack(side="left")
+blind_side = tk.StringVar(value=BLIND_SIDES[0])
+blind_target = tk.StringVar(value=DART_TARGETS[3])
+tk.OptionMenu(blind_row, blind_side, *BLIND_SIDES).pack(side="left")
+tk.OptionMenu(blind_row, blind_target, *DART_TARGETS).pack(side="left", padx=4)
+
+
+def trigger_blind() -> None:
+    side = BLIND_SIDES.index(blind_side.get()) + 1
+    target = DART_TARGETS.index(blind_target.get()) + 1
+    act(f"{blind_side.get()}中镖 {blind_target.get()}",
+        "blind", str(side), str(target))
+
+
+button(blind_row, "中镖", trigger_blind).pack(side="left", padx=2)
+button(blind_row, "解除", lambda: act("解除手动致盲", "blind-clear")).pack(side="left", padx=2)
+button(blind_row, "开闸",
+       lambda: act("开启飞镖闸门", "dart-open",
+                   str(BLIND_SIDES.index(blind_side.get()) + 1))).pack(side="left", padx=2)
+button(blind_row, "发射",
+       lambda: act("发射飞镖", "dart",
+                   str(BLIND_SIDES.index(blind_side.get()) + 1),
+                   str(DART_TARGETS.index(blind_target.get()) + 1))).pack(side="left", padx=2)
 
 
 def on_message(_client, _userdata, message) -> None:
@@ -209,6 +362,26 @@ def on_message(_client, _userdata, message) -> None:
                               status_msg.blue_reinforce_chances)
         state["base"] = (status_msg.red_base_hp, status_msg.red_base_max_hp,
                          status_msg.blue_base_hp, status_msg.blue_base_max_hp)
+        state["fortress"] = status_msg.fortress_holder
+    elif message.topic == T_BLIND_STATUS:
+        blind = pb.BlindStatus()
+        try:
+            blind.ParseFromString(message.payload)
+        except Exception:
+            return
+        state["blind"] = (blind.affected_faction, blind.target_type)
+    elif message.topic == T_ROBOT_RESPAWN:
+        resp = pb.RobotRespawnStatus()
+        try:
+            resp.ParseFromString(message.payload)
+        except Exception:
+            return
+        state["respawn"] = (resp.is_pending_respawn,
+                            resp.total_respawn_progress,
+                            resp.current_respawn_progress,
+                            resp.can_free_respawn,
+                            resp.gold_cost_for_respawn,
+                            resp.can_pay_for_respawn)
     elif message.topic == T_SIM_AUTO_HP:
         auto_hp.set(message.payload == b"1")
     elif message.topic == T_ROBOT_HEALTH_SET:
@@ -234,7 +407,9 @@ def subscribe() -> None:
             state["online"] = False
             time.sleep(1)
             continue
-        client.subscribe([(T_GAME_STATUS, 0), (T_ROBOT_HEALTH_SET, 0), (T_SIM_AUTO_HP, 0)])
+        client.subscribe([(T_GAME_STATUS, 0), (T_ROBOT_HEALTH_SET, 0),
+                          (T_SIM_AUTO_HP, 0), (T_BLIND_STATUS, 0),
+                          (T_ROBOT_RESPAWN, 0)])
         client.loop_forever(retry_first_connection=True)
 
 
@@ -246,7 +421,7 @@ def tick() -> None:
     else:
         stage = STAGE_NAMES.get(state["stage"], f"阶段 {state['stage']}")
         head = f"{stage} · 剩余 {mmss(state['remain'])}"
-        head += f" · 已过 {mmss(state['elapsed'] - COUNTDOWN_SEC)}"
+        head += f" · 已过 {mmss(state['elapsed'])}"
         if time.monotonic() - state["changed_at"] > 2.0:
             head += " · 停表"
     robot_id = ROBOT_IDS[selected.get()]
@@ -260,9 +435,23 @@ def tick() -> None:
     global_text = (f"控制 红{state['control'][0]} 蓝{state['control'][1]}"
                    f" · 加固 红{state['reinforce'][0]} 蓝{state['reinforce'][1]}"
                    f" · 后勤 红{logistics(red_base, red_max)}"
-                   f" 蓝{logistics(blue_base, blue_max)}")
-    status.config(text=f"{head}\n{hp_text}\n{zone_text}\n{global_text}\n"
-                       f"最近操作: {state['action']}")
+                   f" 蓝{logistics(blue_base, blue_max)}"
+                   f" · 堡垒 {FORTRESS_STATES[state['fortress']] if state['fortress'] < 4 else '?'}")
+    blind_side_value, blind_type = state["blind"]
+    if blind_side_value and 1 <= blind_type <= len(DART_TARGETS):
+        blind_text = (f"{BLIND_SIDES[blind_side_value - 1]}/"
+                      f"{DART_TARGETS[blind_type - 1]}")
+    else:
+        blind_text = "无"
+    pending, total, current, free, cost, can_pay = state["respawn"]
+    if pending:
+        respawn_text = f"{mmss(current)}/{mmss(total)}"
+        respawn_text += (" · 可免费复活" if free
+                         else f" · 买活 {cost} 金币{'够' if can_pay else '不足'}")
+    else:
+        respawn_text = "无"
+    status.config(text=f"{head}\n{hp_text}\n{zone_text}\n{global_text}"
+                       f" · 致盲 {blind_text} · 复活 {respawn_text}\n{state['action']}")
     root.after(250, tick)
 
 

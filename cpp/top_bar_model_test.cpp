@@ -1,4 +1,5 @@
 #include "top_bar_model.h"
+#include "presentation.h"
 
 #include <iostream>
 #include <stdexcept>
@@ -44,38 +45,36 @@ Snapshot full_field_snapshot() {
     snapshot.game.current_round = present<std::uint32_t>(1);
     snapshot.game.total_rounds = present<std::uint32_t>(3);
 
-    for (std::uint32_t n = 1; n <= 5; ++n) {
+    for (std::uint32_t n : {1u, 3u, 4u, 6u, 7u}) {
         snapshot.robot_health.push_back(health(n, 1, 300 + n * 40, 600));
         snapshot.robot_health.push_back(health(100 + n, 2, 500 - n * 30, 600));
     }
     return snapshot;
 }
 
-// 用户明确要求红方 4/5 号不得再是灰色。灰色的成因是这两台没有血量来源,所以这里
+// 用户明确要求红方 3/4 号不得再是灰色。灰色的成因是这两台没有血量来源,所以这里
 // 断言的是「协议报了就在线且带血量」,而不是断言颜色。
 void every_reported_robot_fills_its_slot() {
     const TopBarModel model = top_bar_model(full_field_snapshot());
 
-    for (std::size_t i = 0; i < kTopBarSlotsPerSide; ++i) {
-        check(model.red.cards[i].online, "every reported red robot is online");
-        check(model.red.cards[i].has_hp(), "every reported red robot carries HP");
-        check(model.blue.cards[i].online, "every reported blue robot is online");
-        check(model.blue.cards[i].has_hp(), "every reported blue robot carries HP");
+    for (std::size_t i : {0u, 2u, 3u}) {
+        check(model.red.cards[i].online, "every represented red robot is online");
+        check(model.red.cards[i].has_hp(), "every represented red robot carries HP");
+        check(model.blue.cards[i].online, "every represented blue robot is online");
+        check(model.blue.cards[i].has_hp(), "every represented blue robot carries HP");
     }
 
     check(model.red.cards[3].display_number == 4, "red slot 4 shows as number 4");
-    check(model.red.cards[3].robot_class == QStringLiteral("空中"), "red 4 is the air robot");
-    check(model.red.cards[4].robot_class == QStringLiteral("哨兵"), "red 5 is the sentry");
+    check(model.red.cards[3].robot_class == QStringLiteral("步兵"), "red 4 is infantry");
+    check(robot_class_name(6) == QStringLiteral("空中"), "red 6 is the air robot");
+    check(robot_class_name(7) == QStringLiteral("哨兵"), "red 7 is the sentry");
 }
 
-// 蓝方 101-105 的内部偏移不得泄漏到界面上,官方两侧都显示 1-5。
 void blue_ids_are_displayed_without_the_internal_offset() {
     const TopBarModel model = top_bar_model(full_field_snapshot());
     for (std::size_t i = 0; i < kTopBarSlotsPerSide; ++i) {
-        check(model.blue.cards[i].id == 101 + static_cast<std::uint32_t>(i),
-              "the blue slot keeps its internal id");
         check(model.blue.cards[i].display_number == static_cast<std::uint32_t>(i) + 1,
-              "the blue slot displays 1-5 rather than 101-105");
+              "the blue slot displays its local number");
     }
 }
 
@@ -92,7 +91,7 @@ void an_absent_robot_is_a_placeholder_not_a_healthy_one() {
     check(!model.red.cards[3].online, "the absent robot is not reported online");
     check(!model.red.cards[3].has_hp(), "the absent robot carries no HP");
     check(model.red.cards[3].display_number == 4, "the absent slot still holds its place");
-    check(model.red.cards[3].robot_class == QStringLiteral("空中"),
+    check(model.red.cards[3].robot_class == QStringLiteral("步兵"),
           "the absent slot still names its class so the position is identifiable");
     check(model.red.cards[2].online, "its neighbours are unaffected");
 }
@@ -105,6 +104,33 @@ void base_hp_comes_from_the_base_fields() {
           "blue base HP is present rather than missing");
     check(*model.red.base_max_hp == 1500 && *model.blue.base_max_hp == 1500,
           "both bases carry their maximum");
+}
+
+void outpost_badge_follows_the_controlling_side() {
+    Snapshot snapshot = full_field_snapshot();
+    snapshot.game.red_outpost_zone = present<std::uint32_t>(4);
+    snapshot.game.blue_outpost_zone = present<std::uint32_t>(3);
+    const TopBarModel blue = top_bar_model(snapshot);
+    check(blue.red.outpost_controlled_by_blue,
+          "blue full control turns the red outpost badge blue");
+    check(blue.blue.outpost_controlled_by_blue,
+          "blue temporary control keeps the blue outpost badge blue");
+
+    snapshot.game.red_outpost_zone = present<std::uint32_t>(2);
+    snapshot.game.blue_outpost_zone = present<std::uint32_t>(1);
+    const TopBarModel red = top_bar_model(snapshot);
+    check(!red.red.outpost_controlled_by_blue,
+          "red full control keeps the red outpost badge red");
+    check(!red.blue.outpost_controlled_by_blue,
+          "red temporary control turns the blue outpost badge red");
+
+    snapshot.game.red_outpost_zone = present<std::uint32_t>(0);
+    snapshot.game.blue_outpost_zone = Field<std::uint32_t>{};
+    const TopBarModel fallback = top_bar_model(snapshot);
+    check(!fallback.red.outpost_controlled_by_blue,
+          "a neutral red outpost falls back to the red badge");
+    check(fallback.blue.outpost_controlled_by_blue,
+          "missing blue outpost data falls back to the blue badge");
 }
 
 // 没有基地血量时不得画成满血,必须报告为缺失。
@@ -129,6 +155,7 @@ void score_and_clock_read_from_the_protocol() {
 void an_empty_snapshot_states_that_nothing_is_known() {
     const Snapshot empty;
     const TopBarModel model = top_bar_model(empty);
+    const std::uint32_t expected_numbers[] = {1u, 2u, 3u, 4u, 5u};
 
     check(model.clock == QStringLiteral("--:--"), "an absent countdown reads as unknown");
     check(model.round == QStringLiteral("-/-"), "an absent round reads as unknown");
@@ -139,8 +166,8 @@ void an_empty_snapshot_states_that_nothing_is_known() {
     for (std::size_t i = 0; i < kTopBarSlotsPerSide; ++i) {
         check(!model.red.cards[i].online && !model.red.cards[i].has_hp(),
               "no robot is claimed online without data");
-        check(model.red.cards[i].display_number == static_cast<std::uint32_t>(i) + 1,
-              "the layout still holds 5 cards per side");
+        check(model.red.cards[i].display_number == expected_numbers[i],
+              "the layout still holds five placeholder slots");
     }
 }
 
@@ -178,9 +205,10 @@ void an_out_of_roster_id_is_ignored() {
     snapshot.robot_health.push_back(health(107, 2, 500, 600));
 
     const TopBarModel model = top_bar_model(snapshot);
+    const std::uint32_t expected_numbers[] = {1u, 2u, 3u, 4u, 5u};
     check(model.red.cards.size() == kTopBarSlotsPerSide, "the red side keeps exactly 5 cards");
     for (std::size_t i = 0; i < kTopBarSlotsPerSide; ++i) {
-        check(model.red.cards[i].display_number == static_cast<std::uint32_t>(i) + 1,
+        check(model.red.cards[i].display_number == expected_numbers[i],
               "an unknown id does not displace a real slot");
     }
 }
@@ -193,6 +221,7 @@ int main() {
         blue_ids_are_displayed_without_the_internal_offset();
         an_absent_robot_is_a_placeholder_not_a_healthy_one();
         base_hp_comes_from_the_base_fields();
+        outpost_badge_follows_the_controlling_side();
         a_missing_base_hp_is_reported_as_missing();
         score_and_clock_read_from_the_protocol();
         an_empty_snapshot_states_that_nothing_is_known();

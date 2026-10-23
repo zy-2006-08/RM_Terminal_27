@@ -3,6 +3,7 @@
 #include <QCryptographicHash>
 #include <QStandardPaths>
 #include <QDebug>
+#include <utility>
 
 namespace rm_terminal {
 VideoReceiver::VideoReceiver(QObject* parent):QObject(parent) {
@@ -39,7 +40,7 @@ bool VideoReceiver::launchDecoder() {
     const auto executable=QStandardPaths::findExecutable(endpoint_.ffmpeg);
     if(executable.isEmpty()){fail("ffmpeg_not_found");return false;}
     decoder_.setProgram(executable);
-    // Explicit software HEVC decode, small validated raw frames for the read-only diagnostic.
+    // Explicit software HEVC decode, small validated raw frames for the diagnostic.
     // analyzeduration 0 starves the prober on a lossy pipe, so give probing a
     // real budget. Do not add +discardcorrupt: it silently drops ~8% of frames.
     decoder_.setArguments({"-hide_banner","-loglevel","error","-hwaccel","none",
@@ -77,6 +78,24 @@ void VideoReceiver::stopDecoder() {
 void VideoReceiver::stop() {
     timer_.stop();socket_.close();running_=false;stopDecoder();online_=false;state_="stopped";
 }
+void VideoReceiver::setDatagramObserver(std::function<void(const QByteArray&)> observer) {
+    datagram_observer_=std::move(observer);
+}
+bool VideoReceiver::startInjected() {
+    stop();
+    endpoint_=VideoEndpoint{};
+    failure_.clear();last_packet_=-1;last_frame_=-1;last_datagram_=-1;
+    vps_.clear();sps_.clear();pps_.clear();
+    received_=false;reassembler_.resetSession();recovery_=VideoRecoveryPolicy{};
+    socket_.close();
+    if(!launchDecoder())return false;
+    running_=true;timer_.start();return true;
+}
+void VideoReceiver::injectDatagram(const QByteArray& bytes) {
+    if(!running_)return;
+    last_datagram_=clock_.elapsed();
+    handleDatagram(bytes);
+}
 void VideoReceiver::ready() {
     // Bound each event-loop turn as well as each allocation, including oversized datagrams.
     for(int budget=0;budget<256 && socket_.hasPendingDatagrams();++budget) {
@@ -85,26 +104,32 @@ void VideoReceiver::ready() {
         if(n<0){failure_="udp_read_failed";return;}
         bytes.resize(n);
         last_datagram_=clock_.elapsed();
-        const auto frame=reassembler_.push(reinterpret_cast<const uint8_t*>(bytes.constData()),
-            size_t(bytes.size()),clock_.elapsed()/1000.0);
-        if(!frame)continue;
-        last_packet_=clock_.elapsed();received_=true;
-        if(frame->size()<6 || (*frame)[0]!=0 || (*frame)[1]!=0 ||
-            ((*frame)[2]!=1 && ((*frame)[2]!=0 || (*frame)[3]!=1))) {
-            ++invalid_frames_;failure_="invalid_annex_b";continue;
-        }
-        if(decoder_.state()==QProcess::NotRunning && clock_.elapsed()-last_launch_>=1000)launchDecoder();
-        if(decoder_.state()!=QProcess::Running)continue;
-        const QByteArray access_unit=primeAccessUnit(QByteArray(reinterpret_cast<const char*>(frame->data()),qint64(frame->size())));
-        if(decoder_.bytesToWrite()+access_unit.size()>8*1024*1024) {
-            fail("decoder_backpressure");stopDecoder();continue;
-        }
-        if(decoder_.write(access_unit)<0) {
-            fail("decoder_write_failed");continue;
-        }
-        if(submitted_<0)submitted_=clock_.elapsed();
+        // 观察者排在重组之前:录制要拿到链路上实际到达的字节,而不是被重组器
+        // 清洗/丢弃后的结果。
+        if(datagram_observer_)datagram_observer_(bytes);
+        handleDatagram(bytes);
     }
     if(socket_.hasPendingDatagrams())QTimer::singleShot(0,this,&VideoReceiver::ready);
+}
+void VideoReceiver::handleDatagram(const QByteArray& bytes) {
+    const auto frame=reassembler_.push(reinterpret_cast<const uint8_t*>(bytes.constData()),
+        size_t(bytes.size()),clock_.elapsed()/1000.0);
+    if(!frame)return;
+    last_packet_=clock_.elapsed();received_=true;
+    if(frame->size()<6 || (*frame)[0]!=0 || (*frame)[1]!=0 ||
+        ((*frame)[2]!=1 && ((*frame)[2]!=0 || (*frame)[3]!=1))) {
+        ++invalid_frames_;failure_="invalid_annex_b";return;
+    }
+    if(decoder_.state()==QProcess::NotRunning && clock_.elapsed()-last_launch_>=1000)launchDecoder();
+    if(decoder_.state()!=QProcess::Running)return;
+    const QByteArray access_unit=primeAccessUnit(QByteArray(reinterpret_cast<const char*>(frame->data()),qint64(frame->size())));
+    if(decoder_.bytesToWrite()+access_unit.size()>8*1024*1024) {
+        fail("decoder_backpressure");stopDecoder();return;
+    }
+    if(decoder_.write(access_unit)<0) {
+        fail("decoder_write_failed");return;
+    }
+    if(submitted_<0)submitted_=clock_.elapsed();
 }
 QByteArray VideoReceiver::primeAccessUnit(const QByteArray& frame) {
     const QByteArray start("\0\0\0\1",4);

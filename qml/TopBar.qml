@@ -22,9 +22,11 @@ Item {
     property int redOutpostHp: 0
     property int redOutpostMaxHp: 0
     property bool redOutpostHasHp: false
+    property bool redOutpostBlue: false
     property int blueOutpostHp: 0
     property int blueOutpostMaxHp: 0
     property bool blueOutpostHasHp: false
+    property bool blueOutpostBlue: true
     // 队名缺失时回落到「红方/蓝方」,不编造校名。
     property string redTeamName: ""
     property string blueTeamName: ""
@@ -45,7 +47,8 @@ Item {
     // 之前挪到血条上方是为了躲窗口边缘,结果和队名抢同一段空间;正确解法是收窄血条。
     OutpostBadge {
         id: redOutpost
-        isBlue: false
+        isBlue: root.redOutpostBlue
+        mirrored: false
         currentHp: root.redOutpostHp
         maxHp: root.redOutpostMaxHp
         hasData: root.redOutpostHasHp
@@ -56,7 +59,8 @@ Item {
 
     OutpostBadge {
         id: blueOutpost
-        isBlue: true
+        isBlue: root.blueOutpostBlue
+        mirrored: true
         currentHp: root.blueOutpostHp
         maxHp: root.blueOutpostMaxHp
         hasData: root.blueOutpostHasHp

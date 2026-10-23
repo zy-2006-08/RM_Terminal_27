@@ -12,6 +12,8 @@ RM2027 正式协议尚未发布，本地模拟统一走 127.0.0.1。
 引用的常量。终端侧的显示词表由 cpp/presentation.cpp 承担，不在此重复。
 """
 
+import os
+
 # ---------------- 网络 ----------------
 # 真实比赛（2026）为 192.168.12.1 / .2，本地模拟用回环
 SERVER_HOST = "127.0.0.1"
@@ -28,12 +30,14 @@ FRAME_ASSEMBLY_TIMEOUT_S = 0.30   # 超过此时间未收齐则丢弃该帧
 FRAME_CACHE_MAX = 8               # 同时在装配中的帧数上限，防止内存增长
 
 # ---------------- 本机机器人身份 ----------------
-# 附录二 ID 编号：1红英雄 2红工程 3/4/5红步兵 6红空中 7红哨兵
-SELF_ROBOT_ID = 3         # 红方 3 号步兵
+# 附录二 ID 编号：1红英雄 2红工程 3/4/5红步兵 6红空中 7红哨兵；蓝方 +100。
+# RM_SELF_ID 可把本机切到任一 2027 阵容编号，终端配置项与之一致。
+SELF_ROBOT_ID = int(os.environ.get("RM_SELF_ID", "3"))
 
 # ---------------- MQTT topic（与 2026 协议一致，topic 即指令名）----------------
 T_GAME_STATUS = "GameStatus"
 T_ROBOT_DYNAMIC = "RobotDynamicStatus"
+T_ROBOT_RESPAWN = "RobotRespawnStatus"
 T_ROBOT_MODULE = "RobotModuleStatus"
 T_ROBOT_POSITION = "RobotPosition"
 T_EVENT = "Event"
@@ -44,7 +48,7 @@ T_ROBOT_HEALTH_SET = "RobotHealthSet"
 # 仅模拟器使用:服务器把随机掉血开关回显出来,控制面板的勾选状态才不会和服务器分叉。
 T_SIM_AUTO_HP = "sim/AutoHP"
 
-# 终端 -> 机器人 / 服务器。原生终端是只读的，永不发布这两个 topic；
+# 终端 -> 机器人 / 服务器。原生终端当前不发布这两个 topic；
 # 模拟器订阅它们只为断言「终端确实没有发出任何控制指令」。
 T_CUSTOM_CONTROL = "CustomControl"    # 对应 0x0311
 T_COMMON_COMMAND = "CommonCommand"

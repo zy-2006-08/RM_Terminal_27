@@ -33,10 +33,10 @@ QString chassis_name(std::uint32_t mode) {
 QString robot_class_name(std::uint32_t robot_id) {
     switch (robot_id > 100 ? robot_id - 100 : robot_id) {
     case 1: return QStringLiteral("重装");
-    case 2:
     case 3: return QStringLiteral("步兵");
-    case 4: return QStringLiteral("空中");
-    case 5: return QStringLiteral("哨兵");
+    case 4: return QStringLiteral("步兵");
+    case 6: return QStringLiteral("空中");
+    case 7: return QStringLiteral("哨兵");
     default: return QString();
     }
 }

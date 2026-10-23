@@ -66,6 +66,11 @@ bool parse_log_level(const QString& name, LogLevel* out) {
     return true;
 }
 
+bool valid_self_robot_id(int id) {
+    return id == 1 || id == 3 || id == 4 || id == 6 || id == 7
+           || id == 101 || id == 103 || id == 104 || id == 106 || id == 107;
+}
+
 bool load_config(const QString& path, Config* config, QString* error) {
     *config = Config{};
     QFile file(path);
@@ -100,6 +105,16 @@ bool load_config(const QString& path, Config* config, QString* error) {
             if (!parse_integer(value, key, line, &config->mqtt_port, error)) return false;
         } else if (key == QLatin1String("udp_port")) {
             if (!parse_integer(value, key, line, &config->udp_port, error)) return false;
+        } else if (key == QLatin1String("self_robot_id")) {
+            if (!parse_integer(value, key, line, &config->self_robot_id, error)) return false;
+            if (!valid_self_robot_id(config->self_robot_id)) {
+                if (error) {
+                    *error = QStringLiteral("line %1: invalid self_robot_id=%2; expected "
+                                            "1, 3, 4, 6, 7, 101, 103, 104, 106, or 107")
+                                 .arg(line).arg(config->self_robot_id);
+                }
+                return false;
+            }
         } else if (key == QLatin1String("stale_window_ms")) {
             if (!parse_integer(value, key, line, &config->stale_window_ms, error)) return false;
         } else if (key == QLatin1String("mode_exit_hysteresis_ms")) {

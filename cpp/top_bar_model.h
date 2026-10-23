@@ -29,6 +29,7 @@ struct TopBarSide {
     std::optional<std::uint32_t> base_max_hp;
     std::optional<std::uint32_t> outpost_hp;
     std::optional<std::uint32_t> outpost_max_hp;
+    bool outpost_controlled_by_blue = false;
     QString team_name;
     QString score;
     std::array<TopBarSlot, kTopBarSlotsPerSide> cards{};

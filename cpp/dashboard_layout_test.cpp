@@ -372,20 +372,6 @@ void video_mode_fills_the_window_and_hides_the_map() {
     check(!map->isVisible(), "the map is not visible in video mode");
 }
 
-// (4): the read-only guarantee is not a per-mode decision.
-void the_read_only_banner_survives_both_modes() {
-    Dashboard dashboard(test_config());
-    dashboard.resize(kWidth, kHeight);
-
-    drive_to_info(dashboard);
-    check(find(dashboard, "readOnlyBanner")->isVisible(),
-          "the read-only banner is visible in info mode");
-
-    drive_to_video(dashboard);
-    check(find(dashboard, "readOnlyBanner")->isVisible(),
-          "the read-only banner is visible in video mode");
-}
-
 // (5): during blinding these two are the only match state left to act on.
 void video_mode_keeps_the_countdown_and_hp() {
     Dashboard dashboard(test_config());
@@ -524,16 +510,15 @@ void the_layout_dump_is_reproducible_and_hides_unlaid_geometry() {
     // emitter reordered itself.
     const int mode_at = text.indexOf(QStringLiteral("\"mode\""));
     const int reason_at = text.indexOf(QStringLiteral("\"reason\""));
-    const int banner_at = text.indexOf(QStringLiteral("\"readonly_banner_visible\""));
     const int index_at = text.indexOf(QStringLiteral("\"stacked_index\""));
     const int window_at = text.indexOf(QStringLiteral("\"window\""));
     const int panes_at = text.indexOf(QStringLiteral("\"panes\""));
-    check(mode_at < reason_at && reason_at < banner_at && banner_at < index_at &&
+    check(mode_at < reason_at && reason_at < index_at &&
               index_at < window_at && window_at < panes_at,
           "the dump keeps its documented field order");
 
     for (const char* name : {"map_pane", "info_video_pane", "video_full_pane",
-                             "event_panel", "mode_banner", "readonly_banner"}) {
+                             "event_panel", "mode_banner"}) {
         check(text.contains(QStringLiteral("\"name\": \"%1\"").arg(QLatin1String(name))),
               (std::string("the dump covers ") + name).c_str());
     }
@@ -657,10 +642,6 @@ void the_reminder_entry_hugs_its_text_at_the_right_edge() {
           "the reminder entry takes exactly its sizeHint, never the strip's slack");
     check(entry->geometry().right() < kMinWidth,
           "the reminder entry stays inside the minimum window width");
-
-    const QWidget* banner = find(dashboard, "readOnlyBanner");
-    check(banner->geometry().right() < entry->geometry().left(),
-          "the read-only banner never overlaps the reminder entry");
 }
 
 // Regression: 两层覆盖层都铺满整窗 + AlwaysStackOnTop,不穿透鼠标时会吞掉全屏点击。
@@ -715,7 +696,6 @@ int main(int argc, char* argv[]) {
         video_stats_stay_quiet_until_something_goes_wrong();
         video_faults_surface_on_change_and_clear_on_recovery();
         video_mode_fills_the_window_and_hides_the_map();
-        the_read_only_banner_survives_both_modes();
         the_reminder_entry_hugs_its_text_at_the_right_edge();
         the_overlays_never_swallow_clicks_on_the_reminder_entry();
         video_mode_keeps_the_countdown_and_hp();

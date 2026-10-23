@@ -3,11 +3,11 @@
 # that cpp/ui_mode_test.cpp proves at the unit level. A unit-green machine fed the
 # wrong clock or the wrong freshness still flaps, and only a real run catches that.
 #
-# Timeline it relies on (sim/match_server.py:67 _BLIND_SCHEDULE):
-#   stage()==4 begins at sim elapsed 4s; blind runs match-internal [30s, 42s).
-#   So, relative to simulator start: blind ASSERTS at +34s, CLEARS at +46s, and the
-#   terminal's 3000ms exit hysteresis puts the return to info at ~+49s.
-# The run therefore has to reach +60s to observe the exit at all.
+# Timeline it relies on (sim/match_server.py _BLIND_SCHEDULE):
+#   prep/check/countdown are pinned to 1s each below, so stage()==4 begins at sim
+#   elapsed ~3s; blind runs match-internal [30s, 42s). Relative to simulator start:
+#   blind ASSERTS at ~+33s, CLEARS at ~+45s, and the terminal's 3000ms exit
+#   hysteresis puts the return to info at ~+48s. The run reaches +62s with margin.
 #
 # Exits non-zero on any failed assertion, and prints an actual-vs-expected table.
 set -u -o pipefail
@@ -74,7 +74,7 @@ fi
 
 # -u matters: without it Python block-buffers stdout when redirected, so the
 # readiness line never arrives and the blind-timeline lines are lost on signal.
-"$VENV_PY" -u sim/match_server.py > "$RUN_DIR/match_server.log" 2>&1 &
+RM_BLIND_AUTO=1 RM_PREP_SEC=1 RM_CHECK_SEC=1 RM_COUNTDOWN_SEC=1 "$VENV_PY" -u sim/match_server.py > "$RUN_DIR/match_server.log" 2>&1 &
 SIM_PID=$!
 STARTED_PIDS+=("$SIM_PID")
 
@@ -103,7 +103,7 @@ cat > "$CONF" <<CONF
 log_destination = $TERMINAL_LOG
 CONF
 
-QT_QPA_PLATFORM=offscreen "$BINARY" --config "$CONF" > "$RUN_DIR/terminal_stdout.log" 2>&1 &
+QT_QPA_PLATFORM=offscreen "$BINARY" --no-record --config "$CONF" > "$RUN_DIR/terminal_stdout.log" 2>&1 &
 TERMINAL_PID=$!
 STARTED_PIDS+=("$TERMINAL_PID")
 echo "== started terminal (pid $TERMINAL_PID), observing through +62s"

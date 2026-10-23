@@ -30,6 +30,10 @@ target_link_libraries(terminal_domain PUBLIC terminal_proto)
 add_library(terminal_video cpp/video.cpp cpp/video_receiver.cpp cpp/video_receiver.h cpp/video_recovery.cpp cpp/video_recovery.h)
 target_include_directories(terminal_video PUBLIC cpp)
 target_link_libraries(terminal_video PUBLIC terminal_logging Qt6::Core Qt6::Network)
+# 录像格式与 GUI/网络无关,单独成库:格式测试不必拉起 Qt Widgets 或一个 broker。
+add_library(terminal_recording cpp/recorder.cpp cpp/recorder.h)
+target_include_directories(terminal_recording PUBLIC cpp)
+target_link_libraries(terminal_recording PUBLIC Qt6::Core)
 add_library(terminal_presentation cpp/presentation.cpp cpp/ui_mode.cpp cpp/ui_mode.h cpp/popup_state.cpp cpp/popup_state.h cpp/game_result.cpp cpp/game_result.h cpp/field_map.cpp cpp/field_map.h cpp/top_bar_model.cpp cpp/top_bar_model.h cpp/reminder_scheduler.cpp cpp/reminder_scheduler.h cpp/tactical_reminder.h)
 target_link_libraries(terminal_presentation PUBLIC terminal_domain terminal_logging Qt6::Core)
 
@@ -121,10 +125,13 @@ add_executable(rm_terminal
     cpp/platform.h
     cpp/mqtt_intake.cpp
     cpp/mqtt_intake.h
+    cpp/replay_player.cpp
+    cpp/replay_player.h
     ${TOPBAR_RES}
 )
 target_include_directories(rm_terminal PRIVATE ${MOSQUITTO_INCLUDE_DIR})
-target_link_libraries(rm_terminal PRIVATE terminal_dashboard ${MOSQUITTO_LIBRARY} Qt6::Widgets)
+target_link_libraries(rm_terminal PRIVATE terminal_dashboard terminal_recording
+    ${MOSQUITTO_LIBRARY} Qt6::Widgets)
 target_compile_features(rm_terminal PRIVATE cxx_std_17)
 target_compile_definitions(rm_terminal PRIVATE QT_NO_KEYWORDS)
 
@@ -149,6 +156,13 @@ if(BUILD_TESTING)
     add_executable(video_recovery_test cpp/video_recovery_test.cpp)
     target_link_libraries(video_recovery_test PRIVATE terminal_video)
     add_test(NAME video_recovery_policy COMMAND video_recovery_test)
+    add_executable(recorder_test cpp/recorder_test.cpp)
+    target_link_libraries(recorder_test PRIVATE terminal_recording)
+    add_test(NAME recording_format COMMAND recorder_test)
+    add_executable(replay_player_test cpp/replay_player_test.cpp cpp/replay_player.cpp cpp/replay_player.h)
+    target_link_libraries(replay_player_test PRIVATE terminal_domain terminal_recording terminal_video Qt6::Core)
+    target_compile_definitions(replay_player_test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME replay_player COMMAND replay_player_test)
     add_executable(video_diagnostic cpp/video_diagnostic.cpp)
     target_link_libraries(video_diagnostic PRIVATE terminal_video Qt6::Core Qt6::Network)
     target_link_libraries(intake_test PRIVATE terminal_domain terminal_proto)

@@ -1,4 +1,4 @@
-# RM Terminal read-only simulation configuration (sample).
+# RM Terminal simulation configuration (sample).
 #
 # Copy to rm_terminal.conf, or point at it explicitly:
 #   build/debug/rm_terminal --config path/to/rm_terminal.conf
@@ -26,6 +26,10 @@ mqtt_port=3333
 
 # H.265 video UDP listen port. 2026 protocol baseline is 3334.
 udp_port=3334
+
+# This terminal's 2027 lineup id: red 1/3/4/6/7 or blue 101/103/104/106/107.
+# Must match the simulator's RM_SELF_ID. Defaults to 3 (red infantry).
+self_robot_id=3
 
 # Field freshness window in milliseconds; a field older than this reports stale.
 # Must exceed two publish intervals of the slowest field: RobotPosition is 1Hz, so

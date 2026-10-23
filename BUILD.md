@@ -4,7 +4,7 @@ This document covers the native CMake target `rm_terminal`, which is now the
 only terminal implementation. The legacy Python/PySide6 launcher (`main.py`,
 `core/`, `ui/`) has been removed; `run.sh` starts the native binary against the
 Python simulator in `sim/`, which remains the only data source for local runs
-and for `mode_regression_e2e`. The native target is C++17/Qt6 and read-only.
+and for `mode_regression_e2e`. The native target is C++17/Qt6.
 
 Task 2 uses the six inbound message families in `proto/rm_terminal.proto`:
 GameStatus, RobotDynamicStatus, RobotModuleStatus, RobotPosition, Event, and
@@ -30,14 +30,6 @@ checks rather than `assert`, so Release retains all semantic verification.
 It has no MQTT, UDP, CAN, UART, or other control transport. Platform-specific
 selection is limited to compile-time identity in `cpp/platform.h`; core
 application code uses Qt and standard C++ APIs.
-
-## Explicit task-1 boundary
-
-The native application exposes only a visible read-only simulation-safe state.
-It must not connect to transports, publish commands, send device data, decode
-telemetry, or implement later-task protocol/state/video features. The legacy
-Python files remain excluded from this native build and are not changed by this
-task.
 
 ## Configuration
 
@@ -89,7 +81,7 @@ Command-line flags:
 | Flag | Meaning |
 | --- | --- |
 | `--config <path>` | Configuration file path; highest precedence |
-| `--safe-smoke` | Report the read-only safe state and exit without a window |
+| `--safe-smoke` | Report startup state and exit without a window |
 | `--screenshot <path>` | Render the window to a PNG, then exit |
 | `--diagnostic <host> <port> <seconds>` | Bounded headless MQTT observation |
 | `--force-mode <info\|video>` | Debug/evidence only: pin the UI mode (see below) |
@@ -108,9 +100,6 @@ pane with packet/frame statistics, and the latest match event. Values that are
 absent render as `--`; values that aged past `stale_window_ms` are suffixed
 `(过期)` individually, so one stale field never makes fresh neighbours look stale.
 
-The window is read-only. It has no button, shortcut, or transport that can send
-anything to a robot.
-
 ### Structured log
 
 Each record is one greppable line:
@@ -120,7 +109,7 @@ ts=<ISO8601 UTC with ms> level=<level> event=<token> key=value ...
 ```
 
 Event tokens: `startup`, `shutdown`, `reconnect_mqtt`, `reconnect_udp`,
-`readonly_block`, `decode_failure`, `stale_data`, `packet_loss`,
+`decode_failure`, `stale_data`, `packet_loss`,
 `ui_mode_switch`.
 
 `ui_mode_switch` carries `from`, `to`, `reason`, and `blind_freshness`, and is
@@ -131,9 +120,9 @@ the video feed because blind telemetry died reads differently from a real
 assertion.
 
 The only log sink is the local file named by `log_destination`. Operator-facing
-banners (the read-only notice, argument errors) go to stderr through
-`qInfo`/`qCritical`, which is a separate mechanism. The read-only terminal never
-opens a network log sink, because that would give it an egress path.
+banners and argument errors go to stderr through `qInfo`/`qCritical`, which is a
+separate mechanism. The terminal never opens a network log sink, because that
+would give it a second egress path.
 
 ## 双模式行为 (dual-mode behaviour)
 
@@ -157,9 +146,9 @@ The switch is driven by the simulated `BlindStatus` signal, never by an operator
   forever. Setting that key to `0` disables the fallback entirely, which means the
   terminal will stay in video mode indefinitely once the blind feed dies.
 
-Both modes keep the read-only banner, and the decoder stays resident across
-switches: the video pane is never reparented and `VideoReceiver` is never stopped,
-so `decoded_frames` keeps climbing instead of restarting from zero.
+The decoder stays resident across switches: the video pane is never reparented and
+`VideoReceiver` is never stopped, so `decoded_frames` keeps climbing instead of
+restarting from zero.
 
 ## 调试与证据采集 (debug and evidence capture)
 
@@ -209,7 +198,7 @@ QT_QPA_PLATFORM=offscreen RM_TERMINAL_CAPTURE_DELAY_MS=2500 \
     --screenshot /tmp/m-video.png --dump-layout /tmp/m-video.json
 ```
 
-The dump reports `mode`, `reason`, `readonly_banner_visible`, `stacked_index`, the
+The dump reports `mode`, `reason`, `stacked_index`, the
 window box, and one `{name, visible, x, y, width, height}` entry per key pane, in a
 fixed order with integer values, so identical input yields a byte-identical file and
 any diff means the layout really moved. Panes the stacked layout is not showing
@@ -335,7 +324,7 @@ build/ubuntu/rm_terminal --safe-smoke
 
 The Ubuntu commands above are the deployment-candidate path only; Ubuntu
 execution is unverified in this environment. The smoke mode creates a
-`QCoreApplication`, reports the read-only safe state, and exits without opening
+`QCoreApplication`, reports the startup state, and exits without opening
 a window or network transport.
 
 ## 平台验证状态 (platform verification status)

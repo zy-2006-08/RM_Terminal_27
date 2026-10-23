@@ -87,6 +87,19 @@ message RobotDynamicStatus {
 }
 
 // ---------------------------------------------------------------
+// 服务器 -> 终端：本机复活状态（2026 协议 RobotRespawnStatus，1Hz）
+// 2027 规则允许免费读条复活与金币兑换立即复活，字段沿用 2026 定义。
+// ---------------------------------------------------------------
+message RobotRespawnStatus {
+  optional bool   is_pending_respawn       = 1;
+  optional uint32 total_respawn_progress   = 2;
+  optional uint32 current_respawn_progress = 3;
+  optional bool   can_free_respawn         = 4;
+  optional uint32 gold_cost_for_respawn    = 5;
+  optional bool   can_pay_for_respawn      = 6;
+}
+
+// ---------------------------------------------------------------
 // 服务器 -> 终端：机器人各模块在线状态
 // （2026 协议 2.2.12 RobotModuleStatus：0离线 1在线 2安装不规范视为离线）
 // ---------------------------------------------------------------
@@ -175,10 +188,14 @@ message RobotTelemetry {
 // 之所以用结构化字段而非塞进 Event.text：文本解析不可测且脆弱。
 // ---------------------------------------------------------------
 message BlindStatus {
-  optional bool   self_base_blinded = 1;  // 我方基地当前是否处于致盲
+  optional bool   self_base_blinded = 1;  // 我方基地当前是否处于致盲（等价于 affected_faction == 1）
   optional uint64 blind_started_ms  = 2;  // 致盲开始时刻（ms）
   optional int32  blind_remaining_ms = 3; // 预计剩余致盲时长（ms）
   optional uint32 cause             = 4;  // 0未致盲 1对方飞镖命中我方基地 2其他
+  // 被遮挡的是哪一方、中的是哪类飞镖目标。协议只有自机视角，模拟器要手动触发
+  // 红/蓝任一方中镖，这两项是本地模拟词汇，终端可忽略。
+  optional uint32 affected_faction  = 5;  // 0未致盲 1红方 2蓝方
+  optional uint32 target_type       = 6;  // 1前哨站 2基地固定 3基地随机固定 4基地随机移动 5基地末端移动
 }
 
 // ---------------------------------------------------------------

@@ -9,6 +9,7 @@
 #include <QProcess>
 #include <QTimer>
 #include <QUdpSocket>
+#include <functional>
 
 namespace rm_terminal {
 struct VideoEndpoint {
@@ -21,7 +22,14 @@ public:
     explicit VideoReceiver(QObject* parent=nullptr);
     ~VideoReceiver() override;
     bool start(const VideoEndpoint& endpoint);
+    // 回放用:不绑定 UDP 端口,只启动解码器,由 injectDatagram() 喂原始包。
+    // 这样回放不会和本机模拟器/另一台终端抢端口,也不会碰网络。
+    bool startInjected();
     void stop();
+    // 解码前观察原始 datagram。录制必须挂这里:重组会丢掉非法包和部分帧,
+    // 而回放要的是链路上实际到达的字节。回调在 Qt 主线程执行。
+    void setDatagramObserver(std::function<void(const QByteArray&)> observer);
+    void injectDatagram(const QByteArray& datagram);
     QJsonObject snapshot() const;
     quint16 port() const { return socket_.localPort(); }
     // BGR24 pixels, empty until the first frame completes.
@@ -43,6 +51,7 @@ public:
     qint64 decodedFrames() const { return decoded_frames_; }
 private:
     void ready();
+    void handleDatagram(const QByteArray& bytes);
     void decoderOutput();
     void tick();
     bool launchDecoder();
@@ -56,6 +65,7 @@ private:
     QElapsedTimer clock_;
     VideoReassembler reassembler_;
     VideoEndpoint endpoint_;
+    std::function<void(const QByteArray&)> datagram_observer_;
     QByteArray raw_, latest_;
     // Latest VPS/SPS/PPS only. Appending would grow without bound and feed the
     // respawned decoder dozens of duplicate parameter sets, which stalls decoding.
