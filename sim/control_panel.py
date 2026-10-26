@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import threading
@@ -22,7 +23,9 @@ import paho.mqtt.client as mqtt
 import rm_terminal_pb2 as pb
 from sim.constants import (MQTT_PORT, SELF_ROBOT_ID, SERVER_HOST, T_BLIND_STATUS,
                            T_GAME_STATUS, T_ROBOT_HEALTH_SET, T_ROBOT_RESPAWN,
-                           T_SIM_AUTO_HP)
+                           T_SIM_ARM_BAD, T_SIM_ARM_ECHO, T_SIM_ARM_JOINTS,
+                           T_SIM_ARM_PLUGGED, T_SIM_AUTO_HP, T_SIM_LINK_CAR,
+                           T_SIM_LINK_MQTT, T_SIM_LINK_VIDEO)
 
 PY = ROOT / ".venv" / "bin" / "python"
 CTRL = ROOT / "sim" / "match_control.py"
@@ -343,7 +346,106 @@ button(blind_row, "发射",
                    str(DART_TARGETS.index(blind_target.get()) + 1))).pack(side="left", padx=2)
 
 
+# ---------------- 链路：测终端断线时的反应 ----------------
+# 这些按钮不走 match_control.py：故障开关是 retained 消息，由 link_proxy、video_sender、
+# fake_arm、match_server 各自订阅，直接用面板自己的 MQTT 连接发出去即可。
+LINK_TEXT = {"mqtt": {"ok": "正常", "cut": "断开", "freeze": "卡住"},
+             "car": {"ok": "正常", "off": "断电"},
+             "video": {"ok": "正常", "off": "停发"}}
+LINK_TOPICS = {T_SIM_LINK_MQTT: "mqtt", T_SIM_LINK_CAR: "car", T_SIM_LINK_VIDEO: "video"}
+JOINT_NAMES = ["关节0", "关节1", "关节2", "关节3", "夹爪", "臂yaw"]
+state.update(links={"mqtt": "ok", "car": "ok", "video": "ok"}, arm_plugged=True,
+             arm_echo=None)
+panel_client: dict = {"client": None}
+
+
+def publish(topic: str, payload: bytes, text: str, retain: bool = True) -> None:
+    client = panel_client["client"]
+    if client is None or not state["online"]:
+        state["action"] = "未连接 Broker，链路开关没发出去"
+        return
+    client.publish(topic, payload, qos=1, retain=retain)
+    if text:
+        state["action"] = text
+
+
+links = tk.LabelFrame(root, text="链路（测终端断线时的反应）")
+links.pack(fill="x", padx=8, pady=6)
+link_row = tk.Frame(links)
+link_row.pack(pady=4)
+for label, topic, actions in (
+        ("裁判数据", T_SIM_LINK_MQTT, (("断开", b"cut"), ("卡住", b"freeze"), ("恢复", b"ok"))),
+        ("车端", T_SIM_LINK_CAR, (("断电", b"off"), ("恢复", b"ok"))),
+        ("图传", T_SIM_LINK_VIDEO, (("停", b"off"), ("恢复", b"ok")))):
+    tk.Label(link_row, text=label).pack(side="left", padx=(8, 0))
+    for name, payload in actions:
+        button(link_row, name,
+               lambda t=topic, p=payload, s=f"{label}：{name}": publish(t, p, s)).pack(
+            side="left", padx=2)
+
+arm_row = tk.Frame(links)
+arm_row.pack(pady=4)
+tk.Label(arm_row, text="假机械臂").pack(side="left")
+button(arm_row, "拔线", lambda: publish(T_SIM_ARM_PLUGGED, b"0", "机械臂：拔线")).pack(
+    side="left", padx=2)
+button(arm_row, "插回", lambda: publish(T_SIM_ARM_PLUGGED, b"1", "机械臂：插回")).pack(
+    side="left", padx=2)
+button(arm_row, "坏帧", lambda: publish(T_SIM_ARM_BAD, b"1", "机械臂：发一帧坏帧",
+                                       retain=False)).pack(side="left", padx=2)
+
+
+def restore_links() -> None:
+    for topic in (T_SIM_LINK_MQTT, T_SIM_LINK_CAR, T_SIM_LINK_VIDEO):
+        publish(topic, b"ok", "")
+    publish(T_SIM_ARM_PLUGGED, b"1", "链路全部恢复")
+
+
+button(arm_row, "全部恢复", restore_links).pack(side="left", padx=(12, 2))
+
+joint_scales: list[tk.Scale] = []
+
+
+def send_joints(_value: str = "") -> None:
+    publish(T_SIM_ARM_JOINTS, json.dumps([scale.get() for scale in joint_scales]).encode(), "")
+
+
+for start in (0, 3):
+    joint_row = tk.Frame(links)
+    joint_row.pack(pady=2)
+    for name in JOINT_NAMES[start:start + 3]:
+        tk.Label(joint_row, text=name, width=5).pack(side="left")
+        scale = tk.Scale(joint_row, from_=-180, to=180, orient="horizontal", length=140,
+                         command=send_joints)
+        scale.pack(side="left", padx=(0, 8))
+        joint_scales.append(scale)
+
+
+def arm_text() -> str:
+    plugged = "插着" if state["arm_plugged"] else "拔了"
+    echo = state["arm_echo"]
+    if not echo or echo.get("joints_deg") is None:
+        return f"假机械臂 {plugged} · 车上机械臂 还没收到"
+    if echo.get("moving"):
+        angles = " ".join(f"{value:.0f}°" for value in echo["joints_deg"])
+        return f"假机械臂 {plugged} · 车上机械臂 跟随中 {angles}"
+    age_ms = echo.get("age_ms") or 0
+    age = f"{age_ms} ms" if age_ms < 1000 else f"{age_ms // 1000} 秒"
+    return f"假机械臂 {plugged} · 车上机械臂 停住（{age}没收到新姿态）"
+
+
 def on_message(_client, _userdata, message) -> None:
+    if message.topic in LINK_TOPICS:
+        state["links"][LINK_TOPICS[message.topic]] = message.payload.decode(errors="replace")
+        return
+    if message.topic == T_SIM_ARM_PLUGGED:
+        state["arm_plugged"] = message.payload != b"0"
+        return
+    if message.topic == T_SIM_ARM_ECHO:
+        try:
+            state["arm_echo"] = json.loads(message.payload)
+        except ValueError:
+            pass
+        return
     if message.topic == T_GAME_STATUS:
         status_msg = pb.GameStatus()
         try:
@@ -409,7 +511,9 @@ def subscribe() -> None:
             continue
         client.subscribe([(T_GAME_STATUS, 0), (T_ROBOT_HEALTH_SET, 0),
                           (T_SIM_AUTO_HP, 0), (T_BLIND_STATUS, 0),
-                          (T_ROBOT_RESPAWN, 0)])
+                          (T_ROBOT_RESPAWN, 0), (T_SIM_LINK_MQTT, 0), (T_SIM_LINK_CAR, 0),
+                          (T_SIM_LINK_VIDEO, 0), (T_SIM_ARM_PLUGGED, 0), (T_SIM_ARM_ECHO, 0)])
+        panel_client["client"] = client
         client.loop_forever(retry_first_connection=True)
 
 
@@ -450,8 +554,12 @@ def tick() -> None:
                          else f" · 买活 {cost} 金币{'够' if can_pay else '不足'}")
     else:
         respawn_text = "无"
+    link_text = "链路 " + " · ".join(
+        f"{label} {LINK_TEXT[key].get(state['links'][key], state['links'][key])}"
+        for label, key in (("裁判数据", "mqtt"), ("车端", "car"), ("图传", "video")))
     status.config(text=f"{head}\n{hp_text}\n{zone_text}\n{global_text}"
-                       f" · 致盲 {blind_text} · 复活 {respawn_text}\n{state['action']}")
+                       f" · 致盲 {blind_text} · 复活 {respawn_text}\n"
+                       f"{link_text}\n{arm_text()}\n{state['action']}")
     root.after(250, tick)
 
 

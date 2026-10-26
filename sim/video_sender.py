@@ -15,6 +15,7 @@ import argparse
 import random
 import socket
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -58,6 +59,30 @@ def split_access_units(stream: bytes) -> list[bytes]:
     return units
 
 
+def _follow_link_switch(link: dict) -> None:
+    """跟随 sim/Link/video：off 时停发（帧序号照走），ok 时恢复。连不上 Broker 就一直发。"""
+    import paho.mqtt.client as mqtt
+
+    from sim.constants import MQTT_PORT, T_SIM_LINK_VIDEO
+
+    def on_message(_client, _userdata, message):
+        on = message.payload != b"off"
+        if on != link["on"]:
+            print(f"[video_sender] 图传{'恢复' if on else '停发'}", flush=True)
+        link["on"] = on
+
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="sim-video-sender")
+    client.on_connect = lambda c, *_: c.subscribe(T_SIM_LINK_VIDEO)
+    client.on_message = on_message
+    while True:
+        try:
+            client.connect(SERVER_HOST, MQTT_PORT, keepalive=5)
+            break
+        except OSError:
+            time.sleep(0.5)
+    client.loop_forever(retry_first_connection=True)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--file", default=str(Path(__file__).resolve().parent / "assets" / "sim_feed.h265"))
@@ -66,6 +91,8 @@ def main() -> int:
     ap.add_argument("--fps", type=float, default=30.0)
     ap.add_argument("--loss", type=float, default=0.0, help="模拟丢包率 0~1")
     ap.add_argument("--jitter-ms", type=float, default=0.0, help="每包随机抖动上限")
+    ap.add_argument("--no-link-control", action="store_true",
+                    help="不听控制面板的「图传停 / 恢复」")
     args = ap.parse_args()
 
     path = Path(args.file)
@@ -87,6 +114,10 @@ def main() -> int:
     print(f"[video_sender] {len(frames)} 帧 -> udp://{args.host}:{args.port}  "
           f"fps={args.fps} loss={args.loss:.1%} 循环播放，Ctrl-C 退出")
 
+    link = {"on": True}
+    if not args.no_link_control:
+        threading.Thread(target=_follow_link_switch, args=(link,), daemon=True).start()
+
     frame_id = 0
     sent_packets = dropped = 0
     next_due = time.monotonic()
@@ -94,6 +125,8 @@ def main() -> int:
         while True:
             for au in frames:
                 for pkt in pack_frame(frame_id, au):
+                    if not link["on"]:
+                        break
                     if args.loss > 0 and rng.random() < args.loss:
                         dropped += 1
                         continue

@@ -48,7 +48,22 @@ T_ROBOT_HEALTH_SET = "RobotHealthSet"
 # 仅模拟器使用:服务器把随机掉血开关回显出来,控制面板的勾选状态才不会和服务器分叉。
 T_SIM_AUTO_HP = "sim/AutoHP"
 
-# 终端 -> 机器人 / 服务器。原生终端当前不发布这两个 topic；
-# 模拟器订阅它们只为断言「终端确实没有发出任何控制指令」。
-T_CUSTOM_CONTROL = "CustomControl"    # 对应 0x0311
+# 终端 -> 机器人 / 服务器。模拟器订阅并执行它们；控制面板的赛程指令也走 CommonCommand。
+T_CUSTOM_CONTROL = "CustomControl"    # 对应 0x0311；载荷是机械臂 0x0302 帧的 30 字节数据段
 T_COMMON_COMMAND = "CommonCommand"
+
+# ---------------- 链路故障注入（仅模拟器）----------------
+# 控制面板和 sim/links.py 往这些 topic 写状态，各模拟进程据此断开自己负责的那条链路。
+T_SIM_LINK_MQTT = "sim/Link/mqtt"     # retained: ok / cut / freeze（终端到 Broker 那一跳）
+T_SIM_LINK_CAR = "sim/Link/car"       # retained: ok / off（车端数据 RobotTelemetry 停发）
+T_SIM_LINK_VIDEO = "sim/Link/video"   # retained: ok / off（图传停发）
+T_SIM_ARM_PLUGGED = "sim/Arm/plugged" # retained: 1 / 0（假机械臂插着 / 拔了）
+T_SIM_ARM_JOINTS = "sim/Arm/joints"   # retained: JSON 6 个关节角（度）
+T_SIM_ARM_BAD = "sim/Arm/bad"         # 每收到一条就发一帧校验错的数据
+T_SIM_ARM_ECHO = "sim/ArmEcho"        # 模拟的车收到的机械臂姿态，JSON
+
+# 模拟环境里终端连这个端口，经 sim/link_proxy.py 转发到 Broker。这样「断开裁判数据」
+# 只断终端这一跳，模拟器自己和控制面板照常连着，按钮才能再把它接回来。
+MQTT_PROXY_PORT = 3335
+# 假机械臂的串口（pty 的符号链接），对应终端配置 controller_serial。
+ARM_SERIAL_PATH = os.environ.get("RM_ARM_SERIAL", "/tmp/rm_terminal_arm")

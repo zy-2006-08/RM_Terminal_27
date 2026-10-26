@@ -7,7 +7,8 @@
     RobotPosition      1Hz
     Event              触发式
     RobotTelemetry     50Hz（机器人 -> 终端，对应 0x0310）
-同时订阅终端下行的 CustomControl / CommonCommand 并打印，验证双向链路。
+同时订阅终端下行的 CustomControl / CommonCommand：CustomControl 载荷是机械臂的
+关节角，模拟的车据此「跟随」，0.2 秒收不到就停住，状态发到 sim/ArmEcho。
 
 【本地模拟词汇，非正式协议】RM2027 至今未发布正式协议，其中**没有**任何
 「基地致盲」状态字段，也**没有**多机器人位置集合。下列两路数据完全是本文件
@@ -20,6 +21,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import random
@@ -52,18 +54,16 @@ from sim.constants import (
     T_ROBOT_HEALTH_SET,
     T_ROBOT_POSITION_SET,
     T_ROBOT_RESPAWN,
+    T_SIM_ARM_ECHO,
+    T_SIM_LINK_CAR,
     T_TELEMETRY,
 )
+from sim.arm_protocol import decode_joints_deg
 
-_CMD_NAMES = {
-    0x01: "设置底盘模式",
-    0x02: "切换自瞄",
-    0x03: "紧急停止",
-    0x04: "云台回中",
-}
+# 车上机械臂多久没收到新姿态就算「停住」。控制器固件 25Hz,丢 5 帧。
+_ARM_STOP_AFTER_S = 0.2
 
-# 赛程控制指令,走已有的 CommonCommand 下行通道。编号从 0x10 起,与上面 CustomControl
-# 的 0x01..0x04 分开:两者是不同的 topic,但共用一套编号会让日志难以判读。
+# 赛程控制指令,走已有的 CommonCommand 下行通道。编号从 0x10 起。
 # 【本地模拟词汇】2027 协议里没有「终端控制赛程」这回事,真机上赛程只由裁判系统决定。
 CTRL_BEGIN = 0x10
 CTRL_HOLD = 0x11
@@ -1481,19 +1481,26 @@ def _publish(client: mqtt.Client, topic: str, msg) -> None:
 
 def _on_connect(client, userdata, flags, reason_code, properties=None):
     print(f"[server] MQTT 已连接 ({reason_code})，订阅终端下行指令")
-    client.subscribe([(T_CUSTOM_CONTROL, 0), (T_COMMON_COMMAND, 0)])
+    client.subscribe([(T_CUSTOM_CONTROL, 0), (T_COMMON_COMMAND, 0), (T_SIM_LINK_CAR, 0)])
 
 
 def _on_message(client, userdata, message):
     if message.topic == T_CUSTOM_CONTROL:
+        # 终端把机械臂 0x0302 帧的 30 字节数据段原样转来：前 24 字节是 6 个关节角。
         m = pb.CustomControl()
-        m.ParseFromString(message.payload)
-        raw = m.data
-        if len(raw) >= 2:
-            name = _CMD_NAMES.get(raw[0], f"0x{raw[0]:02X}")
-            print(f"[server] 收到 CustomControl <- 终端：{name} 参数={raw[1]} "
-                  f"({len(raw)} 字节，上限 30)")
-            userdata.apply_command(raw[0], raw[1])
+        try:
+            m.ParseFromString(message.payload)
+        except Exception:
+            return
+        if len(m.data) >= 24:
+            userdata.arm_joints = decode_joints_deg(m.data)
+            userdata.arm_at = time.monotonic()
+            userdata.arm_frames += 1
+    elif message.topic == T_SIM_LINK_CAR:
+        online = message.payload != b"off"
+        if online != userdata.car_online:
+            print(f"[server] 车端数据 {'恢复' if online else '断电（RobotTelemetry 停发）'}")
+        userdata.car_online = online
     elif message.topic == T_COMMON_COMMAND:
         m = pb.CommonCommand()
         m.ParseFromString(message.payload)
@@ -1507,22 +1514,11 @@ def _on_message(client, userdata, message):
 
 def main() -> int:
     match = SimulatedMatch()
-
-    def apply_command(cmd: int, param: int) -> None:
-        if cmd == 0x01:
-            match.chassis_mode = param
-            match.events.append((0, f"底盘模式切换为 {param}", 0))
-        elif cmd == 0x02:
-            match.autoaim = bool(param)
-            match.events.append((0, f"自瞄{'启用' if param else '关闭'}", 0))
-        elif cmd == 0x03:
-            match.chassis_mode = 0
-            match.autoaim = False
-            match.events.append((3, "终端下发紧急停止", 0))
-        elif cmd == 0x04:
-            match.events.append((0, "云台回中", 0))
-
-    match.apply_command = apply_command
+    match.car_online = True
+    match.arm_joints = None
+    match.arm_at = None
+    match.arm_frames = 0
+    match.arm_moving = False
 
     def apply_control(cmd: int, param: int = 0) -> None:
         if cmd == CTRL_BEGIN:
@@ -1710,7 +1706,23 @@ def main() -> int:
             m.bbox_cy = 540 + 190 * math.sin(e * 0.42)
             m.bbox_w = 210 - 70 * abs(math.sin(e * 0.35))
             m.bbox_h = 150 - 50 * abs(math.sin(e * 0.35))
-        _publish(client, T_TELEMETRY, m)
+        if match.car_online:
+            _publish(client, T_TELEMETRY, m)
+
+    def send_arm_echo() -> None:
+        # 模拟的车：超过 _ARM_STOP_AFTER_S 没收到新姿态就停住，绝不按最后一帧继续动。
+        age = None if match.arm_at is None else time.monotonic() - match.arm_at
+        moving = age is not None and age < _ARM_STOP_AFTER_S
+        if moving != match.arm_moving:
+            print(f"[server] 车上机械臂 {'开始跟随' if moving else '停住（没收到新姿态）'}")
+            match.arm_moving = moving
+        client.publish(T_SIM_ARM_ECHO, json.dumps({
+            "moving": moving,
+            "age_ms": None if age is None else int(age * 1000),
+            "frames": match.arm_frames,
+            "joints_deg": None if match.arm_joints is None
+            else [round(value, 1) for value in match.arm_joints],
+        }))
 
     def send_game_status() -> None:
         stage, remain = match.stage()
@@ -1840,6 +1852,7 @@ def main() -> int:
         threading.Thread(target=loop, args=(1 / 5, send_health_set), daemon=True),
         threading.Thread(target=loop, args=(1.0, send_respawn), daemon=True),
         threading.Thread(target=loop, args=(1 / 20, send_events), daemon=True),
+        threading.Thread(target=loop, args=(1 / 10, send_arm_echo), daemon=True),
     ]
     for w in workers:
         w.start()

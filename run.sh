@@ -37,6 +37,8 @@ fi
 pkill -f 'rm_terminal' 2>/dev/null || true
 pkill -f 'match_server' 2>/dev/null || true
 pkill -f 'video_sender' 2>/dev/null || true
+pkill -f 'sim.link_proxy' 2>/dev/null || true
+pkill -f 'sim.fake_arm' 2>/dev/null || true
 pkill -f 'mosquitto -p 3333' 2>/dev/null || true
 sleep 1
 
@@ -56,29 +58,48 @@ fi
 cleanup() {
   echo ""
   echo "[run] 停止所有进程..."
-  for p in $MOSQ $SERVER $VIDEO; do
+  for p in $MOSQ $PROXY $SERVER $VIDEO $ARM; do
     [ -n "$p" ] && kill "$p" 2>/dev/null || true
   done
   wait 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
-echo "[run] 1/4 启动 MQTT Broker (模拟赛事引擎服务器，端口 3333)"
+echo "[run] 1/6 启动 MQTT Broker (模拟赛事引擎服务器，端口 3333)"
 mosquitto -p 3333 >"$LOGS/mosquitto.log" 2>&1 &
 MOSQ=$!
 sleep 1
 
-echo "[run] 2/4 启动模拟赛事服务器 + 机器人遥测"
+echo "[run] 2/6 启动链路开关 (终端经 3335 连 Broker，控制面板可以模拟断线)"
+"${PY[@]}" -m sim.link_proxy >"$LOGS/proxy.log" 2>&1 &
+PROXY=$!
+
+echo "[run] 3/6 启动模拟赛事服务器 + 机器人遥测"
 "${PY[@]}" -m sim.match_server >"$LOGS/server.log" 2>&1 &
 SERVER=$!
 sleep 1
 
-echo "[run] 3/4 启动模拟图传发送端 (丢包率 $LOSS)"
+echo "[run] 4/6 启动模拟图传发送端 (丢包率 $LOSS)"
 "${PY[@]}" -m sim.video_sender --loss "$LOSS" >"$LOGS/video.log" 2>&1 &
 VIDEO=$!
+
+ARM_PATH="${RM_ARM_SERIAL:-/tmp/rm_terminal_arm}"
+echo "[run] 5/6 启动假机械臂 (串口 $ARM_PATH)"
+"${PY[@]}" -m sim.fake_arm --path "$ARM_PATH" >"$LOGS/arm.log" 2>&1 &
+ARM=$!
 sleep 1
 
-echo "[run] 4/4 启动原生终端 UI ($TERMINAL_BIN)"
+# 终端在模拟环境里经链路开关连 Broker，串口接假机械臂。其余配置沿用 ./rm_terminal.conf；
+# 配置文件不允许重复的键，所以先去掉这三项再追加。
+SIM_CONF="$LOGS/sim.conf"
+{
+  [ -f rm_terminal.conf ] && grep -vE '^[[:space:]]*(mqtt_host|mqtt_port|controller_serial)[[:space:]]*=' rm_terminal.conf
+  echo "mqtt_host=127.0.0.1"
+  echo "mqtt_port=3335"
+  echo "controller_serial=$ARM_PATH"
+} >"$SIM_CONF"
+
+echo "[run] 6/6 启动原生终端 UI ($TERMINAL_BIN)"
 echo "[run] 日志目录: $LOGS"
 echo ""
-"$TERMINAL_BIN"
+"$TERMINAL_BIN" --config "$SIM_CONF"
