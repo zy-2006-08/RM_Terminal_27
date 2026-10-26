@@ -156,7 +156,8 @@ def main() -> int:
     conf = run_dir / "terminal.conf"
     conf.write_text(f"mqtt_host=127.0.0.1\nmqtt_port={MQTT_PROXY_PORT}\n"
                     f"controller_serial={arm_path}\nlog_destination={log.path}\n"
-                    "self_robot_id=3\n", encoding="utf-8")
+                    "self_robot_id=3\n"
+                    f"speech_dir={run_dir / 'no-voice'}\n", encoding="utf-8")
     env = dict(os.environ, RM_SELF_ID="3", QT_QPA_PLATFORM="offscreen")
     procs: list[subprocess.Popen] = []
 

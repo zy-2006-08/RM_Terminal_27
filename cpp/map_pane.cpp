@@ -346,6 +346,36 @@ void MapPane::paintEvent(QPaintEvent*) {
                               status.missing.join(QStringLiteral(" / "))));
     if (status.self_position_unavailable)
         line(kAlertText, QStringLiteral("自机位置不可用 · 单机 RobotPosition 未收到"));
+
+    if (base_alert_) {
+        // 场地图还是 2026 的,画不准 2027 基地的确切位置,所以闪我方那一半的边框并标在
+        // 我方一侧;换成 2027 场地图后再改成在基地处闪。
+        const QColor red(255, 80, 80, base_alert_bright_ ? 255 : 110);
+        painter.setPen(QPen(red, 4));
+        painter.setBrush(Qt::NoBrush);
+        const int half = view.width / 2;
+        const QRect side(base_alert_left_ ? view.x : view.x + half, view.y, half, view.height);
+        painter.drawRoundedRect(side.adjusted(2, 2, -2, -2), 6, 6);
+        QFont font = painter.font();
+        font.setPointSize(14);
+        font.setBold(true);
+        painter.setFont(font);
+        const QString text = QStringLiteral("基地被攻击");
+        const QRect box = painter.fontMetrics().boundingRect(text).adjusted(-10, -5, 10, 5);
+        const QRect tag = box.translated(side.center() - box.center());
+        painter.fillRect(tag, QColor(58, 13, 18, 220));
+        painter.setPen(QColor(255, 154, 162));
+        painter.drawText(tag, Qt::AlignCenter, text);
+    }
+}
+
+void MapPane::setBaseAlert(bool active, bool our_side_left, bool bright) {
+    if (active == base_alert_ && our_side_left == base_alert_left_ && bright == base_alert_bright_)
+        return;
+    base_alert_ = active;
+    base_alert_left_ = our_side_left;
+    base_alert_bright_ = bright;
+    update();
 }
 
 }  // namespace rm_terminal

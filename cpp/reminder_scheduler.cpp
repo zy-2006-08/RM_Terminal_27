@@ -213,6 +213,7 @@ ReminderDecision ReminderScheduler::step(const ReminderInputs& inputs, Monotonic
     const bool audio_ready = inputs.audio.state == AudioReadiness::Ready &&
                              inputs.audio.generation == config_generation_;
     for (const auto& item : crossed) consumed_.insert(item.id);
+    out.due = crossed;
     if (audio_ready) out.enqueue = std::move(crossed);
     out.allow_playback = !paused_now && audio_ready;
     out.status = paused_now ? ReminderStatus::Paused : ReminderStatus::Active;

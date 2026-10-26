@@ -72,3 +72,13 @@ controller_baud=115200
 # MQTT keepalive in seconds. A pulled cable is only noticed after about two
 # keepalive periods; the 裁判 light turns red after 2 s without data regardless.
 mqtt_keepalive_s=5
+
+# Event alerts to switch off, comma separated: outpost, control, fortress, dart,
+# energy, reinforce, low_hp, base. All are on by default.
+#alerts_disabled=dart,energy
+
+# Control-point deficit that triggers the 控制度落后 alert.
+alert_control_gap=30
+
+# Linux voice install directory (scripts/setup_voice.sh). Default:
+#speech_dir=/home/you/.local/share/rm_terminal/tts

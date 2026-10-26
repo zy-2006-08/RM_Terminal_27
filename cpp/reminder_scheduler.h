@@ -48,6 +48,9 @@ struct ReminderInputs {
 // 于是同一套时序规则可以在没有音频设备的测试里逐条验证。
 struct ReminderDecision {
     std::vector<ReminderItem> enqueue;
+    // 这一刻到点的全部提醒,与音频是否就绪无关。界面据此出横幅:没有语音的电脑上,
+    // 横幅是唯一的提醒。
+    std::vector<ReminderItem> due;
     ReminderCancellation cancel = ReminderCancellation::None;
     // 比赛开始时必须掐掉赛前试听,否则试听声会盖住真正的战术播报。
     bool cancel_preview = false;

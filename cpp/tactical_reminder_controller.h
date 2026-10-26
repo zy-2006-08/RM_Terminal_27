@@ -89,8 +89,15 @@ public:
     // 而不是让下拉停在列表第一项 —— 那会显示成一个并非实际在用的声音。
     QString currentVoice() const { return voice_; }
 
+    // 事件提醒的语音,`path` 是已经合成好的文件。和战术提醒共用一个喇叭:同一时刻只放
+    // 一句;事件提醒排在下一条战术提醒前面,但不打断正在播的那一句。最多排 3 句,
+    // 再多就丢最早的 —— 排得太久的事件已经不是「现在」发生的了。
+    void announce(const QString& path);
+
 Q_SIGNALS:
     void stateChanged();
+    // 一条战术提醒到点,与音频是否就绪无关。界面据此出横幅。
+    void reminderDue(const QString& text);
 
 private:
     // 一批待合成任务。真实后端只有一个 say 进程槽位,并发下发会让后一个任务
@@ -129,6 +136,12 @@ private:
     QString previewPath(const ReminderItem& item, const QString& voice_key) const;
     void pump(MonotonicMs now);
     MonotonicMs now() const;
+    // 停掉当前播放。被停止的那一句不会有完成回调,所以事件提醒的在途令牌要一起清掉,
+    // 否则后面的事件提醒会以为喇叭一直被占着。
+    void stopAudio();
+
+    std::deque<QString> alert_queue_;
+    quint64 alert_token_ = 0;
 
     std::unique_ptr<ReminderRepository> repository_;
     SpeechBackend* backend_;

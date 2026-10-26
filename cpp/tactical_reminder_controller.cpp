@@ -130,7 +130,7 @@ QString ReminderController::previewPath(const ReminderItem& item, const QString&
 
 void ReminderController::prepareAudio() {
     playback_.cancelAll();
-    backend_->stop();
+    stopAudio();
     synth_queue_.clear();
     synth_token_ = 0;
     preview_synth_token_ = 0;
@@ -238,6 +238,11 @@ void ReminderController::onSynthesized(quint64 token, bool ok, const QString& er
 }
 
 void ReminderController::onPlayed(quint64 token, bool ok, const QString& error) {
+    if (alert_token_ != 0 && token == alert_token_) {
+        alert_token_ = 0;
+        pump(now());
+        return;
+    }
     if (preview_play_token_ != 0 && token == preview_play_token_) {
         preview_play_token_ = 0;
         if (!ok) {
@@ -267,10 +272,11 @@ void ReminderController::observe(const ReminderInputs& inputs, MonotonicMs now) 
     if (master_override_) scoped.master_enabled = *master_override_;
 
     const auto decision = scheduler_.step(scoped, now);
+    for (const auto& item : decision.due) Q_EMIT reminderDue(QString::fromStdString(item.text));
 
     if (decision.cancel_preview && (preview_play_token_ != 0 || preview_synth_token_ != 0)) {
         // 比赛开始必须掐掉试听:试听声会盖住真正的战术播报。
-        backend_->stop();
+        stopAudio();
         preview_play_token_ = 0;
         preview_synth_token_ = 0;
     }
@@ -282,7 +288,7 @@ void ReminderController::observe(const ReminderInputs& inputs, MonotonicMs now) 
             break;
         case ReminderCancellation::All:
             playback_.cancelAll();
-            backend_->stop();
+            stopAudio();
             break;
     }
     for (const auto& item : decision.enqueue)
@@ -310,8 +316,28 @@ void ReminderController::observe(const ReminderInputs& inputs, MonotonicMs now) 
 
 void ReminderController::tick(MonotonicMs now) { pump(now); }
 
+void ReminderController::stopAudio() {
+    backend_->stop();
+    alert_token_ = 0;
+}
+
+void ReminderController::announce(const QString& path) {
+    if (path.isEmpty() || !backend_->available()) return;
+    alert_queue_.push_back(path);
+    while (alert_queue_.size() > 3) alert_queue_.pop_front();
+    pump(now());
+}
+
 void ReminderController::pump(MonotonicMs now) {
     if (preview_play_token_ != 0 || preview_synth_token_ != 0) return;
+    if (alert_token_ != 0) return;
+    if (!playback_.busy() && !alert_queue_.empty()) {
+        const QString path = alert_queue_.front();
+        alert_queue_.pop_front();
+        alert_token_ = next_token_++;
+        backend_->play(path, alert_token_);
+        return;
+    }
     const auto command = playback_.tick(now, allow_playback_);
     if (!command) return;
     backend_->play(QString::fromStdString(command->path), command->token);
@@ -397,7 +423,7 @@ void ReminderController::disableMaster() {
     // 先静音再落盘。反过来会让持久化失败时静音也失败 —— 操作手按了关闭就必须
     // 立刻安静,落盘结果只是一条提示。
     playback_.cancelAll();
-    backend_->stop();
+    stopAudio();
     synth_queue_.clear();
     synth_token_ = 0;
     preview_play_token_ = 0;

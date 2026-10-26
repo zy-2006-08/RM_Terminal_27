@@ -103,8 +103,10 @@ echo "== started video_sender (pid $!)"
 
 # A dedicated log: the default rm_terminal.log opens in APPEND mode, so parsing it
 # would also see every previous run's transitions.
+# speech_dir 指向不存在的目录:验收期间事件提醒只出横幅,不从喇叭里出声。
 cat > "$CONF" <<CONF
 log_destination = $TERMINAL_LOG
+speech_dir = $RUN_DIR/no-voice
 CONF
 
 QT_QPA_PLATFORM=offscreen "$BINARY" --no-record --config "$CONF" > "$RUN_DIR/terminal_stdout.log" 2>&1 &

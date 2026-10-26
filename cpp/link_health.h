@@ -118,6 +118,8 @@ struct SelfCheckInputs {
     QString recording_error;
     std::optional<std::int64_t> free_bytes;
     bool speech_available = false;
+    // 没有语音时告诉操作手怎么装(语音后端的 unavailableReason)。
+    QString speech_hint;
 };
 
 struct SelfCheck {

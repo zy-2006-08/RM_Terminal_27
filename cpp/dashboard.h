@@ -10,6 +10,7 @@
 #include "battle_analysis_pane.h"
 #include "event_feed_pane.h"
 #include "link_health.h"
+#include "match_alerts.h"
 #include "top_bar.h"
 #include "ui_mode.h"
 #include "video_receiver.h"
@@ -177,6 +178,13 @@ public:
     bool selfCheckVisible() const;
     void setSelfCheckVisible(bool visible);
 
+    // 事件提醒横幅。排队规则见 BannerQueue;显示在顶部比分栏正下方,不进 layout,
+    // 出现和消失都不会推动其他控件。
+    void showAlert(const QString& text, AlertLevel level, MonotonicMs now);
+    // 我方基地被攻击:地图上闪 kBaseFlashMs。
+    void flashBase(MonotonicMs now);
+    QString alertBannerText() const;
+
     // 回放控制栏只在回放模式出现。用回调而不是 Dashboard 信号,避免这个只做
     // 展示的控件反向依赖主程序里的 ReplayPlayer。
     void showReplayControls(bool visible);
@@ -231,6 +239,10 @@ private:
     SelfCheckPanel* self_check_ = nullptr;
     bool self_check_enabled_ = false;
     bool was_pre_match_ = false;
+    QLabel* alert_banner_ = nullptr;
+    BannerQueue banners_;
+    MonotonicMs base_flash_until_ = 0;
+    bool our_base_left_ = true;
     ReminderController* reminders_ = nullptr;
     ReminderDialog* reminder_dialog_ = nullptr;
 

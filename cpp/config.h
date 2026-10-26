@@ -2,6 +2,7 @@
 
 #include "logging.h"
 #include <QString>
+#include <QStringList>
 
 namespace rm_terminal {
 
@@ -49,7 +50,18 @@ struct Config {
     // 网线被拔时对端不会正常挂断,只能靠保活超时发现,大约要两个保活周期。原先写死
     // 30 秒,意味着断线后近一分钟才开始重连。
     int mqtt_keepalive_s = 5;
+    // 关掉的事件提醒种类,取值见 alert_kind_names()。默认全开。
+    QStringList alerts_disabled;
+    // 控制度落后多少分提醒一次。
+    int alert_control_gap = 30;
+    // Linux 离线语音的安装目录(scripts/setup_voice.sh 装到哪里)。空 = 默认位置
+    // ~/.local/share/rm_terminal/tts。
+    QString speech_dir;
 };
+
+// 事件提醒种类在配置里的名字。与 match_alerts.cpp 的 alert_kind_name 一一对应,
+// match_alerts_test 断言两边一致。
+const QStringList& alert_kind_names();
 
 // Loads configuration from `path`.
 //

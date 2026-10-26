@@ -780,6 +780,16 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     victory_->setSource(QUrl(QStringLiteral("qrc:/qml/VictoryOverlay.qml")));
     victory_->setVisible(false);
 
+    // 我方基地在地图哪一侧。场地图红方在左。
+    our_base_left_ = config.self_robot_id <= 100;
+
+    alert_banner_ = new QLabel(this);
+    alert_banner_->setObjectName(QStringLiteral("alertBanner"));
+    alert_banner_->setAlignment(Qt::AlignCenter);
+    alert_banner_->setFont(theme::labelFont(16, true));
+    alert_banner_->setAttribute(Qt::WA_TransparentForMouseEvents);
+    alert_banner_->setVisible(false);
+
     // 和弹窗一样不进 layout:它出现时不能把整屏控件推位。
     self_check_ = new SelfCheckPanel(this);
     self_check_->setVisible(false);
@@ -928,6 +938,37 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
         overlay->setProperty("shown", popup_shown);
     }
     if (popup_shown) popup_->raise();
+
+    const auto banner = banners_.current(now);
+    alert_banner_->setVisible(banner.has_value());
+    if (banner) {
+        if (alert_banner_->text() != banner->text) alert_banner_->setText(banner->text);
+        QString colors = QStringLiteral("background:rgba(10,36,46,235); color:#9eeaf7;"
+                                        " border:2px solid #40d0e8;");
+        if (banner->level == AlertLevel::Warning)
+            colors = QStringLiteral("background:rgba(52,38,10,235); color:#ffd27a;"
+                                    " border:2px solid #e0a43a;");
+        if (banner->level == AlertLevel::Critical)
+            colors = QStringLiteral("background:rgba(58,13,18,235); color:#ffb3b8;"
+                                    " border:2px solid #f85c5c;");
+        alert_banner_->setStyleSheet(colors + QStringLiteral(" border-radius:6px; padding:6px 18px;"));
+        const QSize hint = alert_banner_->sizeHint();
+        const int width = std::min(hint.width() + 24, this->width() - 80);
+        alert_banner_->setGeometry((this->width() - width) / 2, top_bar_->geometry().bottom() + 8,
+                                   width, hint.height() + 6);
+        alert_banner_->raise();
+    }
+    map_->setBaseAlert(now < base_flash_until_, our_base_left_, (now / 300) % 2 == 0);
+}
+
+void Dashboard::showAlert(const QString& text, AlertLevel level, MonotonicMs now) {
+    banners_.push(text, level, now);
+}
+
+void Dashboard::flashBase(MonotonicMs now) { base_flash_until_ = now + 3000; }
+
+QString Dashboard::alertBannerText() const {
+    return alert_banner_->isVisible() ? alert_banner_->text() : QString();
 }
 
 void Dashboard::showVideoPage() {

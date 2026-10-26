@@ -41,7 +41,8 @@ add_library(terminal_controller
 target_include_directories(terminal_controller PUBLIC cpp)
 target_link_libraries(terminal_controller PUBLIC terminal_domain terminal_logging Qt6::Core)
 add_library(terminal_presentation cpp/presentation.cpp cpp/ui_mode.cpp cpp/ui_mode.h cpp/popup_state.cpp cpp/popup_state.h cpp/game_result.cpp cpp/game_result.h cpp/field_map.cpp cpp/field_map.h cpp/top_bar_model.cpp cpp/top_bar_model.h cpp/reminder_scheduler.cpp cpp/reminder_scheduler.h cpp/tactical_reminder.h
-    cpp/link_health.cpp cpp/link_health.h)
+    cpp/link_health.cpp cpp/link_health.h
+    cpp/match_alerts.cpp cpp/match_alerts.h)
 target_link_libraries(terminal_presentation PUBLIC terminal_domain terminal_logging Qt6::Core)
 
 # 战术提醒的持久化和语音后端。独立于 terminal_presentation:调度器是纯逻辑,
@@ -50,15 +51,21 @@ add_library(terminal_reminders
     cpp/reminder_repository.cpp cpp/reminder_repository.h
     cpp/reminder_playback.cpp cpp/reminder_playback.h
     cpp/tactical_reminder_controller.cpp cpp/tactical_reminder_controller.h
+    cpp/alert_voice.cpp cpp/alert_voice.h
     cpp/speech_backend.h)
 target_include_directories(terminal_reminders PUBLIC cpp)
 target_link_libraries(terminal_reminders PUBLIC terminal_presentation Qt6::Core)
-# 语音后端按平台条件编译。Linux 上刻意没有后端:没有已核实的本机中文离线语音,
-# 与其接一个念不出中文的实现,不如让上层明确报告该平台没有语音。
+# 语音后端按平台条件编译。macOS 用系统 say;Linux 用 scripts/setup_voice.sh 装的
+# Piper「超文」(操作手试听后选定),没装时运行期报告「没装离线语音」。
 if(APPLE)
     target_sources(terminal_reminders PRIVATE
         cpp/macos_speech_backend.cpp cpp/macos_speech_backend.h)
     target_compile_definitions(terminal_reminders PUBLIC RM_TERMINAL_HAS_SPEECH=1)
+elseif(UNIX)
+    target_sources(terminal_reminders PRIVATE
+        cpp/piper_speech_backend.cpp cpp/piper_speech_backend.h)
+    target_compile_definitions(terminal_reminders PUBLIC RM_TERMINAL_PIPER_SPEECH=1
+        RM_TERMINAL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 endif()
 
 # Separate from terminal_presentation because the map pane is the first component
@@ -177,6 +184,9 @@ if(BUILD_TESTING)
     add_executable(link_health_test cpp/link_health_test.cpp)
     target_link_libraries(link_health_test PRIVATE terminal_presentation)
     add_test(NAME link_health COMMAND link_health_test)
+    add_executable(match_alerts_test cpp/match_alerts_test.cpp)
+    target_link_libraries(match_alerts_test PRIVATE terminal_presentation)
+    add_test(NAME match_alerts COMMAND match_alerts_test)
     add_executable(replay_player_test cpp/replay_player_test.cpp cpp/replay_player.cpp cpp/replay_player.h)
     target_link_libraries(replay_player_test PRIVATE terminal_domain terminal_recording terminal_video Qt6::Core)
     target_compile_definitions(replay_player_test PRIVATE QT_NO_KEYWORDS)

@@ -740,6 +740,36 @@ void link_lights_and_self_check_fit_and_follow_the_stage() {
     check(!dashboard.selfCheckVisible(), "the match starting closes the self-check");
 }
 
+// 事件横幅悬浮在比分栏下方:出现和消失都不能推动布局,严重的先显示,4 秒后换下一条。
+void alert_banners_float_and_queue() {
+    Dashboard dashboard(test_config());
+    dashboard.resize(kMinWidth, kMinHeight);
+    drive_to_info(dashboard);
+    const QWidget* map = find(dashboard, "mapPane");
+    const QRect map_before = map->geometry();
+
+    dashboard.showAlert(QStringLiteral("小能量机关可以激活了"), AlertLevel::Info, 10000);
+    dashboard.showAlert(QStringLiteral("基地被攻击"), AlertLevel::Critical, 10000);
+    dashboard.flashBase(10000);
+    dashboard.update(base_snapshot(), nullptr, 10000);
+    settle(dashboard);
+    check(dashboard.alertBannerText() == QStringLiteral("基地被攻击"), "the critical banner goes first");
+    const QWidget* banner = find(dashboard, "alertBanner");
+    const QWidget* top = find(dashboard, "topBar");
+    check(banner->geometry().top() > top->geometry().bottom(), "the banner sits below the top bar");
+    check(dashboard.rect().contains(banner->geometry()), "the banner stays inside the window");
+    check(map->geometry() == map_before, "showing a banner does not move the layout");
+
+    dashboard.update(base_snapshot(), nullptr, 14000);
+    settle(dashboard);
+    check(dashboard.alertBannerText() == QStringLiteral("小能量机关可以激活了"),
+          "after 4 s the next banner shows");
+    dashboard.update(base_snapshot(), nullptr, 18000);
+    settle(dashboard);
+    check(dashboard.alertBannerText().isEmpty(), "with nothing queued the banner hides");
+    check(map->geometry() == map_before, "hiding the banner does not move the layout");
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -763,6 +793,7 @@ int main(int argc, char* argv[]) {
         a_blocking_popup_renders_above_both_pages_without_moving_the_layout();
         the_popup_also_covers_the_video_page();
         link_lights_and_self_check_fit_and_follow_the_stage();
+        alert_banners_float_and_queue();
         check(!qml_error, "all dashboard QML loads and runs without warnings");
     } catch (const std::exception& error) {
         std::cerr << "FAIL " << error.what() << '\n';

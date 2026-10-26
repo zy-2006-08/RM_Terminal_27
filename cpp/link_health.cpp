@@ -208,7 +208,7 @@ SelfCheck build_self_check(const SelfCheckInputs& inputs) {
             {QStringLiteral("语音提醒"), CheckLevel::Ok, QStringLiteral("可以用"), QString()});
     else
         check.rows.push_back({QStringLiteral("语音提醒"), CheckLevel::Warn,
-                              QStringLiteral("这台电脑没有语音，只有横幅"), QString()});
+                              QStringLiteral("这台电脑没有语音，提醒只有横幅"), inputs.speech_hint});
 
     for (const CheckRow& row : check.rows)
         if (row.level == CheckLevel::Fail) ++check.failures;

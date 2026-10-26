@@ -52,6 +52,9 @@ required to change them. Copy `rm_terminal.conf.sample` and edit it.
 | `controller_serial` | (unset) | Custom controller serial port; unset means this seat has none |
 | `controller_baud` | `115200` | Controller baud rate; one of 9600 … 921600. The firmware uses 115200 |
 | `mqtt_keepalive_s` | `5` | MQTT keepalive; a pulled cable is detected after about two of these |
+| `alerts_disabled` | (none) | Comma list of event alerts to switch off: `outpost`, `control`, `fortress`, `dart`, `energy`, `reinforce`, `low_hp`, `base` |
+| `alert_control_gap` | `30` | Control-point deficit that triggers the 控制度落后 alert |
+| `speech_dir` | (default) | Linux voice install directory; default `~/.local/share/rm_terminal/tts` |
 
 Every integer key rejects zero and negatives except `blind_stale_fallback_ms`,
 which accepts `0` to mean "never fall back to video just because blind telemetry
@@ -114,7 +117,13 @@ ts=<ISO8601 UTC with ms> level=<level> event=<token> key=value ...
 
 Event tokens: `startup`, `shutdown`, `reconnect_mqtt`, `reconnect_udp`,
 `decode_failure`, `stale_data`, `packet_loss`,
-`ui_mode_switch`, `quit_signal`, `link_state`, `controller_link`.
+`ui_mode_switch`, `quit_signal`, `link_state`, `controller_link`, `alert`,
+`alert_voice`.
+
+`alert` carries `kind` (an `alerts_disabled` name, or `tactical` for a due tactical
+reminder), `level` (`critical`, `warning`, `info`) and the banner `text`.
+`alert_voice` reports pre-synthesis of the alert phrases (`state=preparing|ready`,
+or `synth_failed` with the phrase and error).
 
 `link_state` carries `link` (`referee`, `car`, `video`, `controller`), `from`, `to`
 (`Ok`, `Warn`, `Down`, `Off`), `summary` and `detail`, and is written only when a
@@ -321,6 +330,46 @@ the user must be in the `dialout` group to open `/dev/ttyUSB*`; use a
 `/dev/serial/by-id/...` path, which survives replugging. Forwarded frames are also
 recorded.
 
+## 事件提醒 (match alerts)
+
+`cpp/match_alerts.cpp` turns each snapshot into new alerts, unit-tested in
+`match_alerts_test`. Each alert shows a banner under the top bar (critical red,
+warning amber, info cyan; 4 s each, critical first, anything that waited over 10 s
+is dropped) and speaks a fixed phrase. A due tactical reminder also shows a banner,
+whether or not the machine has a voice.
+
+| `alerts_disabled` name | Fires when | How often |
+| --- | --- | --- |
+| `outpost` | our outpost zone becomes enemy temporary control; again when it becomes enemy full control | once per change |
+| `control` | enemy control points lead by `alert_control_gap` | once; re-armed after the gap falls below half |
+| `fortress` | the fortress is taken by the enemy, by us, or vacated | once per change |
+| `dart` | 10 s before and at the dart gate chances (0:30, 4:00) | once per point |
+| `energy` | small energy chances (0:00, 1:30), large (3:00, 4:15, 5:30) | once per point |
+| `reinforce` | our reinforce chances go from 0 to at least 1 | once per change |
+| `low_hp` | an enemy robot drops to 25% HP or below | once per robot until it recovers above 50% or dies |
+| `base` | our base HP drops | at most once per 10 s, and the map flashes our half for 3 s |
+
+The times are match elapsed seconds from the 2027 rules manual V1.0.0 (§5.6.3
+energy, §5.7.3 dart, §5.2 reinforce). Timeline points only fire within 5 s of being
+crossed, so joining mid-match or jumping the clock never replays old ones. The
+zone, fortress and reinforce fields are local simulation vocabulary until the 2027
+protocol is published.
+
+Voice: alert phrases are synthesized before the match by a second speech backend
+(`cpp/alert_voice.cpp`) and played through the reminder controller, which owns the
+single speaker: an alert never interrupts a sentence, but goes ahead of the next
+tactical reminder. macOS uses `say`. Linux uses Piper with the 超文 voice, installed
+by `bash scripts/setup_voice.sh` (about 265 MB in `~/.local/share/rm_terminal/tts`,
+model checked against its published SHA-256); `scripts/tts_say.py` converts text to
+pinyin with pypinyin because Piper's own conversion misreads common words. Without
+it the self-check shows 语音提醒 · 注意 and alerts are banner-only. Replays show
+alert banners but stay silent.
+
+`scripts/accept_alerts.py` drives the simulator through every alert (seek, speed,
+zones, fortress, HP, structures) and asserts each fired the right number of times,
+about 1.5 minutes. It and `accept_links.py` point `speech_dir` at an empty directory
+so a test run never talks through the speakers.
+
 ### Fault injection and acceptance
 
 `run.sh` starts three extra simulator processes: `sim/link_proxy.py` (the terminal
@@ -420,8 +469,9 @@ needed. The `.command` files are plain bash; on Linux run them with
 `bash 启动.command`. Recordings live in `~/.local/share/rm_terminal/recordings`
 and `回放录像.command` lists them by number instead of the macOS file picker.
 
-Linux has no speech backend (`RM_TERMINAL_HAS_SPEECH` is macOS only), so the
-`reminder_audio` test is not registered there and tactical reminders are silent.
+Voice on Linux needs `bash scripts/setup_voice.sh` once (see 事件提醒). The
+`reminder_audio` test drives the real macOS `say`/`afplay` and is registered on
+macOS only.
 
 ## 平台验证状态 (platform verification status)
 

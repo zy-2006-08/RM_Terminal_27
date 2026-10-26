@@ -519,6 +519,60 @@ void config_change_regenerates(const QString& root) {
 }
 }
 
+// 事件提醒和战术提醒共用一个喇叭:谁也不打断正在播的那一句,事件提醒插在下一条
+// 战术提醒(包括第二遍)前面。到点信号与音频是否就绪无关,没有语音时界面靠它出横幅。
+void alerts_share_the_speaker(const QString& root) {
+    Rig rig(root);
+    rig.controller.start(rig.cache);
+    QString error;
+    rig.controller.save(config(), &error);
+    QStringList due;
+    QObject::connect(&rig.controller, &ReminderController::reminderDue,
+                     [&due](const QString& text) { due << text; });
+    rig.controller.observe(sample(0, 61), 0);
+
+    rig.controller.announce(QStringLiteral("/alerts/one"));
+    check(rig.backend->played.size() == 1 && rig.backend->played[0] == QStringLiteral("/alerts/one"),
+          "an alert plays at once on an idle speaker");
+    rig.controller.observe(sample(100, 59), 100);
+    check(due == QStringList{QStringLiteral("收缩防线")}, "the due reminder is signalled for a banner");
+    check(rig.backend->played.size() == 1, "the reminder waits for the alert to finish");
+    rig.backend->complete(true, 200);
+    check(rig.backend->played.size() == 2 && rig.backend->played[1] != QStringLiteral("/alerts/one"),
+          "the reminder's first pass follows the alert");
+    rig.controller.announce(QStringLiteral("/alerts/two"));
+    check(rig.backend->played.size() == 2, "an alert never cuts a reminder off mid-sentence");
+    rig.backend->complete(true, 300);
+    check(rig.backend->played.size() == 3 && rig.backend->played[2] == QStringLiteral("/alerts/two"),
+          "a queued alert goes before the reminder's second pass");
+    rig.backend->complete(true, 400);
+    rig.controller.tick(1300);
+    check(rig.backend->played.size() == 4 && rig.backend->played[3] == rig.backend->played[1],
+          "the second pass still plays after the alert");
+
+    // 关总开关会停掉正在播的事件提醒,之后的事件提醒不能被一个已经作废的令牌堵住。
+    rig.backend->complete(true, 1400);
+    rig.controller.announce(QStringLiteral("/alerts/three"));
+    check(rig.backend->played.back() == QStringLiteral("/alerts/three"), "the third alert is playing");
+    rig.controller.disableMaster();
+    rig.controller.announce(QStringLiteral("/alerts/four"));
+    check(rig.backend->played.back() == QStringLiteral("/alerts/four"),
+          "after a stop the next alert still gets the speaker");
+
+    Rig silent(root + QStringLiteral("-silent"));
+    silent.backend->makeUnavailable(QStringLiteral("没装离线语音"));
+    silent.controller.start(silent.cache);
+    silent.controller.save(config(), &error);
+    QStringList silent_due;
+    QObject::connect(&silent.controller, &ReminderController::reminderDue,
+                     [&silent_due](const QString& text) { silent_due << text; });
+    silent.controller.observe(sample(0, 61), 0);
+    silent.controller.observe(sample(100, 59), 100);
+    check(silent_due == QStringList{QStringLiteral("收缩防线")},
+          "without voice a due reminder is still signalled");
+    check(silent.backend->played.empty(), "and nothing tries to play");
+}
+
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     try {
@@ -541,6 +595,7 @@ int main(int argc, char** argv) {
         previewing_is_refused_while_audio_is_still_preparing(at("busy"));
         an_unusable_saved_voice_fails_loudly_at_startup(at("ghost"));
         config_change_regenerates(at("regen"));
+        alerts_share_the_speaker(at("alerts"));
         inputs_from_snapshot();
     } catch (const std::exception& error) {
         std::cerr << "FAIL " << error.what() << '\n';

@@ -71,6 +71,14 @@ bool valid_self_robot_id(int id) {
            || id == 101 || id == 103 || id == 104 || id == 106 || id == 107;
 }
 
+const QStringList& alert_kind_names() {
+    static const QStringList names{
+        QStringLiteral("outpost"), QStringLiteral("control"), QStringLiteral("fortress"),
+        QStringLiteral("dart"),    QStringLiteral("energy"),  QStringLiteral("reinforce"),
+        QStringLiteral("low_hp"),  QStringLiteral("base")};
+    return names;
+}
+
 bool valid_controller_baud(int baud) {
     for (const int known : {9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600})
         if (baud == known) return true;
@@ -152,6 +160,24 @@ bool load_config(const QString& path, Config* config, QString* error) {
             }
         } else if (key == QLatin1String("mqtt_keepalive_s")) {
             if (!parse_integer(value, key, line, &config->mqtt_keepalive_s, error)) return false;
+        } else if (key == QLatin1String("alert_control_gap")) {
+            if (!parse_integer(value, key, line, &config->alert_control_gap, error)) return false;
+        } else if (key == QLatin1String("speech_dir")) {
+            config->speech_dir = value;
+        } else if (key == QLatin1String("alerts_disabled")) {
+            config->alerts_disabled.clear();
+            for (const QString& part : value.split(QLatin1Char(','), Qt::SkipEmptyParts)) {
+                const QString name = part.trimmed();
+                if (!alert_kind_names().contains(name)) {
+                    if (error) {
+                        *error = QStringLiteral("line %1: unknown alert kind %2 in alerts_disabled; "
+                                                "expected some of %3")
+                                     .arg(line).arg(name, alert_kind_names().join(QLatin1Char(',')));
+                    }
+                    return false;
+                }
+                config->alerts_disabled << name;
+            }
         } else if (key == QLatin1String("log_level")) {
             if (!parse_log_level(value, &config->log_level)) {
                 if (error) {

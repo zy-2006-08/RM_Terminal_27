@@ -20,9 +20,11 @@
 
 #include "clock.h"
 #include "config.h"
+#include "alert_voice.h"
 #include "controller_link.h"
 #include "dashboard.h"
 #include "link_health.h"
+#include "match_alerts.h"
 #include "rm_terminal.pb.h"
 #include "logging.h"
 #include "mqtt_intake.h"
@@ -38,6 +40,8 @@
 
 #if defined(RM_TERMINAL_HAS_SPEECH)
 #include "macos_speech_backend.h"
+#elif defined(RM_TERMINAL_PIPER_SPEECH)
+#include "piper_speech_backend.h"
 #endif
 
 namespace {
@@ -97,12 +101,17 @@ void log_shutdown(const QString& mode, int code) {
 }
 
 // 语音的平台边界收在这一个函数里,上层不再有 #if。
-rm_terminal::SpeechBackend* make_speech_backend(QObject* parent) {
+rm_terminal::SpeechBackend* make_speech_backend(QObject* parent, const QString& speech_dir) {
 #if defined(RM_TERMINAL_HAS_SPEECH)
+    Q_UNUSED(speech_dir);
     return new rm_terminal::MacosSpeechBackend(parent);
+#elif defined(RM_TERMINAL_PIPER_SPEECH)
+    return new rm_terminal::PiperSpeechBackend(
+        speech_dir, QStringLiteral(RM_TERMINAL_SOURCE_DIR "/scripts/tts_say.py"), parent);
 #else
+    Q_UNUSED(speech_dir);
     return new rm_terminal::UnavailableSpeechBackend(
-        QStringLiteral("当前平台没有已核实的本机中文离线语音，战术提醒无法播报"), parent);
+        QStringLiteral("当前平台没有本机中文离线语音，提醒只有横幅"), parent);
 #endif
 }
 
@@ -407,27 +416,45 @@ int main(int argc, char* argv[]) {
     controller.start();
 
     // 语音后端挂在 app 上,生命周期覆盖整个进程:控制器只借用它,不拥有它。
-    auto* speech = make_speech_backend(&app);
+    auto* speech = make_speech_backend(&app, cfg.speech_dir);
     rm_terminal::ReminderController reminders(
         std::make_unique<rm_terminal::ReminderRepository>(
             rm_terminal::ReminderRepository::defaultDirectory()),
         speech, cfg.stale_window_ms);
-    {
-        // 音频缓存和配置分开放:缓存是可再生的派生物,清掉只会重新合成;配置是
-        // 操作手赛前填的战术,清掉就没了。混在一个目录里迟早会被一起删。
-        const auto cache_dir =
-            QDir(QStandardPaths::writableLocation(QStandardPaths::CacheLocation))
-                .filePath(QStringLiteral("reminders"));
-        const auto error = reminders.start(cache_dir);
-        if (!error.isEmpty())
-            rm_terminal::StructuredLog::write(rm_terminal::LogLevel::warning,
-                                              QStringLiteral("reminder_config"),
-                                              {QStringLiteral("state=invalid"),
-                                               QStringLiteral("error=%1").arg(error)});
-    }
+    // 音频缓存和配置分开放:缓存是可再生的派生物,清掉只会重新合成;配置是
+    // 操作手赛前填的战术,清掉就没了。混在一个目录里迟早会被一起删。
+    const auto cache_dir =
+        QDir(QStandardPaths::writableLocation(QStandardPaths::CacheLocation))
+            .filePath(QStringLiteral("reminders"));
+    if (const auto error = reminders.start(cache_dir); !error.isEmpty())
+        rm_terminal::StructuredLog::write(rm_terminal::LogLevel::warning,
+                                          QStringLiteral("reminder_config"),
+                                          {QStringLiteral("state=invalid"),
+                                           QStringLiteral("error=%1").arg(error)});
+
+    // 事件提醒:判定是纯逻辑,语音用独立后端赛前合成好,播放和战术提醒共用一个喇叭。
+    // 回放时照样出横幅(复盘时能看到当时提醒了什么),但不出声。
+    rm_terminal::MatchAlertSettings alert_settings;
+    alert_settings.self_faction = cfg.self_robot_id > 100 ? 2u : 1u;
+    alert_settings.control_gap = cfg.alert_control_gap;
+    alert_settings.disabled = cfg.alerts_disabled;
+    rm_terminal::MatchAlerts match_alerts(alert_settings);
+    rm_terminal::AlertVoice alert_voice(make_speech_backend(&app, cfg.speech_dir));
+    if (!replay)
+        alert_voice.prepare(cache_dir, rm_terminal::match_alert_phrases(), reminders.currentVoice(),
+                            reminders.config().rate_wpm);
 
     rm_terminal::Dashboard dashboard(cfg);
     dashboard.attachReminders(&reminders);
+    QObject::connect(&reminders, &rm_terminal::ReminderController::reminderDue, &dashboard,
+                     [&dashboard](const QString& text) {
+                         rm_terminal::StructuredLog::write(
+                             rm_terminal::LogLevel::info, QStringLiteral("alert"),
+                             {QStringLiteral("kind=tactical"), QStringLiteral("level=info"),
+                              QStringLiteral("text=%1").arg(text)});
+                         dashboard.showAlert(text, rm_terminal::AlertLevel::Info,
+                                             rm_terminal::monotonic_now());
+                     });
     dashboard.setWindowTitle("RM Terminal");
     // Four columns plus the flanking roster cards need more width than the old
     // two-column layout; below this the map degrades to a sliver.
@@ -527,12 +554,23 @@ int main(int argc, char* argv[]) {
     QTimer freshness_timer;
     QObject::connect(&freshness_timer, &QTimer::timeout,
                      [&store, &reporter, &dashboard, &video, &reminders, &intake,
-                      &recorder, &replay, &sample_links, &cfg, &recordings, speech]() {
+                      &recorder, &replay, &sample_links, &cfg, &recordings, speech,
+                      &match_alerts, &alert_voice]() {
         // One clock read per tick, shared by the snapshot and the mode machine:
         // two reads would hand the machine an instant the snapshot never saw.
         const rm_terminal::MonotonicMs now = rm_terminal::monotonic_now();
         const auto snapshot = store.snapshot(now);
         reporter.inspect(snapshot);
+        for (const auto& alert : match_alerts.observe(snapshot, now)) {
+            rm_terminal::StructuredLog::write(
+                rm_terminal::LogLevel::info, QStringLiteral("alert"),
+                {QStringLiteral("kind=%1").arg(rm_terminal::alert_kind_name(alert.kind)),
+                 QStringLiteral("level=%1").arg(rm_terminal::alert_level_name(alert.level)),
+                 QStringLiteral("text=%1").arg(alert.banner)});
+            dashboard.showAlert(alert.banner, alert.level, now);
+            if (alert.kind == rm_terminal::AlertKind::BaseAttacked) dashboard.flashBase(now);
+            if (!replay) reminders.announce(alert_voice.pathFor(alert.speech));
+        }
         dashboard.update(snapshot, &video, now);
         dashboard.setRecordingStatus(replay ? replay->statusText() : recorder.statusText());
         if (!replay) {
@@ -544,6 +582,7 @@ int main(int argc, char* argv[]) {
             const QStorageInfo disk(QDir(recordings).exists() ? recordings : QDir::homePath());
             if (disk.isValid()) inputs.free_bytes = disk.bytesAvailable();
             inputs.speech_available = speech->available();
+            inputs.speech_hint = speech->unavailableReason();
             dashboard.setLinkReport(inputs.links);
             dashboard.setSelfCheck(rm_terminal::build_self_check(inputs));
         }

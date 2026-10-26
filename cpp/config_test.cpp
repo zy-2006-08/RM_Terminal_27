@@ -332,11 +332,24 @@ void controller_and_keepalive_keys(const QTemporaryDir& dir) {
     check(cfg.controller_baud == 921600, "override controller_baud");
     check(cfg.mqtt_keepalive_s == 3, "override mqtt_keepalive_s");
 
+    check(defaults.alerts_disabled.isEmpty(), "every alert is on by default");
+    check(defaults.alert_control_gap == 30, "default alert_control_gap");
+    check(write_file(path, QStringLiteral("alerts_disabled=dart, energy\nalert_control_gap=50\n"
+                                          "speech_dir=/opt/voice\n")),
+          "write alert config");
+    check(rm_terminal::load_config(path, &cfg, &error), "alert config loads");
+    check(cfg.alerts_disabled == QStringList({QStringLiteral("dart"), QStringLiteral("energy")}),
+          "alerts_disabled is a trimmed comma list");
+    check(cfg.alert_control_gap == 50, "override alert_control_gap");
+    check(cfg.speech_dir == QLatin1String("/opt/voice"), "override speech_dir");
+
     struct Bad { const char* body; const char* key; const char* name; };
     const Bad bad[] = {
         {"controller_baud=12345\n", "controller_baud", "non-standard baud rejected"},
         {"controller_baud=0\n", "controller_baud", "zero baud rejected"},
         {"mqtt_keepalive_s=0\n", "mqtt_keepalive_s", "zero keepalive rejected"},
+        {"alerts_disabled=dart,bogus\n", "bogus", "unknown alert kind rejected"},
+        {"alert_control_gap=0\n", "alert_control_gap", "zero control gap rejected"},
     };
     for (const Bad& item : bad) {
         check(write_file(path, QString::fromLatin1(item.body)), item.name);

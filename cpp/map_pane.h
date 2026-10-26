@@ -72,6 +72,9 @@ public:
 
     void setRobots(const std::vector<MapRobot>& robots);
 
+    // 我方基地被攻击时闪我方半场的边框。`bright` 由调用方按时间交替,实现闪烁。
+    void setBaseAlert(bool active, bool our_side_left, bool bright);
+
     bool hasHeightForWidth() const override { return true; }
     int heightForWidth(int width) const override;
     QSize sizeHint() const override;
@@ -82,6 +85,9 @@ protected:
 private:
     std::vector<MapMarker> markers_;
     FieldExtent field_ = default_field_extent();
+    bool base_alert_ = false;
+    bool base_alert_left_ = true;
+    bool base_alert_bright_ = true;
 };
 
 }  // namespace rm_terminal
