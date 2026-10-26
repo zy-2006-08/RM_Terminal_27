@@ -27,7 +27,8 @@ this: `monotonic_clock` asserts the clock is process-relative and never
 retreats, and `monotonic_clock_guard` fails the build if
 `currentMSecsSinceEpoch` reappears in `cpp/`. `domain_test` uses explicit
 checks rather than `assert`, so Release retains all semantic verification.
-It has no MQTT, UDP, CAN, UART, or other control transport. Platform-specific
+Its only outbound message is `CustomControl`, forwarded from the custom
+controller's serial port (see [链路状态与自检页](#链路状态与自检页-link-status-and-self-check)). Platform-specific
 selection is limited to compile-time identity in `cpp/platform.h`; core
 application code uses Qt and standard C++ APIs.
 
@@ -48,6 +49,9 @@ required to change them. Copy `rm_terminal.conf.sample` and edit it.
 | `event_history_capacity` | `50` | Bounded event ring size; oldest records drop first |
 | `blind_stale_fallback_ms` | `15000` | Stale-blind fallback delay; **`0` disables it** |
 | `map_enabled` | `true` | Draw the tactical map pane: `true` or `false` |
+| `controller_serial` | (unset) | Custom controller serial port; unset means this seat has none |
+| `controller_baud` | `115200` | Controller baud rate; one of 9600 … 921600. The firmware uses 115200 |
+| `mqtt_keepalive_s` | `5` | MQTT keepalive; a pulled cable is detected after about two of these |
 
 Every integer key rejects zero and negatives except `blind_stale_fallback_ms`,
 which accepts `0` to mean "never fall back to video just because blind telemetry
@@ -110,7 +114,13 @@ ts=<ISO8601 UTC with ms> level=<level> event=<token> key=value ...
 
 Event tokens: `startup`, `shutdown`, `reconnect_mqtt`, `reconnect_udp`,
 `decode_failure`, `stale_data`, `packet_loss`,
-`ui_mode_switch`, `quit_signal`.
+`ui_mode_switch`, `quit_signal`, `link_state`, `controller_link`.
+
+`link_state` carries `link` (`referee`, `car`, `video`, `controller`), `from`, `to`
+(`Ok`, `Warn`, `Down`, `Off`), `summary` and `detail`, and is written only when a
+link's level or summary changes. `controller_link` records the serial port being
+opened, closed or failing to open (`state=open|closed|open_failed`), and at most one
+`state=bad_frames total=N` per second.
 
 `quit_signal` records which signal (`2` SIGINT, `15` SIGTERM, `1` SIGHUP) asked the
 terminal to exit. The first such signal quits through the event loop so the
@@ -243,7 +253,7 @@ ctest --test-dir build/macos -L integration --output-on-failure
 Registration is opt-in rather than label-only on purpose. A CTest label selects
 (`-L`) and excludes (`-LE`) but does **not** make a registered test skip by default,
 so labelling alone would have taken a plain `ctest` run from about 1 second to over
-a minute. With the option off (the default) `ctest` runs 12 fast tests; with it on,
+a minute. With the option off (the default) `ctest` runs only the fast tests; with it on,
 `-L integration` selects this one and `-LE integration` excludes it.
 
 The script refuses to run if another `match_server.py` is already publishing, since
@@ -268,9 +278,75 @@ reports `has_x() == false` while a real origin reports `has_x() == true` with
 `x == 0.0`, so absent positions are never drawn as the field corner. The inbound
 `RobotPosition` message predates them and stays as-is.
 
-No terminal-to-robot or terminal-to-server message may be added. `CustomControl`
-and `CommonCommand` exist in the proto but are deliberately never wired into any
-code path; `intake_test` asserts the decoder rejects those topics.
+`CustomControl` (terminal to robot) and `CommonCommand` (terminal to server) are
+the outbound messages in the proto. The terminal publishes `CustomControl` (the
+custom controller's 30-byte payload) and does not use `CommonCommand`. It
+subscribes only to the inbound topics, and `intake_test` asserts the decoder
+rejects `CustomControl`, so a recording that contains outbound records replays
+without feeding them back into match state.
+
+## 链路状态与自检页 (link status and self-check)
+
+Four lights sit in the banner row, to the right of the alert strip: 裁判 (MQTT),
+车端 (the robot's own telemetry, `RobotTelemetry`), 图传 and 控制器. A green dot
+means fine; red adds two or three words saying what is wrong; grey means the seat
+does not use that link. Hovering shows the full detail. The rules live in
+`cpp/link_health.cpp` and are unit-tested in `link_health_test`:
+
+| Link | Red when |
+| --- | --- |
+| 裁判 | disconnected (`重连中`), or connected but nothing received for 2 s (`无数据`) |
+| 车端 | the self robot's `sequence` field is stale (`stale_window_ms`) or never arrived |
+| 图传 | no decoded frame for 1 s |
+| 控制器 | serial port missing or closed (`未接`), or no valid frame for 200 ms (`无数据`); amber `发不出` when frames arrive but MQTT is down |
+
+The 2 s rule matters because a pulled cable does not close the TCP connection; the
+connection only drops after the MQTT keepalive times out, about two keepalive
+periods (`mqtt_keepalive_s`, default 5 s).
+
+The self-check page (`自检` button) lists 自机, the four links, 录像 and 语音提醒,
+each 正常 / 注意 / 异常 / 未启用, and says `可以上场` only when nothing is 异常. It
+opens by itself when the match is not yet running (no match data, 赛外, 准备 or
+自检), closes when the countdown starts, and stays closed for the rest of that
+phase once the operator closes it. While it is open the ordinary popups give way.
+Replay mode shows neither the lights nor the page.
+
+The controller link (`cpp/controller_link.cpp`) reads the firmware's frames
+(`0xA5` header with CRC8, command `0x0302`, 30 data bytes, CRC16; 115200 8N1, 25 Hz)
+and forwards each valid frame once, as `CustomControl`, capped at 75 Hz (2026
+protocol limit). It never re-sends a frame: when the cable is pulled or MQTT is
+down, nothing is queued, so the robot never chases a stale pose. Reopening is
+automatic every 500 ms, so a replugged cable recovers without restarting. On Linux
+the user must be in the `dialout` group to open `/dev/ttyUSB*`; use a
+`/dev/serial/by-id/...` path, which survives replugging. Forwarded frames are also
+recorded.
+
+### Fault injection and acceptance
+
+`run.sh` starts three extra simulator processes: `sim/link_proxy.py` (the terminal
+reaches the broker through it on port 3335, so its link can be cut or frozen
+without disturbing the simulator), `sim/fake_arm.py` (a pty at
+`/tmp/rm_terminal_arm` sending firmware-format frames), and `video_sender` now
+obeys a pause switch. The control panel's 链路 section, or the command line, flips
+them:
+
+```sh
+.venv/bin/python -m sim.links mqtt cut|freeze|ok
+.venv/bin/python -m sim.links car off|ok
+.venv/bin/python -m sim.links video off|ok
+.venv/bin/python -m sim.links arm unplug|plug|bad
+.venv/bin/python -m sim.links reset
+```
+
+The simulated robot reports the arm pose it last received on `sim/ArmEcho` and
+marks it stopped after 200 ms without a new one.
+
+`scripts/accept_links.py` runs the whole table unattended (about two minutes, on a
+private stack, refusing to start if 3333/3335 are busy): each link is cut and must
+turn red within its limit while the others stay green, then recover by itself; the
+arm must stop the robot within 1 s of unplugging; a corrupt frame must be logged
+without dropping the link; all four at once must not crash the terminal. With
+`-DRM_TERMINAL_INTEGRATION_TESTS=ON` it is also the CTest case `link_faults_e2e`.
 
 ## Running the Python simulator
 
@@ -352,14 +428,17 @@ Linux has no speech backend (`RM_TERMINAL_HAS_SPEECH` is macOS only), so the
 | Platform | Build | CTest | Dynamic run (simulator, dual mode, video) |
 | --- | --- | --- | --- |
 | macOS (arm64, Homebrew Qt6) | verified | verified, Debug and Release | verified |
-| Ubuntu 26.04 (x86_64, Qt 6.10.2, Wayland) | verified, Release | verified, 25/25 + `mode_regression_e2e` | verified |
+| Ubuntu 26.04 (x86_64, Qt 6.10.2, Wayland) | verified, Release | verified, 28/28 + `mode_regression_e2e` + `link_faults_e2e` | verified |
 
 Ubuntu was verified on 2026-10-23 at commit `d1730fe`: Release build, the 25-test
 default CTest suite, `--safe-smoke`, `python -m unittest` over `sim/`,
 `scripts/verify_mode_regression.sh` (PASS, video entered at +33.09s, held 15.00s),
 `bash 启动.command` with the control panel against a live simulator, offscreen
 `--screenshot` in both modes with decoded video, and `--replay` of recordings
-ended both by closing the window and by Ctrl-C.
+ended both by closing the window and by Ctrl-C. On 2026-10-26 the link lights,
+self-check page and controller forwarding were verified on the same machine: the
+28-test suite, `scripts/accept_links.py` (30/30) and offscreen screenshots with all
+links up and with the video and arm cut. They have not been run on macOS yet.
 
 A recording cut off mid-record (crash, `kill -9`, power loss) still replays: the
 player stops at the last complete record and the status bar says

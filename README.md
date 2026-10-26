@@ -445,6 +445,7 @@ cp rm_terminal.conf.sample rm_terminal.conf
 | `resources/minimap.qrc` | 地图素材的 Qt 资源清单 |
 | `sim/assets/sim_feed.h265` | 测试用图传视频 |
 | `scripts/verify_mode_regression.sh` | 62 秒模式切换端到端测试 |
+| `scripts/accept_links.py` | 链路故障验收：逐条断开裁判数据/车端/图传/机械臂，约 2 分钟 |
 | `artifacts/` | 构建和验收证据 |
 | `BUILD.md` | 详细构建、配置、调试文档 |
 
