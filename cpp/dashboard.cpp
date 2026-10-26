@@ -2,6 +2,7 @@
 
 #include "logging.h"
 #include "presentation.h"
+#include "self_check_panel.h"
 #include "tactical_reminder_dialog.h"
 #include "theme.h"
 
@@ -483,12 +484,35 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     recording_status_->setFixedHeight(banner_row_height);
     recording_status_->setVisible(false);
 
+    link_lights_ = new QLabel(this);
+    link_lights_->setObjectName(QStringLiteral("linkLights"));
+    link_lights_->setTextFormat(Qt::RichText);
+    link_lights_->setStyleSheet(QStringLiteral(
+        "background:#101a26; padding:4px 8px; font-weight:bold;"
+        " border:1px solid #263042; border-radius:3px;"));
+    link_lights_->setFixedHeight(banner_row_height);
+    // 宽度跟着文字走,不分告警带的拉伸余量 —— 理由同下面的入口按钮。
+    link_lights_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    link_lights_->setVisible(false);
+
+    self_check_entry_ = new QPushButton(QStringLiteral("自检"), this);
+    self_check_entry_->setObjectName(QStringLiteral("selfCheckEntry"));
+    self_check_entry_->setFixedHeight(banner_row_height);
+    self_check_entry_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    self_check_entry_->setVisible(false);
+    QObject::connect(self_check_entry_, &QPushButton::clicked, this,
+                     [this] { setSelfCheckVisible(!selfCheckVisible()); });
+
     auto* banner_row = new QHBoxLayout();
     banner_row->setContentsMargins(0, 0, 0, 0);
     banner_row->setSpacing(6);
     banner_row->addWidget(mode_banner_, 0);
     banner_row->addWidget(alert_strip_, 1);
+    // 状态灯排在告警带右边:排在左边时,告警带一出现它就从右端跳到左端,恰好在
+    // 断线、最需要看它的那一刻挪了位置。
+    banner_row->addWidget(link_lights_, 0);
     banner_row->addWidget(recording_status_, 0);
+    banner_row->addWidget(self_check_entry_, 0);
     // 告警带拿 stretch,入口按钮跟在它后面且不拉伸:按钮固定贴住右端,而告警带
     // 的出现/消失不会把按钮左右推动。
     banner_row->addWidget(reminder_entry_, 0);
@@ -755,10 +779,27 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     victory_->setAttribute(Qt::WA_TransparentForMouseEvents);
     victory_->setSource(QUrl(QStringLiteral("qrc:/qml/VictoryOverlay.qml")));
     victory_->setVisible(false);
+
+    // 和弹窗一样不进 layout:它出现时不能把整屏控件推位。
+    self_check_ = new SelfCheckPanel(this);
+    self_check_->setVisible(false);
+    QObject::connect(self_check_, &SelfCheckPanel::closeRequested, this,
+                     [this] { setSelfCheckVisible(false); });
+}
+
+void Dashboard::placeSelfCheck() {
+    if (!self_check_) return;
+    const int width = std::min(780, this->width() - 40);
+    const int height = self_check_->hasHeightForWidth() ? self_check_->heightForWidth(width)
+                                                        : self_check_->sizeHint().height();
+    const int top = top_bar_ ? top_bar_->geometry().bottom() + 16 : 80;
+    self_check_->setGeometry((this->width() - width) / 2, top, width, height);
+    self_check_->raise();
 }
 
 void Dashboard::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
+    placeSelfCheck();
     if (!popup_) return;
     // 宿主铺满整窗是为了压暗层;对话框自身的居中与限宽在 QML 内部,
     // 所以两侧花名册照旧可读 —— 它是本终端的核心增量,不能被弹窗盖掉。
@@ -862,7 +903,18 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
     }
     if (result != GameResult::None) victory_->raise();
 
-    const bool popup_shown = popup.popup != Popup::None && result == GameResult::None;
+    if (self_check_enabled_) {
+        const Field<std::uint32_t>& stage = snapshot.game.current_stage;
+        // 0 赛外 1 准备 2 自检:都还来得及修。还没收到过比赛数据也算赛前 —— 那正是
+        // 最需要自检页说清「裁判数据没连上」的时候。
+        const bool pre_match = !stage.value || *stage.value <= 2;
+        if (pre_match && !was_pre_match_) setSelfCheckVisible(true);
+        if (!pre_match && was_pre_match_) setSelfCheckVisible(false);
+        was_pre_match_ = pre_match;
+    }
+
+    const bool popup_shown =
+        popup.popup != Popup::None && result == GameResult::None && !selfCheckVisible();
     popup_->setVisible(popup_shown);
     if (QQuickItem* overlay = popup_->rootObject()) {
         overlay->setProperty("kind", popup_kind(popup.popup));
@@ -925,6 +977,73 @@ void Dashboard::setRecordingStatus(const QString& text) {
              : QStringLiteral("background:#0d1f2a; color:#7fe3f2; padding:4px;"
                               " font-weight:bold; border:1px solid #1f5a7a;"
                               " border-radius:3px;"));
+}
+
+QString link_lights_html(const LinkReport& report) {
+    const auto light = [](const QString& name, const LinkStatus& status) {
+        QString color = QStringLiteral("#3ecf8e");
+        if (status.level == LinkLevel::Warn) color = QStringLiteral("#e0a43a");
+        if (status.level == LinkLevel::Down) color = QStringLiteral("#ff6b6b");
+        if (status.level == LinkLevel::Off) color = QStringLiteral("#5b6474");
+        const QString name_color =
+            status.level == LinkLevel::Off ? QStringLiteral("#5b6474") : QStringLiteral("#c8d0dc");
+        QString html = QStringLiteral("<span style='color:%1'>●</span>"
+                                      "<span style='color:%2'>&nbsp;%3</span>")
+                           .arg(color, name_color, name);
+        if (!status.summary.isEmpty())
+            html += QStringLiteral("<span style='color:%1'>&nbsp;%2</span>")
+                        .arg(color, status.summary.toHtmlEscaped());
+        return html;
+    };
+    return QStringList{light(QStringLiteral("裁判"), report.referee),
+                       light(QStringLiteral("车端"), report.car),
+                       light(QStringLiteral("图传"), report.video),
+                       light(QStringLiteral("控制器"), report.controller)}
+        .join(QStringLiteral("&nbsp;&nbsp;&nbsp;"));
+}
+
+void Dashboard::setLinkReport(const LinkReport& report) {
+    const QString html = link_lights_html(report);
+    if (link_lights_->text() != html) link_lights_->setText(html);
+    const auto line = [](const QString& name, const LinkStatus& status) {
+        QString text = name + QStringLiteral("：") + status.detail;
+        if (!status.hint.isEmpty()) text += QStringLiteral(" → ") + status.hint;
+        return text;
+    };
+    link_lights_->setToolTip(QStringList{line(QStringLiteral("裁判数据"), report.referee),
+                                         line(QStringLiteral("车端数据"), report.car),
+                                         line(QStringLiteral("图传"), report.video),
+                                         line(QStringLiteral("控制器"), report.controller)}
+                                 .join(QLatin1Char('\n')));
+    link_lights_->setVisible(true);
+}
+
+void Dashboard::setSelfCheck(const SelfCheck& check) {
+    self_check_enabled_ = true;
+    self_check_->setCheck(check);
+    const QString text = check.failures == 0
+                             ? QStringLiteral("自检 · 正常")
+                             : QStringLiteral("自检 · %1 项异常").arg(check.failures);
+    if (self_check_entry_->text() != text) {
+        self_check_entry_->setText(text);
+        self_check_entry_->setStyleSheet(
+            check.failures == 0
+                ? QString()
+                : QStringLiteral("color:#ff8b8b; border:1px solid #7a1f2b; font-weight:bold;"));
+    }
+    self_check_entry_->setVisible(true);
+    if (self_check_->isVisible()) placeSelfCheck();
+}
+
+bool Dashboard::selfCheckVisible() const { return self_check_ && self_check_->isVisible(); }
+
+void Dashboard::setSelfCheckVisible(bool visible) {
+    if (!self_check_ || self_check_->isVisible() == visible) return;
+    self_check_->setVisible(visible);
+    if (!visible) return;
+    placeSelfCheck();
+    // 不等下一个 tick:弹窗多压在自检页上 250ms 也是在挡字。
+    if (popup_) popup_->setVisible(false);
 }
 
 void Dashboard::showReplayControls(bool visible) {

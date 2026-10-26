@@ -9,6 +9,7 @@
 #include "roster_panel.h"
 #include "battle_analysis_pane.h"
 #include "event_feed_pane.h"
+#include "link_health.h"
 #include "top_bar.h"
 #include "ui_mode.h"
 #include "video_receiver.h"
@@ -33,6 +34,10 @@ namespace rm_terminal {
 
 class ReminderController;
 class ReminderDialog;
+class SelfCheckPanel;
+
+// 横幅行状态灯的富文本:每条链路一个圆点,不正常时圆点后跟几个字说明。
+QString link_lights_html(const LinkReport& report);
 
 // Shared by both layout pages. A second set of these for the video page would
 // let the two pages disagree about the same underlying values.
@@ -161,6 +166,17 @@ public:
     // 空字符串隐藏。实况录制是红点,回放是青色播放标记。
     void setRecordingStatus(const QString& text);
 
+    // 横幅行里的四个链路状态灯。第一次调用前整块隐藏:回放和布局测试都不会调用它,
+    // 那时显示一排「重连中」只会误导。
+    void setLinkReport(const LinkReport& report);
+
+    // 自检页。第一次调用后才启用「自检」按钮和赛前自动弹出;赛前(还没有比赛数据、
+    // 赛外、准备、自检阶段)自动打开一次,倒计时或比赛开始时自动收起,操作手关掉后
+    // 本阶段不再自己弹出。自检页开着时普通弹窗让位:它已经把链路情况说得更清楚。
+    void setSelfCheck(const SelfCheck& check);
+    bool selfCheckVisible() const;
+    void setSelfCheckVisible(bool visible);
+
     // 回放控制栏只在回放模式出现。用回调而不是 Dashboard 信号,避免这个只做
     // 展示的控件反向依赖主程序里的 ReplayPlayer。
     void showReplayControls(bool visible);
@@ -192,6 +208,7 @@ protected:
 
 private:
     void refreshPage();
+    void placeSelfCheck();
     // Two VideoPane instances, one per page, sharing the single resident
     // VideoReceiver. The same pane is deliberately NOT reparented between pages:
     // the reason is engineering determinism, avoiding a simultaneous
@@ -209,6 +226,11 @@ private:
     // 塞进去会压到前哨站徽标。
     QPushButton* reminder_entry_;
     QLabel* recording_status_;
+    QLabel* link_lights_;
+    QPushButton* self_check_entry_;
+    SelfCheckPanel* self_check_ = nullptr;
+    bool self_check_enabled_ = false;
+    bool was_pre_match_ = false;
     ReminderController* reminders_ = nullptr;
     ReminderDialog* reminder_dialog_ = nullptr;
 

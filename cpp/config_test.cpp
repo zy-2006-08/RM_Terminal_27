@@ -311,6 +311,41 @@ void log_level_names_round_trip() {
           "unknown level rejected");
 }
 
+void controller_and_keepalive_keys(const QTemporaryDir& dir) {
+    rm_terminal::Config defaults;
+    QString error;
+    check(rm_terminal::load_config(dir.filePath(QStringLiteral("absent.conf")), &defaults, &error),
+          "defaults load");
+    check(defaults.controller_serial.isEmpty(), "no controller by default");
+    check(defaults.controller_baud == 115200, "default controller_baud matches the firmware");
+    check(defaults.mqtt_keepalive_s == 5, "default mqtt_keepalive_s");
+
+    const QString path = dir.filePath(QStringLiteral("controller.conf"));
+    check(write_file(path, QStringLiteral("controller_serial=/dev/serial/by-id/usb-arm\n"
+                                          "controller_baud=921600\n"
+                                          "mqtt_keepalive_s=3\n")),
+          "write controller config");
+    rm_terminal::Config cfg;
+    check(rm_terminal::load_config(path, &cfg, &error), "controller config loads");
+    check(cfg.controller_serial == QLatin1String("/dev/serial/by-id/usb-arm"),
+          "override controller_serial");
+    check(cfg.controller_baud == 921600, "override controller_baud");
+    check(cfg.mqtt_keepalive_s == 3, "override mqtt_keepalive_s");
+
+    struct Bad { const char* body; const char* key; const char* name; };
+    const Bad bad[] = {
+        {"controller_baud=12345\n", "controller_baud", "non-standard baud rejected"},
+        {"controller_baud=0\n", "controller_baud", "zero baud rejected"},
+        {"mqtt_keepalive_s=0\n", "mqtt_keepalive_s", "zero keepalive rejected"},
+    };
+    for (const Bad& item : bad) {
+        check(write_file(path, QString::fromLatin1(item.body)), item.name);
+        error.clear();
+        check(!rm_terminal::load_config(path, &cfg, &error), item.name);
+        check(error.contains(QLatin1String(item.key)), item.name);
+    }
+}
+
 }
 
 int main(int argc, char* argv[]) {
@@ -333,6 +368,7 @@ int main(int argc, char* argv[]) {
     sink_reaches_the_log_without_deadlock(dir);
     log_level_names_round_trip();
     self_robot_id_validation();
+    controller_and_keepalive_keys(dir);
 
     if (failures != 0) {
         fprintf(stderr, "config_test: %d check(s) failed\n", failures);

@@ -34,7 +34,14 @@ target_link_libraries(terminal_video PUBLIC terminal_logging Qt6::Core Qt6::Netw
 add_library(terminal_recording cpp/recorder.cpp cpp/recorder.h)
 target_include_directories(terminal_recording PUBLIC cpp)
 target_link_libraries(terminal_recording PUBLIC Qt6::Core)
-add_library(terminal_presentation cpp/presentation.cpp cpp/ui_mode.cpp cpp/ui_mode.h cpp/popup_state.cpp cpp/popup_state.h cpp/game_result.cpp cpp/game_result.h cpp/field_map.cpp cpp/field_map.h cpp/top_bar_model.cpp cpp/top_bar_model.h cpp/reminder_scheduler.cpp cpp/reminder_scheduler.h cpp/tactical_reminder.h)
+# 自定义控制器串口链路同样与 GUI/网络无关:测试用一对 pty 就能覆盖插拔和坏帧。
+add_library(terminal_controller
+    cpp/referee_frame.cpp cpp/referee_frame.h
+    cpp/controller_link.cpp cpp/controller_link.h)
+target_include_directories(terminal_controller PUBLIC cpp)
+target_link_libraries(terminal_controller PUBLIC terminal_domain terminal_logging Qt6::Core)
+add_library(terminal_presentation cpp/presentation.cpp cpp/ui_mode.cpp cpp/ui_mode.h cpp/popup_state.cpp cpp/popup_state.h cpp/game_result.cpp cpp/game_result.h cpp/field_map.cpp cpp/field_map.h cpp/top_bar_model.cpp cpp/top_bar_model.h cpp/reminder_scheduler.cpp cpp/reminder_scheduler.h cpp/tactical_reminder.h
+    cpp/link_health.cpp cpp/link_health.h)
 target_link_libraries(terminal_presentation PUBLIC terminal_domain terminal_logging Qt6::Core)
 
 # 战术提醒的持久化和语音后端。独立于 terminal_presentation:调度器是纯逻辑,
@@ -116,7 +123,8 @@ target_compile_definitions(terminal_reminder_ui PRIVATE QT_NO_KEYWORDS)
 
 # A library rather than sources compiled straight into the executable, so the
 # offscreen layout test can link the real Dashboard instead of a reimplementation.
-add_library(terminal_dashboard cpp/dashboard.cpp cpp/dashboard.h)
+add_library(terminal_dashboard cpp/dashboard.cpp cpp/dashboard.h
+    cpp/self_check_panel.cpp cpp/self_check_panel.h)
 target_link_libraries(terminal_dashboard PUBLIC terminal_map terminal_visual terminal_video terminal_reminder_ui Qt6::Widgets)
 target_compile_definitions(terminal_dashboard PRIVATE QT_NO_KEYWORDS)
 
@@ -130,7 +138,7 @@ add_executable(rm_terminal
     ${TOPBAR_RES}
 )
 target_include_directories(rm_terminal PRIVATE ${MOSQUITTO_INCLUDE_DIR})
-target_link_libraries(rm_terminal PRIVATE terminal_dashboard terminal_recording
+target_link_libraries(rm_terminal PRIVATE terminal_dashboard terminal_recording terminal_controller
     ${MOSQUITTO_LIBRARY} Qt6::Widgets)
 target_compile_features(rm_terminal PRIVATE cxx_std_17)
 target_compile_definitions(rm_terminal PRIVATE QT_NO_KEYWORDS)
@@ -159,6 +167,16 @@ if(BUILD_TESTING)
     add_executable(recorder_test cpp/recorder_test.cpp)
     target_link_libraries(recorder_test PRIVATE terminal_recording)
     add_test(NAME recording_format COMMAND recorder_test)
+    add_executable(referee_frame_test cpp/referee_frame_test.cpp)
+    target_link_libraries(referee_frame_test PRIVATE terminal_controller)
+    add_test(NAME referee_frame COMMAND referee_frame_test)
+    add_executable(controller_link_test cpp/controller_link_test.cpp)
+    target_link_libraries(controller_link_test PRIVATE terminal_controller)
+    add_test(NAME controller_link COMMAND controller_link_test)
+    set_tests_properties(controller_link PROPERTIES TIMEOUT 30)
+    add_executable(link_health_test cpp/link_health_test.cpp)
+    target_link_libraries(link_health_test PRIVATE terminal_presentation)
+    add_test(NAME link_health COMMAND link_health_test)
     add_executable(replay_player_test cpp/replay_player_test.cpp cpp/replay_player.cpp cpp/replay_player.h)
     target_link_libraries(replay_player_test PRIVATE terminal_domain terminal_recording terminal_video Qt6::Core)
     target_compile_definitions(replay_player_test PRIVATE QT_NO_KEYWORDS)
@@ -272,6 +290,15 @@ if(BUILD_TESTING)
         set_tests_properties(mode_regression_e2e PROPERTIES
             LABELS integration
             TIMEOUT 180
+            RUN_SERIAL TRUE
+            ENVIRONMENT "RM_TERMINAL_BINARY=$<TARGET_FILE:rm_terminal>")
+        # 链路故障验收:逐条断开裁判数据/车端/图传/机械臂,约 2 分钟。
+        add_test(NAME link_faults_e2e
+                 COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/.venv/bin/python
+                         ${CMAKE_CURRENT_SOURCE_DIR}/scripts/accept_links.py)
+        set_tests_properties(link_faults_e2e PROPERTIES
+            LABELS integration
+            TIMEOUT 300
             RUN_SERIAL TRUE
             ENVIRONMENT "RM_TERMINAL_BINARY=$<TARGET_FILE:rm_terminal>")
     endif()

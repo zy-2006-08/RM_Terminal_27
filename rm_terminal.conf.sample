@@ -58,3 +58,17 @@ blind_stale_fallback_ms=15000
 
 # Draw the tactical map pane in info mode: true or false.
 map_enabled=true
+
+# Custom controller (small arm) serial port. Leave unset on seats without one;
+# the 控制器 light then shows 未启用. Prefer /dev/serial/by-id/... over
+# /dev/ttyUSB0: the number can change when the cable is replugged. On Linux the
+# user must be in the dialout group. run.sh points this at the simulator's fake arm.
+#controller_serial=/dev/serial/by-id/usb-FTDI_FT232R_USB_UART-if00-port0
+
+# Controller baud rate: 9600, 19200, 38400, 57600, 115200, 230400, 460800 or 921600.
+# The controller firmware (UART4) uses 115200.
+controller_baud=115200
+
+# MQTT keepalive in seconds. A pulled cable is only noticed after about two
+# keepalive periods; the 裁判 light turns red after 2 s without data regardless.
+mqtt_keepalive_s=5

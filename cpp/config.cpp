@@ -71,6 +71,12 @@ bool valid_self_robot_id(int id) {
            || id == 101 || id == 103 || id == 104 || id == 106 || id == 107;
 }
 
+bool valid_controller_baud(int baud) {
+    for (const int known : {9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600})
+        if (baud == known) return true;
+    return false;
+}
+
 bool load_config(const QString& path, Config* config, QString* error) {
     *config = Config{};
     QFile file(path);
@@ -132,6 +138,20 @@ bool load_config(const QString& path, Config* config, QString* error) {
             }
         } else if (key == QLatin1String("map_enabled")) {
             if (!parse_boolean(value, key, line, &config->map_enabled, error)) return false;
+        } else if (key == QLatin1String("controller_serial")) {
+            config->controller_serial = value;
+        } else if (key == QLatin1String("controller_baud")) {
+            if (!parse_integer(value, key, line, &config->controller_baud, error)) return false;
+            if (!valid_controller_baud(config->controller_baud)) {
+                if (error) {
+                    *error = QStringLiteral("line %1: invalid controller_baud=%2; expected 9600, "
+                                            "19200, 38400, 57600, 115200, 230400, 460800, or "
+                                            "921600").arg(line).arg(value);
+                }
+                return false;
+            }
+        } else if (key == QLatin1String("mqtt_keepalive_s")) {
+            if (!parse_integer(value, key, line, &config->mqtt_keepalive_s, error)) return false;
         } else if (key == QLatin1String("log_level")) {
             if (!parse_log_level(value, &config->log_level)) {
                 if (error) {

@@ -42,6 +42,13 @@ struct Config {
     int blind_stale_fallback_ms = 15000;
     bool map_enabled = true;
     LogLevel log_level = LogLevel::info;
+    // 自定义控制器(小机械臂)的串口。空表示本席位没接控制器,状态灯显示「未启用」。
+    // 真机用 /dev/serial/by-id/... 这种不会变的名字:USB 重插后 ttyUSB0 可能变成 ttyUSB1。
+    QString controller_serial;
+    int controller_baud = 115200;
+    // 网线被拔时对端不会正常挂断,只能靠保活超时发现,大约要两个保活周期。原先写死
+    // 30 秒,意味着断线后近一分钟才开始重连。
+    int mqtt_keepalive_s = 5;
 };
 
 // Loads configuration from `path`.
@@ -57,5 +64,8 @@ bool load_config(const QString& path, Config* out, QString* error);
 bool valid_self_robot_id(int id);
 
 bool parse_log_level(const QString& name, LogLevel* out);
+
+// 9600 到 921600 之间的标准波特率。控制器固件用 115200。
+bool valid_controller_baud(int baud);
 
 }

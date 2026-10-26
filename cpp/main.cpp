@@ -6,6 +6,7 @@
 #include <QLabel>
 #include <QScreen>
 #include <QStandardPaths>
+#include <QStorageInfo>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
@@ -19,7 +20,10 @@
 
 #include "clock.h"
 #include "config.h"
+#include "controller_link.h"
 #include "dashboard.h"
+#include "link_health.h"
+#include "rm_terminal.pb.h"
 #include "logging.h"
 #include "mqtt_intake.h"
 #include "platform.h"
@@ -316,15 +320,15 @@ int main(int argc, char* argv[]) {
         recorder.recordMqtt(topic, payload);
     });
 
+    const QString recordings =
+        QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
+            .filePath(QStringLiteral("recordings"));
     if (replay_path.isEmpty() && !no_record) {
         rm_terminal::RecordingMetadata metadata;
         metadata.self_robot_id = cfg.self_robot_id;
         metadata.mqtt_host = cfg.mqtt_host;
         metadata.mqtt_port = cfg.mqtt_port;
         metadata.udp_port = cfg.udp_port;
-        const QString recordings =
-            QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
-                .filePath(QStringLiteral("recordings"));
         QString record_error;
         if (!recorder.start(recordings, metadata, &record_error)) {
             qWarning().noquote() << "recording unavailable:" << record_error;
@@ -333,6 +337,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    intake.setKeepAlive(cfg.mqtt_keepalive_s);
     if (replay_path.isEmpty() && !intake.start()) {
         rm_terminal::StructuredLog::write(
             rm_terminal::LogLevel::warning, QStringLiteral("reconnect_mqtt"),
@@ -375,6 +380,31 @@ int main(int argc, char* argv[]) {
                  QStringLiteral("port=%1").arg(cfg.udp_port)});
         }
     }
+
+    // 机械臂 -> 串口 -> 这里 -> MQTT CustomControl -> 车。回放时不开串口:看录像不该
+    // 让桌上的机械臂数据被发出去。每帧只在收到时转发一次,断线或发不出去就丢掉,
+    // 绝不补发 —— 补发的是旧姿态,车上的机械臂会去追一个早已过去的位置。
+    rm_terminal::ControllerLink controller(replay ? QString() : cfg.controller_serial,
+                                           cfg.controller_baud);
+    std::optional<rm_terminal::MonotonicMs> last_forward_at;
+    QObject::connect(&controller, &rm_terminal::ControllerLink::frameReceived, &app,
+                     [&intake, &recorder, &last_forward_at](const QByteArray& data) {
+                         // 2026 协议:CustomControl 最高 75Hz。固件发 25Hz,这里只防
+                         // 接错设备时把服务器打爆。
+                         constexpr rm_terminal::MonotonicMs kMinIntervalMs = 14;
+                         const rm_terminal::MonotonicMs now = rm_terminal::monotonic_now();
+                         if (last_forward_at && now - *last_forward_at < kMinIntervalMs) return;
+                         rm::CustomControl message;
+                         message.set_data(data.constData(), static_cast<std::size_t>(data.size()));
+                         const std::string bytes = message.SerializeAsString();
+                         if (!intake.publish("CustomControl", bytes)) return;
+                         last_forward_at = now;
+                         // 发出去的也录下来:复盘时能看到当时给车下了什么姿态。回放的
+                         // 解码器不认这个 topic,会直接跳过。
+                         recorder.recordMqtt(QStringLiteral("CustomControl"),
+                                             QByteArray::fromStdString(bytes));
+                     });
+    controller.start();
 
     // 语音后端挂在 app 上,生命周期覆盖整个进程:控制器只借用它,不拥有它。
     auto* speech = make_speech_backend(&app);
@@ -441,10 +471,63 @@ int main(int argc, char* argv[]) {
     dashboard.activateWindow();
 
     rm_terminal::StaleReporter reporter;
+    // 链路灯和自检页只在实况下有意义:回放时没有 MQTT 也没有串口,亮一排红灯只会误导。
+    struct LinkMeters {
+        rm_terminal::RateMeter referee, video, controller;
+        rm_terminal::LinkStateLog log;
+    } meters;
+    const auto sample_links = [&cfg, &intake, &video, &controller, &meters](
+                                  const rm_terminal::Snapshot& snapshot,
+                                  rm_terminal::MonotonicMs now) {
+        const auto mqtt = intake.linkStats();
+        rm_terminal::RefereeSample referee;
+        referee.connected = mqtt.connected;
+        referee.silent_ms = rm_terminal::silence(mqtt.last_message_at, mqtt.connected_at, now);
+        referee.messages_per_s = meters.referee.update(mqtt.messages, now);
+
+        rm_terminal::LinkReport report;
+        report.referee = rm_terminal::referee_status(referee);
+
+        // 车端数据取每帧必发的序号:自瞄相关字段只在锁定目标时才发,拿它们判活会把
+        // 「没锁目标」误报成「车断电」。
+        rm_terminal::CarSample car;
+        car.referee_down = report.referee.level == rm_terminal::LinkLevel::Down;
+        const auto self = snapshot.robots.find(
+            rm_terminal::RobotId{static_cast<std::uint32_t>(cfg.self_robot_id)});
+        if (self != snapshot.robots.end()) {
+            car.freshness = self->second.telemetry.sequence.freshness;
+            car.silent_ms =
+                rm_terminal::silence(self->second.telemetry.sequence.last_valid, std::nullopt, now);
+        }
+        report.car = rm_terminal::car_status(car);
+
+        rm_terminal::VideoSample picture;
+        picture.online = video.online();
+        if (video.msSinceLastFrame() >= 0) picture.silent_ms = video.msSinceLastFrame();
+        picture.frames_per_s =
+            meters.video.update(static_cast<std::uint64_t>(video.decodedFrames()), now);
+        report.video = rm_terminal::video_status(picture);
+
+        const auto arm = controller.stats();
+        rm_terminal::ControllerSample sample;
+        sample.configured = arm.configured;
+        sample.open = arm.open;
+        sample.error = arm.error;
+        sample.silent_ms = rm_terminal::silence(arm.last_frame_at, std::nullopt, now);
+        sample.frames_per_s = meters.controller.update(arm.frames, now);
+        sample.bad_frames = arm.bad_frames;
+        sample.joints = arm.joints;
+        sample.can_forward = mqtt.connected;
+        report.controller = rm_terminal::controller_status(sample);
+
+        meters.log.observe(report);
+        return report;
+    };
+
     QTimer freshness_timer;
     QObject::connect(&freshness_timer, &QTimer::timeout,
                      [&store, &reporter, &dashboard, &video, &reminders, &intake,
-                      &recorder, &replay]() {
+                      &recorder, &replay, &sample_links, &cfg, &recordings, speech]() {
         // One clock read per tick, shared by the snapshot and the mode machine:
         // two reads would hand the machine an instant the snapshot never saw.
         const rm_terminal::MonotonicMs now = rm_terminal::monotonic_now();
@@ -452,6 +535,18 @@ int main(int argc, char* argv[]) {
         reporter.inspect(snapshot);
         dashboard.update(snapshot, &video, now);
         dashboard.setRecordingStatus(replay ? replay->statusText() : recorder.statusText());
+        if (!replay) {
+            rm_terminal::SelfCheckInputs inputs;
+            inputs.self_robot_id = cfg.self_robot_id;
+            inputs.links = sample_links(snapshot, now);
+            inputs.recording = recorder.active();
+            inputs.recording_error = recorder.error();
+            const QStorageInfo disk(QDir(recordings).exists() ? recordings : QDir::homePath());
+            if (disk.isValid()) inputs.free_bytes = disk.bytesAvailable();
+            inputs.speech_available = speech->available();
+            dashboard.setLinkReport(inputs.links);
+            dashboard.setSelfCheck(rm_terminal::build_self_check(inputs));
+        }
         // 同一个 now 和同一份快照喂给提醒:另取一次时钟会让调度看到一个快照
         // 从未见过的时刻,而两遍之间的间隔正是按这个时刻算的。
         reminders.observe(rm_terminal::reminder_inputs(snapshot, intake.connected()), now);

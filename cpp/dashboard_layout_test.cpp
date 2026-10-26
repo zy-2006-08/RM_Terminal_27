@@ -683,6 +683,63 @@ void the_overlays_never_swallow_clicks_on_the_reminder_entry() {
           "the reminder entry stays clickable through the victory overlay");
 }
 
+// 四条链路全断时状态灯文字最长,自检按钮也最长:最小窗口不能因此被撑宽。赛前自检页
+// 自己弹出且盖过弹窗,操作手关掉后本阶段不再弹,开赛自动收起。
+void link_lights_and_self_check_fit_and_follow_the_stage() {
+    Dashboard dashboard(test_config());
+    dashboard.resize(kMinWidth, kMinHeight);
+    drive_to_info(dashboard);
+
+    LinkReport report;
+    report.referee = {LinkLevel::Down, QStringLiteral("重连中"), QStringLiteral("断开了，正在重连"),
+                      QStringLiteral("检查网线")};
+    report.car = {LinkLevel::Down, QStringLiteral("无数据"), QStringLiteral("还没收到过车端数据"),
+                  QString()};
+    report.video = {LinkLevel::Down, QStringLiteral("无画面"), QStringLiteral("12 秒没画面"),
+                    QString()};
+    report.controller = {LinkLevel::Down, QStringLiteral("未接"),
+                         QStringLiteral("找不到串口 /dev/serial/by-id/usb-arm"), QString()};
+    SelfCheckInputs inputs;
+    inputs.self_robot_id = 3;
+    inputs.links = report;
+    dashboard.setLinkReport(report);
+    dashboard.setSelfCheck(build_self_check(inputs));
+    dashboard.update(base_snapshot(), nullptr, 4000);
+    settle(dashboard);
+
+    const QLabel* lights = find_label(dashboard, "linkLights");
+    check(lights->isVisible() && lights->text().contains(QStringLiteral("重连中")),
+          "the link lights show the down reason");
+    check(dashboard.width() == kMinWidth, "all-down link lights do not widen the minimum window");
+    auto* reminder = dashboard.findChild<QPushButton*>(QStringLiteral("reminderEntry"));
+    auto* entry = dashboard.findChild<QPushButton*>(QStringLiteral("selfCheckEntry"));
+    if (!reminder || !entry) throw std::runtime_error("banner buttons not found");
+    check(entry->text().contains(QStringLiteral("4 项异常")), "the self-check entry counts failures");
+    check(reminder->geometry().right() < kMinWidth, "the reminder entry stays inside the window");
+    check(!dashboard.selfCheckVisible(), "mid-match the self-check does not open by itself");
+
+    const QWidget* popup = find(dashboard, "popupOverlay");
+    dashboard.update(pre_match_snapshot(), nullptr, 5000);
+    settle(dashboard);
+    check(dashboard.selfCheckVisible(), "entering the pre-match phase opens the self-check");
+    check(!popup->isVisible(), "the pre-match popup gives way to the self-check");
+    const QWidget* panel = find(dashboard, "selfCheckPanel");
+    check(dashboard.rect().contains(panel->geometry()), "the self-check stays inside the window");
+    check(dashboard.childAt(entry->geometry().center()) == entry,
+          "the self-check entry stays clickable while the page is open");
+
+    dashboard.setSelfCheckVisible(false);
+    dashboard.update(pre_match_snapshot(), nullptr, 5250);
+    settle(dashboard);
+    check(!dashboard.selfCheckVisible(), "a closed self-check stays closed within the phase");
+    check(popup->isVisible(), "the pre-match popup returns once the self-check is closed");
+
+    dashboard.setSelfCheckVisible(true);
+    dashboard.update(base_snapshot(), nullptr, 6000);
+    settle(dashboard);
+    check(!dashboard.selfCheckVisible(), "the match starting closes the self-check");
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -705,6 +762,7 @@ int main(int argc, char* argv[]) {
         the_layout_dump_is_reproducible_and_hides_unlaid_geometry();
         a_blocking_popup_renders_above_both_pages_without_moving_the_layout();
         the_popup_also_covers_the_video_page();
+        link_lights_and_self_check_fit_and_follow_the_stage();
         check(!qml_error, "all dashboard QML loads and runs without warnings");
     } catch (const std::exception& error) {
         std::cerr << "FAIL " << error.what() << '\n';
