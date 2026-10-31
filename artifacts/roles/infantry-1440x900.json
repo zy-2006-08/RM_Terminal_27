@@ -1,0 +1,24 @@
+{
+  "role": "infantry",
+  "mode": "Info",
+  "reason": "Startup",
+  "stacked_index": 0,
+  "window": {"width": 1440, "height": 900},
+  "panes": [
+    {"name": "map_pane", "visible": true, "x": 9, "y": 43, "width": 880, "height": 471},
+    {"name": "info_video_pane", "visible": true, "x": 9, "y": 34, "width": 232, "height": 130},
+    {"name": "video_full_pane", "visible": false, "x": 0, "y": 0, "width": 0, "height": 0},
+    {"name": "event_panel", "visible": true, "x": 9, "y": 34, "width": 232, "height": 148},
+    {"name": "mode_banner", "visible": true, "x": 6, "y": 4, "width": 934, "height": 28},
+    {"name": "card_ally_roster", "visible": true, "x": 9, "y": 2, "width": 250, "height": 311},
+    {"name": "card_enemy_roster", "visible": true, "x": 1169, "y": 2, "width": 250, "height": 525},
+    {"name": "card_map", "visible": true, "x": 265, "y": 2, "width": 898, "height": 525},
+    {"name": "card_events", "visible": true, "x": 9, "y": 533, "width": 250, "height": 186},
+    {"name": "card_analysis", "visible": true, "x": 265, "y": 533, "width": 898, "height": 186},
+    {"name": "card_video", "visible": true, "x": 1169, "y": 533, "width": 250, "height": 186},
+    {"name": "card_assembly", "visible": false, "x": 0, "y": 0, "width": 0, "height": 0},
+    {"name": "card_dart", "visible": false, "x": 0, "y": 0, "width": 0, "height": 0},
+    {"name": "card_sentry", "visible": false, "x": 0, "y": 0, "width": 0, "height": 0},
+    {"name": "card_self_commands", "visible": true, "x": 9, "y": 319, "width": 250, "height": 208}
+  ]
+}

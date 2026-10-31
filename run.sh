@@ -22,6 +22,8 @@ BUILD_DIR="${BUILD_DIR:-$DEFAULT_BUILD_DIR}"
 TERMINAL_BIN="$BUILD_DIR/rm_terminal"
 LOSS="${1:-0}"
 LOGS=/tmp/rm_terminal_logs
+# 模拟器和终端必须坐同一个席位:没指定时两边都用红方 3 号步兵,终端也就不弹选席位页。
+export RM_SELF_ID="${RM_SELF_ID:-3}"
 mkdir -p "$LOGS"
 
 if [ ! -x "$TERMINAL_BIN" ]; then

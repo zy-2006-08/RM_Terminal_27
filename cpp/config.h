@@ -31,8 +31,12 @@ struct Config {
     QString log_destination = QStringLiteral("rm_terminal.log");
     int mqtt_port = 3333;
     int udp_port = 3334;
-    // 2027 阵容编号：红 1/3/4/6/7，蓝方 +100。决定解码器把哪台车当成自机。
+    // 席位(2027 选手端):红 1/3/4/6,蓝方 +100。决定解码器把哪台车当成自机、MQTT 登录名
+    // 和界面布局。启动时按 --seat > RM_SELF_ID > 配置里显式写的 self_robot_id > 选席位页
+    // 的顺序定下来,写回这里。
     int self_robot_id = 3;
+    // 配置文件里是否显式写了 self_robot_id。没写就要弹选席位页,不能悄悄用默认值。
+    bool self_robot_id_set = false;
     // 必须容得下最慢字段的两个发布周期。RobotPosition/RobotModuleStatus 是 1Hz,
     // 500ms 的窗口比发布间隔本身还短 —— 位置刚到就被判过期,地图上每台车都常驻
     // 「过期」,于是这个标记再也无法指示真正的断流。
@@ -57,6 +61,12 @@ struct Config {
     // Linux 离线语音的安装目录(scripts/setup_voice.sh 装到哪里)。空 = 默认位置
     // ~/.local/share/rm_terminal/tts。
     QString speech_dir;
+    // 地图标记显示多久(毫秒),最后 5 秒淡出。
+    int map_mark_ms = 30000;
+    // 全屏到哪块屏幕。重装和指挥手席位接官方 1080p 显示器时打开。display_screen 是
+    // 屏幕名(QScreen::name(),启动日志里会列出来),空 = 主屏。
+    bool display_fullscreen = false;
+    QString display_screen;
 };
 
 // 事件提醒种类在配置里的名字。与 match_alerts.cpp 的 alert_kind_name 一一对应,

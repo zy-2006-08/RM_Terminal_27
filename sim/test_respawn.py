@@ -68,10 +68,13 @@ assert st["progress"] == before + 4.0, st
 st["progress"] = st["total"] - 1.0
 pending, total, current, free, cost, _ = m.respawn_status()
 assert pending and current == total - 1 and not free, (pending, total, current)
-st["progress"] = st["total"]
-assert m.respawn_status()[3]
+assert m.confirm_revive().startswith("读条未完成"), "确认复活要等读条完成"
 m._respawn_last = m.elapsed - 1.0
 m.tick_respawn()
+# 协议 2.2.25:读条满了也不自己复活,要等「确认复活」;读条封顶在总长。
+assert st["dead"] and m.respawn_status()[3], st
+assert st["progress"] == st["total"], st
+assert m.confirm_revive() is None
 assert not st["dead"]
 assert m.hp == max(1, rules.round_half_up(m.max_hp * rules.REVIVE_HP_FRACTION))
 assert m.is_weak(SELF_ROBOT_ID) and m.is_invincible(SELF_ROBOT_ID)
@@ -82,13 +85,18 @@ assert m.card_scan() is None
 assert not m.is_weak(SELF_ROBOT_ID)
 assert st["invincible_until"] == st["revived_at"] + 10.0, st
 
-# 空中机器人不适用地面复活读条。
-m.set_hp(106, 0)
-air = m.respawn_state[106]
-assert m.other_hp[106] == 0 and not air["dead"]
+# 别的车没有人替它们确认:读条满就自己复活。
+m.set_hp(101, 0)
+other = m.respawn_state[101]
+other["progress"] = other["total"] - 0.5
 m._respawn_last = m.elapsed - 1.0
 m.tick_respawn()
-assert m.other_hp[106] == 0 and not air["dead"]
+assert not other["dead"] and m.other_hp[101] > 0, other
+
+# 空中机器人没有血量(2027 的 robot_health 只有 1/3/4/7),不在场上血量里,也就没有复活读条。
+assert m.set_hp(106, 0) is False
+assert 106 not in m.other_hp and 106 not in m.respawn_state
+assert 107 in m.other_hp, "哨兵在场上,有血量"
 
 # 下一局清空读条与买活次数。
 m.start_next_round()

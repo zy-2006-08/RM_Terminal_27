@@ -68,98 +68,101 @@ void paint_avatar(QPainter& painter, const QRect& box, const QString& robot_clas
 
 }  // namespace
 
-std::vector<RosterEntry> build_roster(const Snapshot& snapshot, std::uint32_t faction) {
-    // 按「已知存在」建行,而非「正在播报位置」:血量来自 RobotHealthSet,与位置无关。
-    // 只扫 map_robots 会让有血量无位置的机器人整行消失,操作手会以为对面少一台。
-    std::vector<RobotId> ids;
-    const auto remember = [&ids](RobotId id) {
-        const auto seen = std::find_if(ids.begin(), ids.end(), [&](RobotId candidate) {
-            return candidate.value == id.value;
-        });
-        if (seen == ids.end()) ids.push_back(id);
-    };
-    for (const MapRobot& robot : snapshot.map_robots)
-        if (robot.faction == faction) remember(robot.id);
-    for (const RobotHealth& health : snapshot.robot_health)
-        if (health.faction == faction) remember(health.id);
+namespace {
 
-    std::vector<RosterEntry> rows;
-    for (const RobotId id : ids) {
-        RosterEntry entry;
-        entry.id = id;
-        entry.faction = faction;
+RosterEntry roster_entry(const Snapshot& snapshot, RobotId id) {
+    RosterEntry entry;
+    entry.id = id;
+    entry.faction = faction_of(id.value);
+    entry.is_self = snapshot.self && snapshot.self->value == id.value;
 
-        const auto robot = std::find_if(
-            snapshot.map_robots.begin(), snapshot.map_robots.end(),
-            [&](const MapRobot& candidate) { return candidate.id.value == id.value; });
-        if (robot != snapshot.map_robots.end()) {
-            entry.is_self = robot->is_self;
-            entry.has_position = robot->position.x.value.has_value() &&
-                                 robot->position.y.value.has_value();
-            entry.position_stale = robot->position.x.freshness == Freshness::Stale ||
-                                   robot->position.y.freshness == Freshness::Stale;
-        }
-
-        // 全场血量只能来自 RobotHealthSet:RobotDynamicStatus 按协议仅承载自机。
-        const auto health = std::find_if(
-            snapshot.robot_health.begin(), snapshot.robot_health.end(),
-            [&](const RobotHealth& candidate) { return candidate.id.value == id.value; });
-        if (health != snapshot.robot_health.end()) {
-            entry.hp = health->current_hp.value;
-            entry.max_hp = health->max_hp.value;
-        }
-
-        const auto found = snapshot.robots.find(id);
-        if (found != snapshot.robots.end()) {
-            const RobotState& state = found->second;
-            // 自机的 RobotDynamicStatus 更细,但缺值时不能把上面的全场血量清掉。
-            if (state.dynamic.current_hp.value) entry.hp = state.dynamic.current_hp.value;
-            if (state.dynamic.max_hp.value) entry.max_hp = state.dynamic.max_hp.value;
-            entry.coin = state.dynamic.coin.value;
-            entry.heat = state.dynamic.shooter_heat_17mm.value;
-            entry.heat_limit = state.dynamic.shooter_heat_limit.value;
-            entry.ammo = state.dynamic.remaining_ammo.value;
-            entry.bullet_speed = state.dynamic.bullet_speed.value;
-            entry.chassis_power = state.dynamic.chassis_power.value;
-            entry.buffer_energy = state.dynamic.buffer_energy.value;
-            entry.vision_online = state.telemetry.vision_online.value;
-            entry.autoaim_enabled = state.telemetry.autoaim_enabled.value;
-            entry.target_locked = state.telemetry.target_locked.value;
-            entry.fire_permit = state.telemetry.fire_permit.value;
-
-            std::uint32_t online = 0;
-            std::uint32_t total = 0;
-            for (const Field<std::uint32_t>* module : {
-                     &state.modules.power_manager, &state.modules.rfid,
-                     &state.modules.light_strip, &state.modules.small_shooter,
-                     &state.modules.big_shooter, &state.modules.uwb,
-                     &state.modules.armor, &state.modules.video_transmission,
-                     &state.modules.capacitor, &state.modules.main_controller,
-                     &state.modules.laser_detection_module}) {
-                ++total;
-                if (module->value.value_or(0) == 1) ++online;
-            }
-            if (total > 0 && state.modules.main_controller.value) {
-                entry.modules_online = online;
-                entry.modules_total = total;
-            }
-        }
-
-        // 血量决定生存状态,位置新鲜度不参与:一台机器人可能位置过期但仍然活着。
-        // 判定放在 dynamic 合并之后,因为自机的 HP 由 RobotDynamicStatus 覆盖。
-        if (entry.hp) entry.live = *entry.hp > 0 ? LiveState::Alive : LiveState::Kia;
-
-        rows.push_back(entry);
+    const auto robot = std::find_if(
+        snapshot.map_robots.begin(), snapshot.map_robots.end(),
+        [&](const MapRobot& candidate) { return candidate.id.value == id.value; });
+    if (robot != snapshot.map_robots.end()) {
+        entry.has_position = robot->position.x.value.has_value() &&
+                             robot->position.y.value.has_value();
+        entry.position_stale = robot->position.x.freshness == Freshness::Stale ||
+                               robot->position.y.freshness == Freshness::Stale;
     }
-    std::sort(rows.begin(), rows.end(),
-              [](const RosterEntry& a, const RosterEntry& b) { return a.id < b.id; });
+
+    const auto health = std::find_if(
+        snapshot.robot_health.begin(), snapshot.robot_health.end(),
+        [&](const RobotHealth& candidate) { return candidate.id.value == id.value; });
+    if (health != snapshot.robot_health.end()) {
+        entry.hp = health->current_hp.value;
+        entry.max_hp = health->max_hp.value;
+        entry.bullets = health->bullets.value;
+    }
+
+    const auto found = snapshot.robots.find(id);
+    if (found != snapshot.robots.end()) {
+        const RobotState& state = found->second;
+        // 自机的 RobotDynamicStatus 是 10Hz,比 1Hz 的全场血量新;缺值时不能把全场血量清掉。
+        if (state.dynamic.current_hp.value) entry.hp = state.dynamic.current_hp.value;
+        if (state.statics.max_hp.value) entry.max_hp = state.statics.max_hp.value;
+        if (entry.is_self) entry.economy = snapshot.game.economy.value;
+        entry.level = state.statics.level.value;
+        entry.heat = state.dynamic.heat.value;
+        entry.heat_limit = state.statics.max_heat.value;
+        entry.ammo = state.dynamic.remaining_ammo.value;
+        entry.bullet_speed = state.dynamic.bullet_speed.value;
+        entry.buffer_energy = state.dynamic.buffer_energy.value;
+        entry.buffer_limit = state.statics.max_buffer_energy.value;
+        entry.out_of_combat = state.dynamic.out_of_combat.value;
+        entry.can_remote_heal = state.dynamic.can_remote_heal.value;
+        entry.can_remote_ammo = state.dynamic.can_remote_ammo.value;
+        entry.pending_respawn = state.respawn.pending.value;
+
+        // modular_42mm 是安装权限,不是在线状态,不计入。
+        std::uint32_t online = 0;
+        std::uint32_t total = 0;
+        for (const Field<std::uint32_t>* module : {
+                 &state.modules.power_manager, &state.modules.rfid,
+                 &state.modules.light_strip, &state.modules.small_shooter,
+                 &state.modules.big_shooter, &state.modules.uwb,
+                 &state.modules.armor, &state.modules.video_transmission,
+                 &state.modules.capacitor, &state.modules.main_controller}) {
+            ++total;
+            if (module->value.value_or(0) == 1) ++online;
+        }
+        if (state.modules.main_controller.value) {
+            entry.modules_online = online;
+            entry.modules_total = total;
+        }
+    }
+
+    // 血量决定生存状态,位置新鲜度不参与:一台机器人可能位置过期但仍然活着。
+    if (entry.hp) entry.live = *entry.hp > 0 ? LiveState::Alive : LiveState::Kia;
+    return entry;
+}
+
+}  // namespace
+
+std::vector<RosterEntry> build_roster(const Snapshot& snapshot, std::uint32_t faction) {
+    // 按「已知存在」建行:收到过血量或位置的才列出来,没数据时整列显示「无机器人数据」。
+    std::vector<RosterEntry> rows;
+    for (const std::uint32_t number : kFieldRobots) {
+        const RobotId id{faction == kBlue ? number + 100 : number};
+        const auto known_health = std::any_of(
+            snapshot.robot_health.begin(), snapshot.robot_health.end(),
+            [&](const RobotHealth& robot) { return robot.id.value == id.value; });
+        const auto known_position = std::any_of(
+            snapshot.map_robots.begin(), snapshot.map_robots.end(),
+            [&](const MapRobot& robot) { return robot.id.value == id.value; });
+        if (known_health || known_position) rows.push_back(roster_entry(snapshot, id));
+    }
     return rows;
 }
 
+std::optional<RosterEntry> self_entry(const Snapshot& snapshot) {
+    if (!snapshot.self) return std::nullopt;
+    return roster_entry(snapshot, *snapshot.self);
+}
+
 std::optional<std::uint32_t> self_faction(const Snapshot& snapshot) {
-    for (const MapRobot& robot : snapshot.map_robots)
-        if (robot.is_self && robot.faction != 0) return robot.faction;
-    return std::nullopt;
+    if (!snapshot.self) return std::nullopt;
+    return faction_of(snapshot.self->value);
 }
 
 RosterPane::RosterPane(bool mirrored, QWidget* parent)

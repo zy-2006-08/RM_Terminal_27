@@ -98,6 +98,36 @@ void an_absurd_length_resynchronises_immediately() {
     check(parser.badFrames() == 1, "the fake header is counted once");
 }
 
+// sim/arm_protocol.py 按同样输入(关节 0.1..0.6、标志 2、seq 9)打出来的 0x0309 帧。
+const char kFeedbackFrameHex[] =
+    "a51e0009e10903cdcccc3dcdcc4c3e9a99993ecdcccc3e0000003f9a99193f020000000000fd52";
+
+QByteArray feedback_block(float first, std::uint8_t flag, int size = rm_terminal::kArmFeedbackBytes) {
+    const float joints[6] = {first, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f};
+    QByteArray block(size, '\0');
+    std::memcpy(block.data(), joints, sizeof(joints));
+    block[24] = static_cast<char>(flag);
+    return block;
+}
+
+void arm_feedback_is_relayed_in_the_firmware_0x0309_layout() {
+    const auto frame = rm_terminal::arm_feedback_frame(feedback_block(0.1f, 2), 9);
+    check(frame.has_value(), "a 25-byte block becomes a frame");
+    if (!frame) return;
+    check(frame->toHex() == QByteArray(kFeedbackFrameHex), "byte-identical to the simulator frame");
+    // 控制器固件 data_deal 的判法:[0]==0xA5、[5]==0x09、[6]==0x03,关节从第 7 字节起,标志在第 31 字节。
+    check(static_cast<std::uint8_t>(frame->at(5)) == 0x09 && frame->at(6) == 0x03,
+          "the command bytes are what the firmware checks");
+    check(frame->at(31) == 2, "the follow flag sits where the firmware reads it");
+
+    const auto longer = rm_terminal::arm_feedback_frame(feedback_block(0.1f, 2, 300), 9);
+    check(longer && *longer == *frame, "a padded 300-byte block relays only the first 25 bytes");
+    check(!rm_terminal::arm_feedback_frame(feedback_block(0.1f, 2).left(24), 9),
+          "a short block is not relayed");
+    check(!rm_terminal::arm_feedback_frame(feedback_block(std::nanf(""), 2), 9),
+          "a non-finite joint angle is not relayed");
+}
+
 }  // namespace
 
 int main() {
@@ -106,6 +136,7 @@ int main() {
     a_frame_split_across_reads_still_parses();
     garbage_and_a_corrupt_frame_do_not_hide_the_next_good_one();
     an_absurd_length_resynchronises_immediately();
+    arm_feedback_is_relayed_in_the_firmware_0x0309_layout();
     if (failures != 0) {
         std::fprintf(stderr, "referee_frame_test: %d check(s) failed\n", failures);
         return 1;

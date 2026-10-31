@@ -36,6 +36,24 @@ Item {
     property string roundText: "-/-"
     property string stageText: "--"
     property bool clockCritical: false
+    // 基地防御状态(GlobalUnitStatus):0 有 100% 防御增益,1 无增益且护甲未展开,
+    // 2 无增益且护甲展开;-1 没有数据。控制度同理,-1 = 没有数据。
+    property int redBaseStatus: -1
+    property int blueBaseStatus: -1
+    property int redControl: -1
+    property int blueControl: -1
+
+    function defenseText(status) {
+        if (status === 0) return "防御增益 100%"
+        if (status === 1) return "无防御增益 · 护甲未展开"
+        if (status === 2) return "无防御增益 · 护甲已展开"
+        return ""
+    }
+    function defenseColor(status) {
+        if (status === 0) return Theme.textSecondary
+        if (status === 1) return Theme.warn
+        return Theme.danger
+    }
     // 机器人明细由左右花名册面板承担,顶栏只留基地/前哨站/比分/时钟。
     property var redRobots: []
     property var blueRobots: []
@@ -157,6 +175,89 @@ Item {
         anchors.horizontalCenter: blueBar.left
         anchors.verticalCenter: blueBar.verticalCenter
         z: 3
+    }
+
+    // 防御状态写在血条外侧端的下方:内侧端被 R 标盖住,上方是校名。
+    Text {
+        visible: root.redBaseStatus >= 0
+        anchors.left: redBar.left
+        anchors.top: redBar.bottom
+        anchors.topMargin: 4
+        text: root.defenseText(root.redBaseStatus)
+        color: root.defenseColor(root.redBaseStatus)
+        font.family: Theme.labelFamily
+        font.pixelSize: 11
+        font.bold: true
+    }
+
+    Text {
+        visible: root.blueBaseStatus >= 0
+        anchors.right: blueBar.right
+        anchors.top: blueBar.bottom
+        anchors.topMargin: 4
+        text: root.defenseText(root.blueBaseStatus)
+        color: root.defenseColor(root.blueBaseStatus)
+        font.family: Theme.labelFamily
+        font.pixelSize: 11
+        font.bold: true
+    }
+
+    // 控制度对比条,放在中央面板下方那条空带(控件 128 高,面板只占到 106)。
+    // 双方都是 0 时两边各占一半,只画中线。
+    Item {
+        id: controlBar
+        visible: root.redControl >= 0 && root.blueControl >= 0
+        width: 300
+        height: 16
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.top: centerPanel.bottom
+        anchors.topMargin: 3
+        readonly property real total: root.redControl + root.blueControl
+        readonly property real redShare: total > 0 ? root.redControl / total : 0.5
+
+        Text {
+            id: controlLabel
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.left: parent.left
+            text: "控制度 " + root.redControl
+            color: Theme.red
+            font.family: Theme.labelFamily
+            font.pixelSize: 11
+            font.bold: true
+        }
+        Text {
+            id: controlRight
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.right: parent.right
+            text: root.blueControl
+            color: Theme.blue
+            font.family: Theme.labelFamily
+            font.pixelSize: 11
+            font.bold: true
+        }
+        Rectangle {
+            id: controlTrack
+            anchors.left: controlLabel.right
+            anchors.leftMargin: 6
+            anchors.right: controlRight.left
+            anchors.rightMargin: 6
+            anchors.verticalCenter: parent.verticalCenter
+            height: 6
+            color: Theme.blue
+            Rectangle {
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: parent.width * controlBar.redShare
+                color: Theme.red
+            }
+            Rectangle {
+                width: 2
+                height: parent.height + 4
+                anchors.centerIn: parent
+                color: Theme.textPrimary
+            }
+        }
     }
 
     // 面板尺寸取素材原始比例 414x106。之前用参考项目的 340x86 配

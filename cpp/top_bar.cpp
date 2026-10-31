@@ -68,6 +68,15 @@ void TopBar::apply(const TopBarModel& model) {
     root->setProperty("blueOutpostHasHp", model.blue.has_outpost_hp());
     root->setProperty("blueOutpostBlue", model.blue.outpost_controlled_by_blue);
 
+    // -1 = 没有数据,QML 整行不画。
+    const auto code = [](const std::optional<std::uint32_t>& value) {
+        return value ? static_cast<int>(*value) : -1;
+    };
+    root->setProperty("redBaseStatus", code(model.red.base_status));
+    root->setProperty("blueBaseStatus", code(model.blue.base_status));
+    root->setProperty("redControl", code(model.red.control_points));
+    root->setProperty("blueControl", code(model.blue.control_points));
+
     root->setProperty("redTeamName", model.red.team_name);
     root->setProperty("blueTeamName", model.blue.team_name);
 

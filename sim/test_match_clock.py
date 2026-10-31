@@ -54,9 +54,12 @@ assert m.set_structure_hp(4, 1) is False
 print("structure ok")
 
 m.set_fortress(1)
-assert m.fortress_holder == 1 and not m.fortress_auto
+assert m.fortress_attack == 1 and not m.fortress_auto
 m.set_fortress(3)
 assert m.fortress_auto
+m.set_fortress(0)
+assert m.fortress_attack == 0 and not m.fortress_auto
+assert m.set_fortress(4) is False
 print("fortress ok")
 
 m.red_hits = 9

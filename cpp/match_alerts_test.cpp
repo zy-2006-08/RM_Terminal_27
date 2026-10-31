@@ -113,25 +113,27 @@ void timeline_fires_on_time_and_never_backfills() {
           "a jump only reports points within the last 5 s");
 }
 
-void fortress_reinforce_and_base() {
+void fortress_and_base() {
     auto alerts = red_alerts();
     auto snapshot = in_match(60);
-    set<std::uint32_t>(snapshot.game.fortress_holder, 0u);
-    set<std::uint32_t>(snapshot.game.red_reinforce_chances, 0u);
+    set<std::int32_t>(snapshot.game.red_fortress_activation_sec, 0);
+    set<std::int32_t>(snapshot.game.blue_fortress_activation_sec, 0);
     set<std::uint32_t>(snapshot.game.red_base_hp, 5000u);
     check(alerts.observe(snapshot, 0).empty(), "a quiet start says nothing");
 
-    set<std::uint32_t>(snapshot.game.fortress_holder, 2u);
-    check(count(alerts.observe(snapshot, 250), AlertKind::Fortress) == 1, "enemy took the fortress");
-    check(count(alerts.observe(snapshot, 500), AlertKind::Fortress) == 0, "holding is not news");
-    set<std::uint32_t>(snapshot.game.fortress_holder, 0u);
-    check(count(alerts.observe(snapshot, 750), AlertKind::Fortress) == 1, "fortress vacated");
-
-    set<std::uint32_t>(snapshot.game.red_reinforce_chances, 1u);
-    check(count(alerts.observe(snapshot, 1000), AlertKind::Reinforce) == 1, "a chance appeared");
-    set<std::uint32_t>(snapshot.game.red_reinforce_chances, 2u);
-    check(count(alerts.observe(snapshot, 1250), AlertKind::Reinforce) == 0,
-          "accumulating chances does not repeat");
+    // 我方(红)在激活敌方堡垒不是要提醒的事。
+    set<std::int32_t>(snapshot.game.blue_fortress_activation_sec, 3);
+    check(count(alerts.observe(snapshot, 100), AlertKind::Fortress) == 0, "our own activation is quiet");
+    set<std::int32_t>(snapshot.game.red_fortress_activation_sec, 1);
+    check(count(alerts.observe(snapshot, 250), AlertKind::Fortress) == 1,
+          "the enemy starting on our fortress fires once");
+    set<std::int32_t>(snapshot.game.red_fortress_activation_sec, 5);
+    check(count(alerts.observe(snapshot, 500), AlertKind::Fortress) == 0, "the timer running is not news");
+    set<std::int32_t>(snapshot.game.red_fortress_activation_sec, 0);
+    check(count(alerts.observe(snapshot, 750), AlertKind::Fortress) == 0, "the enemy leaving is quiet");
+    set<std::int32_t>(snapshot.game.red_fortress_activation_sec, 2);
+    check(count(alerts.observe(snapshot, 1000), AlertKind::Fortress) == 1,
+          "a new activation after a break fires again");
 
     set<std::uint32_t>(snapshot.game.red_base_hp, 4900u);
     check(count(alerts.observe(snapshot, 2000), AlertKind::BaseAttacked) == 1, "base took damage");
@@ -178,7 +180,7 @@ void disabled_kinds_and_phrases() {
     for (const QString& name : rm_terminal::alert_kind_names()) {
         bool known = false;
         for (const auto kind : {AlertKind::OutpostTemp, AlertKind::ControlBehind, AlertKind::Fortress,
-                                AlertKind::DartGate, AlertKind::Energy, AlertKind::Reinforce,
+                                AlertKind::DartGate, AlertKind::Energy,
                                 AlertKind::EnemyLowHp, AlertKind::BaseAttacked})
             known = known || rm_terminal::alert_kind_name(kind) == name;
         check(known, "every config kind name maps to an alert kind");
@@ -207,7 +209,7 @@ int main() {
     outpost_temp_once_then_full_once();
     control_gap_hysteresis();
     timeline_fires_on_time_and_never_backfills();
-    fortress_reinforce_and_base();
+    fortress_and_base();
     enemy_low_hp_per_robot();
     disabled_kinds_and_phrases();
     banner_queue_orders_and_expires();

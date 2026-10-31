@@ -2,7 +2,6 @@
 
 #include "theme.h"
 
-#include <QDateTime>
 #include <QFontMetrics>
 #include <QHash>
 #include <QPainter>
@@ -15,7 +14,6 @@ namespace rm_terminal {
 namespace {
 
 constexpr int kRowGap = 10;
-constexpr int kTimeWidth = 68;
 constexpr int kTextInset = 8;
 constexpr int kBannerPadding = 6;
 // 光晕原图在窄横幅下偏艳,压到七成让文字成为主体而非底色。
@@ -101,34 +99,29 @@ QFont row_font() {
 
 }  // namespace
 
-// 能量机关按事件语义走绿色,与激活方无关:红方激活也不该渲染成红色警示横幅。
-// 文本匹配是唯一可用的判据 —— 协议只给了 level 与 faction,没有事件类型编码。
+QFont event_time_font() {
+    static const QFont font = [] {
+        QFont candidate = row_font();
+        for (int size = 10; size > 7; --size) {
+            candidate.setPointSize(size);
+            if (QFontMetrics(candidate).horizontalAdvance(QStringLiteral("00:00")) <=
+                kEventTimeWidth)
+                break;
+        }
+        return candidate;
+    }();
+    return font;
+}
+
+// 能量机关(Event 3/4)按事件语义走绿色,与激活方无关:红方激活也不该渲染成红色警示横幅。
 EventBanner event_banner(const EventRecord& record) {
-    const QString text = QString::fromStdString(record.text);
-    if (text.contains(QStringLiteral("能量机关")) || text.contains(QStringLiteral("激活")))
-        return EventBanner::Positive;
+    if (record.event_id == 3 || record.event_id == 4) return EventBanner::Positive;
     switch (record.faction) {
         case 1: return EventBanner::Red;
         case 2: return EventBanner::Blue;
         default: break;
     }
     return EventBanner::Neutral;
-}
-
-// 协议里没有事件类型编码,只能按文本判别。清单集中在此处而不是散落在调用点,
-// 新增本地指令时只改这一个数组。
-bool is_local_control_echo(const EventRecord& record) {
-    static const QString prefixes[] = {
-        QStringLiteral("底盘模式切换为"),
-        QStringLiteral("自瞄"),
-        QStringLiteral("终端下发紧急停止"),
-        QStringLiteral("云台回中"),
-    };
-    const QString text = QString::fromStdString(record.text);
-    for (const QString& prefix : prefixes) {
-        if (text.startsWith(prefix)) return true;
-    }
-    return false;
 }
 
 QString event_banner_asset(EventBanner banner) {
@@ -143,19 +136,17 @@ QString event_banner_asset(EventBanner banner) {
 }
 
 std::vector<EventFeedRow> build_event_rows(const Snapshot& snapshot, std::size_t max) {
-    // 先取整段历史再过滤,最后才截断:若先按 max 取,本地控制回显会占掉配额,
-    // 面板实际显示的赛事事件就会少于 max 条。
-    const std::vector<EventRecord> records = snapshot.events.recent(snapshot.events.size());
+    const std::vector<EventRecord> records = snapshot.events.recent(max);
     std::vector<EventFeedRow> rows;
-    rows.reserve(std::min(records.size(), max));
+    rows.reserve(records.size());
     for (const EventRecord& record : records) {
-        if (rows.size() >= max) break;
-        if (is_local_control_echo(record)) continue;
+        // 时间列是收到事件时的比赛倒计时,和顶栏时钟同一种读法;比赛外收到的显示 --。
         const QString time =
-            record.timestamp_ms == 0
-                ? QStringLiteral("--")
-                : QDateTime::fromMSecsSinceEpoch(static_cast<qint64>(record.timestamp_ms))
-                      .toString(QStringLiteral("HH:mm:ss"));
+            record.countdown_sec
+                ? QStringLiteral("%1:%2")
+                      .arg(*record.countdown_sec / 60, 2, 10, QLatin1Char('0'))
+                      .arg(*record.countdown_sec % 60, 2, 10, QLatin1Char('0'))
+                : QStringLiteral("--");
         rows.push_back({time, QString::fromStdString(record.text), event_banner(record)});
     }
     return rows;
@@ -200,7 +191,7 @@ void EventFeedPane::paintEvent(QPaintEvent*) {
         if (y + row_h > height()) break;
         const QRect line(0, y, width(), row_h);
 
-        const int text_left = line.left() + kTimeWidth + kTextInset;
+        const int text_left = line.left() + kEventTimeWidth + kTextInset;
         const int text_avail = line.right() - kTextInset - text_left;
         const QString shown =
             painter.fontMetrics().elidedText(row.text, Qt::ElideRight, text_avail);
@@ -221,8 +212,10 @@ void EventFeedPane::paintEvent(QPaintEvent*) {
         }
 
         painter.setPen(theme::kTextSecondary);
-        painter.drawText(QRect(line.left(), line.top(), kTimeWidth, row_h),
+        painter.setFont(event_time_font());
+        painter.drawText(QRect(line.left(), line.top(), kEventTimeWidth, row_h),
                          Qt::AlignLeft | Qt::AlignVCenter, row.time);
+        painter.setFont(row_font());
 
         painter.setPen(banner_text_colour(row.banner));
         painter.drawText(QRect(text_left, line.top(), text_avail, row_h),
@@ -232,7 +225,7 @@ void EventFeedPane::paintEvent(QPaintEvent*) {
 
     if (dropped_ > 0 && y + row_h <= height()) {
         painter.setPen(theme::kTextMuted);
-        painter.drawText(QRect(kTimeWidth + kTextInset, y, width() - kTimeWidth - kTextInset,
+        painter.drawText(QRect(kEventTimeWidth + kTextInset, y, width() - kEventTimeWidth - kTextInset,
                                row_h),
                          Qt::AlignLeft | Qt::AlignVCenter,
                          QStringLiteral("… 更早 %1 条已滚出缓冲").arg(dropped_));

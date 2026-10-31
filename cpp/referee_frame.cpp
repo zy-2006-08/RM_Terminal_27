@@ -1,6 +1,9 @@
 #include "referee_frame.h"
 
+#include <QtEndian>
+
 #include <array>
+#include <cmath>
 
 namespace rm_terminal {
 namespace {
@@ -76,6 +79,18 @@ QByteArray encode_referee_frame(std::uint16_t cmd_id, const QByteArray& data, st
     append_u16(frame, referee_crc16(reinterpret_cast<const std::uint8_t*>(frame.constData()),
                                     static_cast<std::size_t>(frame.size())));
     return frame;
+}
+
+std::optional<QByteArray> arm_feedback_frame(const QByteArray& custom_bytes, std::uint8_t seq) {
+    if (custom_bytes.size() < kArmFeedbackBytes) return std::nullopt;
+    for (int joint = 0; joint < 6; ++joint) {
+        const float angle =
+            qFromLittleEndian<float>(custom_bytes.constData() + joint * static_cast<int>(sizeof(float)));
+        if (!std::isfinite(angle)) return std::nullopt;
+    }
+    QByteArray data = custom_bytes.left(kArmFeedbackBytes);
+    data.append(QByteArray(kCustomControllerDataBytes - kArmFeedbackBytes, '\0'));
+    return encode_referee_frame(kArmFeedbackCmd, data, seq);
 }
 
 void RefereeFrameParser::feed(const char* bytes, qsizetype size) {

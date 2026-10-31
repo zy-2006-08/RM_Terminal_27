@@ -1,11 +1,14 @@
 #include "map_pane.h"
 
 #include "presentation.h"
+#include "theme.h"
 
 #include <QFont>
 #include <QHash>
+#include <QMouseEvent>
 #include <QPaintEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPixmap>
 #include <algorithm>
 #include <cmath>
@@ -189,6 +192,7 @@ std::vector<MapMarker> markers_from(const std::vector<MapRobot>& robots) {
         marker.x_m = value_or(robot.position.x, 0.0);
         marker.y_m = value_or(robot.position.y, 0.0);
         marker.yaw_deg = value_or(robot.position.yaw, 0.0);
+        marker.highlight = robot.highlight;
         // Only a drawn marker can be stale. Staleness of an undrawn robot is not
         // reported as "aging position", it is reported as missing.
         marker.stale = marker.has_position &&
@@ -276,6 +280,22 @@ void MapPane::paintEvent(QPaintEvent*) {
                          QStringLiteral("无位置数据"));
     }
 
+    // 哨兵规划路径画在机器人下面:它是意图,不是位置。
+    if (sentry_path_.size() >= 2 && view.width > 0) {
+        QPainterPath path;
+        for (std::size_t i = 0; i < sentry_path_.size(); ++i) {
+            const Projected point = project(field_, view, sentry_path_[i].first, sentry_path_[i].second);
+            if (i == 0) path.moveTo(point.point.x, point.point.y);
+            else path.lineTo(point.point.x, point.point.y);
+        }
+        painter.save();
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(QPen(theme::kCyan, 2.0, Qt::DashLine));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawPath(path);
+        painter.restore();
+    }
+
     for (const MapMarker& marker : markers_) {
         if (!marker.has_position) continue;
         const Projected projected = project(field_, view, marker.x_m, marker.y_m);
@@ -318,6 +338,16 @@ void MapPane::paintEvent(QPaintEvent*) {
         }
         painter.restore();
 
+        // 雷达特殊标识:外面套一圈;定位模块离线(2)用虚线。
+        if (marker.highlight != 0) {
+            painter.save();
+            painter.setRenderHint(QPainter::Antialiasing, true);
+            painter.setPen(QPen(theme::kWarn, 2.0, marker.highlight == 2 ? Qt::DashLine : Qt::SolidLine));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawEllipse(centre, kMarkerDiameter * 0.62, kMarkerDiameter * 0.62);
+            painter.restore();
+        }
+
         if (marker.stale) {
             const double radius = marker.is_self ? 13.0 : 9.0;
             painter.setPen(kAlertText);
@@ -326,6 +356,55 @@ void MapPane::paintEvent(QPaintEvent*) {
                              QStringLiteral("过期"));
         }
     }
+
+    // 地图标记压在机器人上面:标记是指挥手要队友看的东西。点到敌方车的标记画在那台车上。
+    for (const DrawnMark& mark : marks_) {
+        double x = mark.x_m;
+        double y = mark.y_m;
+        if (mark.target == MarkTarget::EnemyRobot) {
+            const auto robot = std::find_if(markers_.begin(), markers_.end(), [&](const MapMarker& m) {
+                return m.id.value == mark.enemy_id && m.has_position;
+            });
+            if (robot != markers_.end()) {
+                x = robot->x_m;
+                y = robot->y_m;
+            }
+        }
+        const Projected projected = project(field_, view, x, y);
+        if (!projected.in_bounds) continue;
+        QColor ink = theme::kTextPrimary;
+        if (mark.kind == MarkKind::Attack) ink = theme::kDanger;
+        if (mark.kind == MarkKind::Defend) ink = theme::kOk;
+        if (mark.kind == MarkKind::Alert) ink = theme::kWarn;
+        const QPointF centre(projected.point.x, projected.point.y - kMarkerDiameter * 0.75);
+        painter.save();
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setOpacity(mark.opacity);
+        QPainterPath pin;
+        pin.moveTo(centre + QPointF(0, 15));
+        pin.lineTo(centre + QPointF(-11, -2));
+        pin.lineTo(centre + QPointF(0, -15));
+        pin.lineTo(centre + QPointF(11, -2));
+        pin.closeSubpath();
+        painter.setPen(QPen(ink.darker(150), 1.5));
+        painter.setBrush(ink);
+        painter.drawPath(pin);
+        QFont glyph = painter.font();
+        glyph.setPointSize(10);
+        glyph.setBold(true);
+        painter.setFont(glyph);
+        painter.setPen(theme::kVoid);
+        painter.drawText(QRectF(centre.x() - 11, centre.y() - 12, 22, 20), Qt::AlignCenter,
+                         mark_glyph(mark.kind, mark.ascii));
+        if (mark.target == MarkTarget::EnemyRobot) {
+            painter.setPen(QPen(ink, 2.0));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawEllipse(QPointF(projected.point.x, projected.point.y), kMarkerDiameter * 0.7,
+                                kMarkerDiameter * 0.7);
+        }
+        painter.restore();
+    }
+    painter.setFont(label_font);
 
     // 自下而上叠在场地上:故障行是例外情况,给它预留常驻高度会在常态下留一条黑缝。
     // 底图是浅色的,所以每行先垫一块半透明暗底,否则告警文字在浅色地形上不可读。
@@ -367,6 +446,51 @@ void MapPane::paintEvent(QPaintEvent*) {
         painter.setPen(QColor(255, 154, 162));
         painter.drawText(tag, Qt::AlignCenter, text);
     }
+}
+
+void MapPane::setMarks(const std::vector<DrawnMark>& marks) {
+    marks_ = marks;
+    update();
+}
+
+void MapPane::setSentryPath(const std::vector<std::pair<double, double>>& points) {
+    if (points == sentry_path_) return;
+    sentry_path_ = points;
+    update();
+}
+
+void MapPane::setClickHandler(ClickHandler handler, std::uint32_t own_faction) {
+    click_handler_ = std::move(handler);
+    own_faction_ = own_faction;
+    setCursor(click_handler_ ? Qt::CrossCursor : Qt::ArrowCursor);
+}
+
+bool MapPane::clickAt(QPointF pixel) {
+    if (!click_handler_) return false;
+    const MapViewport view = map_viewport(field_, width(), height());
+    const auto field_point = unproject(field_, view, pixel.x(), pixel.y());
+    if (!field_point) return false;
+    std::optional<std::uint32_t> enemy;
+    double best = 22.0;
+    for (const MapMarker& marker : markers_) {
+        if (!marker.has_position || marker.faction == own_faction_ || marker.faction == 0) continue;
+        const Projected projected = project(field_, view, marker.x_m, marker.y_m);
+        const double distance = std::hypot(projected.point.x - pixel.x(), projected.point.y - pixel.y());
+        if (distance <= best) {
+            best = distance;
+            enemy = marker.id.value;
+        }
+    }
+    click_handler_(field_point->first, field_point->second, enemy);
+    return true;
+}
+
+void MapPane::mousePressEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton && clickAt(event->position())) {
+        event->accept();
+        return;
+    }
+    QWidget::mousePressEvent(event);
 }
 
 void MapPane::setBaseAlert(bool active, bool our_side_left, bool bright) {

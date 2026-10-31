@@ -60,6 +60,7 @@ struct ControllerSample {
     std::uint64_t bad_frames = 0;
     std::array<float, 6> joints{};
     bool can_forward = false;
+    double feedback_per_s = 0;
 };
 
 LinkStatus referee_status(const RefereeSample& sample);
@@ -113,6 +114,9 @@ struct CheckRow {
 
 struct SelfCheckInputs {
     int self_robot_id = 0;
+    // 服务器 RobotStaticStatus 报的编号。和开机选的席位不一致说明席位选错了(登录名填错,
+    // 服务器把这台终端当成了别的车)。还没收到时为空,显示「未核对」。
+    std::optional<std::uint32_t> server_robot_id;
     LinkReport links;
     bool recording = false;
     QString recording_error;

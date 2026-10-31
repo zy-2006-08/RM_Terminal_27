@@ -2,6 +2,7 @@
 
 #include "domain.h"
 
+#include <QFont>
 #include <QString>
 #include <QWidget>
 #include <cstddef>
@@ -17,6 +18,12 @@ constexpr int kRosterColumnWidth = 250;
 // 面板的宽度提示要减掉它,否则卡片加上边距后会把所在列顶宽。
 constexpr int kCardHorizontalMargins = 18;
 
+constexpr int kEventTimeWidth = 46;
+
+// 时间列显示收到事件时的比赛倒计时「MM:SS」。时间单独用小一号的字,取能完整放进
+// kEventTimeWidth 的最大字号,不跟事件文字的 13pt 抢宽度。
+QFont event_time_font();
+
 // 事件横幅的配色来源。faction 之外单列 Positive:能量机关一类正向事件无论由哪
 // 方激活都走绿色横幅,不能按阵营染成红/蓝。
 enum class EventBanner { Neutral, Red, Blue, Positive };
@@ -24,9 +31,6 @@ enum class EventBanner { Neutral, Red, Blue, Positive };
 EventBanner event_banner(const EventRecord& record);
 QString event_banner_asset(EventBanner banner);
 
-// 终端自己下发指令后的回显(底盘模式、自瞄、紧急停止、云台回中)不是赛事事件,
-// 不进这个面板。仍照常写入 EventHistory 与日志,只是不渲染。
-bool is_local_control_echo(const EventRecord& record);
 
 struct EventFeedRow {
     QString time;

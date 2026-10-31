@@ -31,9 +31,18 @@ constexpr int kContentHeight =
 // 按实际高度等比放大,并封顶 1.8 倍 —— 再大字号就会盖过顶栏比分的视觉层级。
 constexpr qreal kMaxScale = 1.8;
 
-qreal content_scale(int available_height) {
-    if (available_height <= kContentHeight) return 1.0;
-    return std::min(static_cast<qreal>(available_height) / kContentHeight, kMaxScale);
+// 按设计宽度 460 排的版。格子比这窄时(重装布局把下排分成四格)字号要跟着缩,否则
+// 按高度放大的字会横向撑出卡片,数字和旁边的小字叠在一起。缩到 0.85 为止,再小就看不清。
+constexpr qreal kDesignWidth = 460.0;
+constexpr qreal kMinScale = 0.85;
+
+qreal content_scale(int available_width, int available_height) {
+    const qreal by_height =
+        available_height <= kContentHeight
+            ? 1.0
+            : std::min(static_cast<qreal>(available_height) / kContentHeight, kMaxScale);
+    const qreal by_width = std::max(kMinScale, available_width / kDesignWidth);
+    return std::min(by_height, by_width);
 }
 
 int scaled(int value, qreal scale) { return static_cast<int>(std::lround(value * scale)); }
@@ -60,12 +69,12 @@ QColor zone_colour(ZoneControl control) {
     return theme::kTextMuted;
 }
 
-QColor hold_colour(FortressHold hold) {
-    switch (hold) {
-        case FortressHold::Ours: return theme::kOk;
-        case FortressHold::Theirs: return theme::kDanger;
-        case FortressHold::Neutral: return theme::kTextSecondary;
-        case FortressHold::Unknown: break;
+QColor fortress_colour(FortressTone tone) {
+    switch (tone) {
+        case FortressTone::Good: return theme::kOk;
+        case FortressTone::Danger: return theme::kDanger;
+        case FortressTone::Quiet: return theme::kTextSecondary;
+        case FortressTone::Unknown: break;
     }
     return theme::kTextMuted;
 }
@@ -148,8 +157,8 @@ void BattleAnalysisPane::setMetrics(const std::vector<AnalysisMetric>& metrics) 
     update();
 }
 
-void BattleAnalysisPane::setFortressHold(FortressHold hold) {
-    hold_ = hold;
+void BattleAnalysisPane::setFortress(const FortressStatus& status) {
+    fortress_ = status;
     update();
 }
 
@@ -165,11 +174,11 @@ void BattleAnalysisPane::paintEvent(QPaintEvent*) {
     painter.setRenderHint(QPainter::Antialiasing, true);
 
     const int w = width();
-    const qreal scale = content_scale(height());
+    const qreal scale = content_scale(w, height());
     const int banner_h = scaled(kBannerHeight, scale);
     const int card_h = scaled(kCardHeight, scale);
     const QRect banner(0, 0, w, banner_h);
-    const QColor accent = hold_colour(hold_);
+    const QColor accent = fortress_colour(fortress_tone(fortress_));
 
     painter.setPen(Qt::NoPen);
     painter.setBrush(QColor(accent.red(), accent.green(), accent.blue(), 38));
@@ -186,7 +195,7 @@ void BattleAnalysisPane::paintEvent(QPaintEvent*) {
     painter.setPen(accent);
     painter.drawText(QRect(banner.left() + scaled(50, scale), banner.top(),
                            w - scaled(58, scale), banner_h),
-                     Qt::AlignLeft | Qt::AlignVCenter, fortress_hold_text(hold_));
+                     Qt::AlignLeft | Qt::AlignVCenter, fortress_status_text(fortress_));
 
     const int card_w = (w - kCardGap * (kMetricCount - 1)) / kMetricCount;
     const int top = banner_h + scaled(kBannerGap, scale);
@@ -215,33 +224,51 @@ void BattleAnalysisPane::paintEvent(QPaintEvent*) {
                 label_x += icon_size + scaled(kIconGap, scale);
             }
         }
-        painter.drawText(
-            QRect(label_x, card.top() + scaled(4, scale), card.right() - pad - label_x, label_h),
-            Qt::AlignLeft | Qt::AlignVCenter, metric.label);
+        const int label_w = card.right() - pad - label_x;
+        painter.drawText(QRect(label_x, card.top() + scaled(4, scale), label_w, label_h),
+                         Qt::AlignLeft | Qt::AlignVCenter,
+                         painter.fontMetrics().elidedText(metric.label, Qt::ElideRight, label_w));
 
-        painter.setFont(theme::numericFont(scaled(11, scale), true));
-        painter.setPen(stance_colour(stance));
-        painter.drawText(
-            QRect(card.left() + pad, card.top() + scaled(4, scale), card_w - pad * 2, label_h),
-            Qt::AlignRight | Qt::AlignVCenter, diff_text(metric));
+        if (metric.has_enemy) {
+            painter.setFont(theme::numericFont(scaled(11, scale), true));
+            painter.setPen(stance_colour(stance));
+            painter.drawText(
+                QRect(card.left() + pad, card.top() + scaled(4, scale), card_w - pad * 2, label_h),
+                Qt::AlignRight | Qt::AlignVCenter, diff_text(metric));
+        }
 
-        painter.setFont(theme::numericFont(scaled(21, scale), true));
-        painter.setPen(metric.self_value ? theme::kTextPrimary : theme::kTextMuted);
+        // 状态类指标(能量机关)显示文字,数值类显示数字;都缺时一律 "--"。
+        const QString value = !metric.text_value.isEmpty() ? metric.text_value
+                                                           : metric_value_text(metric.self_value);
+        const bool has_value = !metric.text_value.isEmpty() || metric.self_value.has_value();
+        painter.setFont(metric.text_value.isEmpty() ? theme::numericFont(scaled(21, scale), true)
+                                                    : theme::labelFont(scaled(15, scale), true));
+        painter.setPen(has_value ? theme::kTextPrimary : theme::kTextMuted);
         painter.drawText(QRect(card.left() + pad, card.top() + scaled(18, scale),
                                card_w - pad * 2, scaled(25, scale)),
-                         Qt::AlignLeft | Qt::AlignVCenter,
-                         metric_value_text(metric.self_value));
+                         Qt::AlignLeft | Qt::AlignVCenter, value);
 
-        painter.setFont(theme::numericFont(scaled(12, scale), true));
-        painter.setPen(metric.enemy_value ? theme::kTextSecondary : theme::kTextMuted);
-        painter.drawText(QRect(card.left() + pad, card.top() + scaled(21, scale),
-                               card_w - pad * 2, scaled(22, scale)),
-                         Qt::AlignRight | Qt::AlignVCenter,
-                         QStringLiteral("敌 %1").arg(metric_value_text(metric.enemy_value)));
-
-        paint_balance(painter, QRect(card.left() + pad, card.top() + scaled(49, scale),
-                                     card_w - pad * 2, scaled(5, scale)),
-                      metric, stance);
+        if (metric.has_enemy) {
+            painter.setFont(theme::numericFont(scaled(12, scale), true));
+            painter.setPen(metric.enemy_value ? theme::kTextSecondary : theme::kTextMuted);
+            painter.drawText(QRect(card.left() + pad, card.top() + scaled(21, scale),
+                                   card_w - pad * 2, scaled(22, scale)),
+                             Qt::AlignRight | Qt::AlignVCenter,
+                             QStringLiteral("敌 %1").arg(metric_value_text(metric.enemy_value)));
+            paint_balance(painter, QRect(card.left() + pad, card.top() + scaled(49, scale),
+                                         card_w - pad * 2, scaled(5, scale)),
+                          metric, stance);
+        } else if (!metric.note.isEmpty()) {
+            // 协议只给我方的指标不画「敌 --」(会被读成「敌方数据没收到」);附注写在数字下面
+            // 优劣条那一行,窄卡片里也不会和数字叠在一起。
+            painter.setFont(theme::labelFont(scaled(9, scale)));
+            painter.setPen(theme::kTextSecondary);
+            painter.drawText(QRect(card.left() + pad, card.top() + scaled(44, scale),
+                                   card_w - pad * 2, scaled(14, scale)),
+                             Qt::AlignLeft | Qt::AlignVCenter,
+                             painter.fontMetrics().elidedText(metric.note, Qt::ElideRight,
+                                                              card_w - pad * 2));
+        }
         ++index;
     }
 
@@ -250,19 +277,33 @@ void BattleAnalysisPane::paintEvent(QPaintEvent*) {
     const int line_h = scaled(kZoneHeight, scale) / 2;
     painter.setFont(theme::labelFont(scaled(9, scale)));
 
+    // 一行放不下四个阵地的全名时换短名(「红前哨 蓝临时」);还放不下就截在格子边上,
+    // 不画到格子外面。
+    const int gap = scaled(10, scale);
+    const auto row_width = [&](bool brief) {
+        int total = 0;
+        for (const ZoneStatus& zone : board_.zones)
+            total += painter.fontMetrics().horizontalAdvance(
+                         brief ? zone_status_brief_text(zone) : zone_status_text(zone)) + gap;
+        return total - gap;
+    };
+    const bool brief = row_width(false) > w;
+    painter.save();
+    painter.setClipRect(QRect(0, zone_top, w, line_h));
     int x = 0;
     for (const ZoneStatus& zone : board_.zones) {
-        const QString text = QStringLiteral("%1 %2").arg(zone.name, zone_control_text(zone.control));
+        const QString text = brief ? zone_status_brief_text(zone) : zone_status_text(zone);
         const int text_w = painter.fontMetrics().horizontalAdvance(text);
         painter.setPen(zone_colour(zone.control));
         painter.drawText(QRect(x, zone_top, text_w, line_h),
                          Qt::AlignLeft | Qt::AlignVCenter, text);
-        x += text_w + scaled(10, scale);
+        x += text_w + gap;
     }
+    painter.restore();
 
     painter.setPen(theme::kTextMuted);
-    painter.drawText(QRect(0, zone_top + line_h, w, line_h),
-                     Qt::AlignLeft | Qt::AlignVCenter, zone_global_text(board_));
+    painter.drawText(QRect(0, zone_top + line_h, w, line_h), Qt::AlignLeft | Qt::AlignVCenter,
+                     painter.fontMetrics().elidedText(zone_global_text(board_), Qt::ElideRight, w));
 }
 
 }  // namespace rm_terminal

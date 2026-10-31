@@ -10,7 +10,6 @@
 
 #include <QColor>
 #include <QComboBox>
-#include <QDateTime>
 #include <QFont>
 #include <QFontMetrics>
 #include <QFrame>
@@ -61,16 +60,6 @@ protected:
         if (event->size().width() != event->oldSize().width()) updateGeometry();
     }
 };
-
-QString level_name(std::uint32_t level) {
-    switch (level) {
-    case 0: return QStringLiteral("INFO");
-    case 1: return QStringLiteral("NOTICE");
-    case 2: return QStringLiteral("WARNING");
-    case 3: return QStringLiteral("CRITICAL");
-    default: return QStringLiteral("UNKNOWN");
-    }
-}
 
 QString mode_name(UiMode mode) {
     switch (mode) {
@@ -155,23 +144,6 @@ QString clock_text(const Field<std::int32_t>& field) {
            mark(field);
 }
 
-// Formats the timestamp carried in the feed's payload, not a local reading —— 故
-// 不受 assert_monotonic_clock.cmake 对 MonotonicMs 来源的限制。
-QString event_time_text(std::uint64_t timestamp_ms) {
-    if (timestamp_ms == 0) return QStringLiteral("--");
-    return QDateTime::fromMSecsSinceEpoch(static_cast<qint64>(timestamp_ms))
-        .toString(QStringLiteral("HH:mm:ss"));
-}
-
-}
-
-QString event_panel_text(const Snapshot& snapshot) {
-    const auto& event = snapshot.event;
-    if (!event.text.value) return QStringLiteral("暂无赛事事件");
-    QString line = QStringLiteral("[%1] %2")
-                       .arg(event.level.value ? level_name(*event.level.value) : QStringLiteral("--"))
-                       .arg(*event.text.value);
-    return line + mark(event.text);
 }
 
 QColor event_level_color(std::uint32_t level) { return theme::eventColor(level); }
@@ -179,22 +151,23 @@ QColor event_level_color(std::uint32_t level) { return theme::eventColor(level);
 QString alert_strip_text(const Snapshot& snapshot, const VideoReceiver* video) {
     QStringList alerts;
 
+    // 遮挡由本机按 Event 9 推算,可信度跟着比赛数据流走,所以不再单列「致盲数据过期」:
+    // 数据流断了,下面那条「比赛状态数据过期」已经说明了。
     if (snapshot.blind.self_base_blinded.value.value_or(false)) {
         const auto remaining = snapshot.blind.blind_remaining_ms.value;
         alerts << (remaining && *remaining > 0
-                       ? QStringLiteral("基地致盲中 · 预计剩余 %1s")
+                       ? QStringLiteral("我方被飞镖遮挡 · 预计剩余 %1s")
                              .arg((*remaining + 999) / 1000)
-                       : QStringLiteral("基地致盲中"));
+                       : QStringLiteral("我方被飞镖遮挡"));
     }
 
-    if (snapshot.blind.self_base_blinded.freshness == Freshness::Stale)
-        alerts << QStringLiteral("致盲状态数据过期");
     if (snapshot.game.stage_countdown_sec.freshness == Freshness::Stale)
         alerts << QStringLiteral("比赛状态数据过期");
     if (video && !video->online()) alerts << QStringLiteral("图传离线");
 
+    const std::uint32_t ours = self_faction(snapshot).value_or(kRed);
     for (const RobotHealth& robot : snapshot.robot_health) {
-        if (robot.faction != 1) continue;
+        if (robot.faction != ours) continue;
         if (robot.current_hp.value && *robot.current_hp.value == 0) {
             alerts << QStringLiteral("我方 %1 号阵亡")
                           .arg(display_robot_number(robot.id.value));
@@ -217,12 +190,9 @@ PopupInputs popup_inputs(const Snapshot& snapshot) {
     inputs.paused = snapshot.game.is_paused.value;
     inputs.countdown_sec = snapshot.game.stage_countdown_sec.value;
 
-    for (const MapRobot& robot : snapshot.map_robots) {
-        if (!robot.is_self) continue;
-        const auto found = snapshot.robots.find(robot.id);
-        if (found == snapshot.robots.end()) break;
-        inputs.self_hp = found->second.dynamic.current_hp.value;
-        break;
+    if (snapshot.self) {
+        const auto found = snapshot.robots.find(*snapshot.self);
+        if (found != snapshot.robots.end()) inputs.self_hp = found->second.dynamic.current_hp.value;
     }
     return inputs;
 }
@@ -290,14 +260,11 @@ QString popup_kind(Popup popup) {
 }
 
 QString video_overlay_hp_text(const Snapshot& snapshot) {
-    for (const MapRobot& robot : snapshot.map_robots) {
-        if (!robot.is_self) continue;
-        const auto found = snapshot.robots.find(robot.id);
-        if (found == snapshot.robots.end()) break;
-        return QStringLiteral("血量 %1")
-            .arg(ratio(found->second.dynamic.current_hp, found->second.dynamic.max_hp));
-    }
-    return QStringLiteral("血量 --");
+    if (!snapshot.self) return QStringLiteral("血量 --");
+    const auto found = snapshot.robots.find(*snapshot.self);
+    if (found == snapshot.robots.end()) return QStringLiteral("血量 --");
+    return QStringLiteral("血量 %1")
+        .arg(ratio(found->second.dynamic.current_hp, found->second.statics.max_hp));
 }
 
 // 只在异常时浮现。计数器全零时它们不带信息量,却占掉图传格一半宽度;
@@ -433,6 +400,14 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     : QWidget(parent),
       machine_(config.mode_exit_hysteresis_ms, config.blind_stale_fallback_ms) {
     setObjectName(QStringLiteral("dashboardRoot"));
+    if (const auto seat = Seat::fromRobotId(config.self_robot_id)) {
+        role_ = seat->role();
+        seat_label_ = seat->label();
+    } else {
+        seat_label_ = QStringLiteral("席位 %1").arg(config.self_robot_id);
+    }
+    own_faction_ = config.self_robot_id > 100 ? 2u : 1u;
+    mark_lifetime_ms_ = config.map_mark_ms;
     setStyleSheet(theme::styleSheet());
 
     auto* root = new QVBoxLayout(this);
@@ -482,6 +457,8 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     recording_status_ = new QLabel(this);
     recording_status_->setObjectName(QStringLiteral("recordingStatus"));
     recording_status_->setFixedHeight(banner_row_height);
+    // 宽度跟着文字走:默认策略会在告警带隐藏时把「● REC」拉成一长条红色。
+    recording_status_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     recording_status_->setVisible(false);
 
     link_lights_ = new QLabel(this);
@@ -503,6 +480,15 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     QObject::connect(self_check_entry_, &QPushButton::clicked, this,
                      [this] { setSelfCheckVisible(!selfCheckVisible()); });
 
+    // 键鼠控制开关放在状态条而不是本车指令面板:它在信息页和图传全屏页都点得到,
+    // 面板那一格也省下一行按钮。只有重装、步兵席位会挂上开关,其他席位一直隐藏。
+    keyboard_mouse_entry_ = new QPushButton(QStringLiteral("键鼠控制 F9"), this);
+    keyboard_mouse_entry_->setObjectName(QStringLiteral("keyboardMouseEntry"));
+    keyboard_mouse_entry_->setFixedHeight(banner_row_height);
+    keyboard_mouse_entry_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    keyboard_mouse_entry_->setFocusPolicy(Qt::NoFocus);
+    keyboard_mouse_entry_->setVisible(false);
+
     auto* banner_row = new QHBoxLayout();
     banner_row->setContentsMargins(0, 0, 0, 0);
     banner_row->setSpacing(6);
@@ -513,6 +499,7 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     banner_row->addWidget(link_lights_, 0);
     banner_row->addWidget(recording_status_, 0);
     banner_row->addWidget(self_check_entry_, 0);
+    banner_row->addWidget(keyboard_mouse_entry_, 0);
     // 告警带拿 stretch,入口按钮跟在它后面且不拉伸:按钮固定贴住右端,而告警带
     // 的出现/消失不会把按钮左右推动。
     banner_row->addWidget(reminder_entry_, 0);
@@ -554,6 +541,16 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     // 花名册里其余九台永远是 "--",所以单独一块放在地图下方。
     // stretch 归 addStretch 而不是地图:给地图拉伸权会把差额画成上下黑边。
     map_column->addWidget(map_, 0);
+    // 指挥手:点地图下标记,工具条紧贴地图下沿。
+    if (role_ == Role::Commander) {
+        mark_toolbar_ = new MarkToolbar(map_box);
+        map_column->addWidget(mark_toolbar_, 0);
+        map_->setClickHandler(
+            [this](double x_m, double y_m, std::optional<std::uint32_t> enemy_id) {
+                sendMark(x_m, y_m, enemy_id);
+            },
+            own_faction_);
+    }
     map_column->addStretch(1);
 
     // 三列上区:我方花名册 / 地图 / 敌方花名册。花名册是本终端相对官方选手端的
@@ -633,29 +630,53 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     analysis_->setObjectName(QStringLiteral("battleAnalysisPane"));
     analysis_column->addWidget(analysis_, 1);
 
-    // 下区三列与上区列一一对齐:事件在我方一侧、战场分析居中、图传在敌方一侧,
-    // 视线不需要横跨整屏找对应关系。
-    grid->addWidget(event_box, 1, 0);
-    grid->addWidget(analysis_box, 1, 1);
-    grid->addWidget(video_box, 1, 2);
+    // 角色面板的卡片。面板本身由主程序放进来(paneCard()),这里只给卡片和标题,
+    // 让三种布局在没有数据时也是完整的骨架。
+    const auto role_card = [this](const QString& heading, const char* name) {
+        auto* box = new QFrame(info_page_);
+        box->setProperty("card", true);
+        box->setObjectName(QString::fromLatin1(name));
+        auto* column = new QVBoxLayout(box);
+        column->setContentsMargins(9, 4, 9, 4);
+        column->setSpacing(2);
+        auto* title = new QLabel(heading, box);
+        title->setProperty("heading", true);
+        column->addWidget(title);
+        return box;
+    };
 
-    // 花名册按内容定宽,地图吃掉盈余。中列同时承载地图和战场分析,所以它是唯一
-    // 有拉伸权的列。
-    grid->setColumnStretch(0, 0);
-    grid->setColumnStretch(1, 5);
-    grid->setColumnStretch(2, 0);
-    // 两侧花名册列必须等宽。列宽取该列最宽控件的 sizeHint,左列下方是事件面板、
-    // 右列下方是图传,两者宽度提示不同就会让画面左右不对称(事件面板报 460 时左列
-    // 明显更宽)。这里钉住列宽本身,而不是给花名册 setFixedWidth —— 后者会让花名册
-    // 窄于列宽,差额就是花名册右侧那道黑缝。
-    for (int column : {0, 2}) {
-        grid->setColumnMinimumWidth(column, kRosterColumnWidth);
+    pane_cards_ = {{PaneId::AllyRoster, ally_box},
+                   {PaneId::EnemyRoster, enemy_box},
+                   {PaneId::Map, map_box},
+                   {PaneId::Events, event_box},
+                   {PaneId::Analysis, analysis_box},
+                   {PaneId::Video, video_box},
+                   {PaneId::Assembly, role_card(QStringLiteral("装配"), "assemblyCard")},
+                   {PaneId::Dart, role_card(QStringLiteral("飞镖"), "dartCard")},
+                   {PaneId::Sentry, role_card(QStringLiteral("哨兵"), "sentryCard")},
+                   {PaneId::SelfCommands, role_card(QStringLiteral("本车指令"), "selfCommandsCard")}};
+
+    // 下区格子与上区列一一对齐:事件在我方一侧、图传在敌方一侧,视线不需要横跨整屏
+    // 找对应关系。具体放哪一格由席位的布局档案决定。
+    const LayoutProfile& profile = layout_profile(role_);
+    for (auto& [pane, card] : pane_cards_) card->setVisible(false);
+    for (const PaneSlot& slot : profile.cells) {
+        QWidget* card = pane_cards_.at(slot.pane);
+        grid->addWidget(card, slot.row, slot.column, slot.row_span, slot.column_span);
+        card->setVisible(true);
     }
-    // 上区内容是定高的(花名册满 5 台即到顶、地图按比例缩放后用 addStretch 吸差额),
-    // 所以把全部盈余压给上区会在花名册/地图下方画出一道纯黑带 —— 全屏越宽越明显。
-    // 两区都给拉伸权,盈余按 3:2 分,下区的事件与战场分析随窗口一起长高。
-    grid->setRowStretch(0, 5);
-    grid->setRowStretch(1, 3);
+    // 花名册按内容定宽,地图吃掉盈余。
+    for (std::size_t column = 0; column < profile.column_stretch.size(); ++column)
+        grid->setColumnStretch(static_cast<int>(column), profile.column_stretch[column]);
+    // 两侧花名册列必须等宽。钉住列宽本身,而不是给花名册 setFixedWidth —— 后者会让
+    // 花名册窄于列宽,差额就是花名册右侧那道黑缝。
+    for (int column : profile.roster_columns) grid->setColumnMinimumWidth(column, kRosterColumnWidth);
+    if (profile.side_column >= 0)
+        grid->setColumnMinimumWidth(profile.side_column, profile.side_column_width);
+    // 上区内容是定高的,把全部盈余压给上区会在花名册/地图下方画出一道纯黑带,所以
+    // 每一行都给拉伸权,下区的事件与战场分析随窗口一起长高。
+    for (std::size_t row = 0; row < profile.row_stretch.size(); ++row)
+        grid->setRowStretch(static_cast<int>(row), profile.row_stretch[row]);
 
     auto* video_layout = new QVBoxLayout(video_page_);
     video_layout->setContentsMargins(0, 0, 0, 0);
@@ -851,7 +872,7 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
     ally_roster_->setEntries(build_roster(snapshot, ally_faction));
     enemy_roster_->setEntries(build_roster(snapshot, enemy_faction));
     analysis_->setMetrics(build_analysis_metrics(snapshot));
-    analysis_->setFortressHold(fortress_hold(snapshot));
+    analysis_->setFortress(fortress_status(snapshot));
     analysis_->setZoneBoard(zone_board(snapshot));
 
     const QString alerts = alert_strip_text(snapshot, video);
@@ -862,6 +883,16 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
     event_->setDroppedCount(snapshot.events.droppedCount());
     video_stats_->setText(video_panel_text(video, &video_faults_, now));
     map_->setRobots(snapshot.map_robots);
+    last_now_ = now;
+    sent_marks_.erase(std::remove_if(sent_marks_.begin(), sent_marks_.end(),
+                                     [&](const auto& sent) { return now - sent.second >= mark_lifetime_ms_; }),
+                      sent_marks_.end());
+    map_->setMarks(visible_marks(snapshot.map_marks, sent_marks_, now, mark_lifetime_ms_));
+    // 哨兵规划路径(只有指挥手收得到):10 秒没有新路径就不再画,旧意图比没有更误导。
+    constexpr MonotonicMs kPathLifetimeMs = 10000;
+    map_->setSentryPath(snapshot.sentry_path && now - snapshot.sentry_path->received_at < kPathLifetimeMs
+                            ? snapshot.sentry_path->points
+                            : std::vector<std::pair<double, double>>{});
     video_countdown_->setText(video_overlay_countdown_text(snapshot));
     video_hp_->setText(video_overlay_hp_text(snapshot));
 
@@ -923,8 +954,9 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
         was_pre_match_ = pre_match;
     }
 
+    const bool replaced = popup.popup == Popup::Eliminated && eliminated_overlay_replaced_;
     const bool popup_shown =
-        popup.popup != Popup::None && result == GameResult::None && !selfCheckVisible();
+        popup.popup != Popup::None && !replaced && result == GameResult::None && !selfCheckVisible();
     popup_->setVisible(popup_shown);
     if (QQuickItem* overlay = popup_->rootObject()) {
         overlay->setProperty("kind", popup_kind(popup.popup));
@@ -1000,9 +1032,85 @@ void Dashboard::forceMode(std::optional<UiMode> forced) {
 
 void Dashboard::refreshPage() {
     stack_->setCurrentWidget(mode() == UiMode::Video ? video_page_ : info_page_);
-    mode_banner_->setText(QStringLiteral("模式 %1 · 原因 %2")
-                              .arg(mode_name(mode()))
-                              .arg(reason_name(reason())));
+    // 状态条最左边固定显示席位;模式和原因照写日志、照进 layoutDump,悬停可看。
+    // 键鼠控制中时跟在席位后面:它在信息页和图传全屏页都看得见,而光标此时是藏起来的。
+    mode_banner_->setText(keyboard_mouse_status_.isEmpty()
+                              ? seat_label_
+                              : seat_label_ + QStringLiteral(" · ") + keyboard_mouse_status_);
+    mode_banner_->setToolTip(QStringLiteral("界面 %1 · 原因 %2")
+                                 .arg(mode_name(mode()))
+                                 .arg(reason_name(reason())));
+}
+
+void Dashboard::setCommandSender(CommandSender sender) { command_sender_ = std::move(sender); }
+
+void Dashboard::setEliminatedOverlayReplaced(bool replaced) { eliminated_overlay_replaced_ = replaced; }
+
+void Dashboard::setKeyboardMouseToggle(std::function<void()> toggle) {
+    keyboard_mouse_entry_->setVisible(static_cast<bool>(toggle));
+    QObject::disconnect(keyboard_mouse_entry_, &QPushButton::clicked, this, nullptr);
+    if (toggle)
+        QObject::connect(keyboard_mouse_entry_, &QPushButton::clicked, this,
+                         [toggle = std::move(toggle)] { toggle(); });
+}
+
+void Dashboard::setKeyboardMouseStatus(const QString& text) {
+    if (keyboard_mouse_status_ == text) return;
+    keyboard_mouse_status_ = text;
+    keyboard_mouse_entry_->setText(text.isEmpty() ? QStringLiteral("键鼠控制 F9")
+                                                  : QStringLiteral("键鼠控制 · 开"));
+    refreshPage();
+}
+
+void Dashboard::setLinkUp(bool up) {
+    link_up_ = up;
+    if (mark_toolbar_) mark_toolbar_->setLinkUp(up);
+}
+
+void Dashboard::sendMark(double x_m, double y_m, std::optional<std::uint32_t> enemy_id) {
+    if (!mark_toolbar_) return;
+    MarkDraft draft = mark_toolbar_->draft(own_faction_);
+    draft.x_m = x_m;
+    draft.y_m = y_m;
+    if (enemy_id) {
+        draft.target = MarkTarget::EnemyRobot;
+        draft.enemy_id = *enemy_id;
+    }
+    const MarkEncoding encoded = encode_map_click(draft, default_field_extent());
+    if (encoded.rejection != MarkRejection::None) {
+        mark_toolbar_->setStatus(mark_rejection_text(encoded.rejection), true);
+        return;
+    }
+    // 断线时直接丢:等重连后再补发的是过时的意图。
+    if (!link_up_ || !command_sender_) {
+        mark_toolbar_->setStatus(QStringLiteral("断线，标记不会发送"), true);
+        return;
+    }
+    if (!mark_gate_.allow(last_now_)) {
+        mark_toolbar_->setStatus(mark_rejection_text(MarkRejection::TooSoon), true);
+        return;
+    }
+    if (!command_sender_("MapClickCmd", encoded.bytes)) {
+        mark_toolbar_->setStatus(QStringLiteral("发送失败"), true);
+        return;
+    }
+    sent_marks_.emplace_back(draft, last_now_);
+    StructuredLog::write(LogLevel::info, QStringLiteral("map_mark"),
+                         {QStringLiteral("kind=%1").arg(static_cast<int>(draft.kind)),
+                          QStringLiteral("target=%1").arg(enemy_id ? QString::number(*enemy_id)
+                                                                   : QStringLiteral("map")),
+                          QStringLiteral("x=%1").arg(x_m, 0, 'f', 2),
+                          QStringLiteral("y=%1").arg(y_m, 0, 'f', 2)});
+    mark_toolbar_->setStatus(
+        enemy_id ? QStringLiteral("已标记敌方 %1 号").arg(display_robot_number(*enemy_id))
+                 : QStringLiteral("已标记 (%1, %2) m").arg(x_m, 0, 'f', 1).arg(y_m, 0, 'f', 1),
+        false);
+}
+
+QWidget* Dashboard::paneCard(PaneId pane) const {
+    const auto found = pane_cards_.find(pane);
+    if (found == pane_cards_.end() || !found->second->isVisibleTo(info_page_)) return nullptr;
+    return found->second;
 }
 
 void Dashboard::setRecordingStatus(const QString& text) {
@@ -1175,10 +1283,14 @@ std::string Dashboard::layoutDump() const {
           << pane_entry(QStringLiteral("video_full_pane"), video_full_pane_)
           << pane_entry(QStringLiteral("event_panel"), event_)
           << pane_entry(QStringLiteral("mode_banner"), mode_banner_);
+    // 布局档案里的每一格,按 PaneId 的固定顺序。
+    for (const auto& [pane, card] : pane_cards_)
+        panes << pane_entry(QStringLiteral("card_") + pane_name(pane), card);
 
     // The window box is included because the "video fills the screen" criterion is a
     // ratio against it; without it that check would need a hard-coded size.
     return QStringLiteral("{\n"
+                          "  \"role\": \"%7\",\n"
                           "  \"mode\": \"%1\",\n"
                           "  \"reason\": \"%2\",\n"
                           "  \"stacked_index\": %3,\n"
@@ -1191,6 +1303,7 @@ std::string Dashboard::layoutDump() const {
         .arg(width())
         .arg(height())
         .arg(panes.join(QStringLiteral(",\n")))
+        .arg(role_name(role_))
         .toStdString();
 }
 

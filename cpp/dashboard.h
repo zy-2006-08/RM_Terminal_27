@@ -3,7 +3,9 @@
 #include "config.h"
 #include "domain.h"
 #include "map_pane.h"
+#include "mark_toolbar.h"
 #include "game_result.h"
+#include "layout_profile.h"
 #include "popup_state.h"
 #include "roster_pane.h"
 #include "roster_panel.h"
@@ -23,6 +25,7 @@
 #include <QWidget>
 #include <cstddef>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 
@@ -39,10 +42,6 @@ class SelfCheckPanel;
 
 // 横幅行状态灯的富文本:每条链路一个圆点,不正常时圆点后跟几个字说明。
 QString link_lights_html(const LinkReport& report);
-
-// Shared by both layout pages. A second set of these for the video page would
-// let the two pages disagree about the same underlying values.
-QString event_panel_text(const Snapshot& snapshot);
 
 // VideoReceiver::snapshot() 的计数器是**累计值**。
 struct VideoFaultCounts {
@@ -209,6 +208,24 @@ public:
     // make a byte-for-byte diff fail for reasons that have nothing to do with layout.
     std::string layoutDump() const;
 
+    Role role() const { return role_; }
+
+    // 指挥手往服务器发指令(地图标记)走这里;没设或断线时一律不发、不排队。
+    using CommandSender = std::function<bool(const char* topic, const std::string& payload)>;
+    void setCommandSender(CommandSender sender);
+    void setLinkUp(bool up);
+    // 步兵、重装挂了复活框(revive_popup.h)时传 true:阵亡不再弹「已阵亡 等待复活」,
+    // 由复活框照官方选手端接管。弹窗状态机和日志不变,只是不画这一种。
+    void setEliminatedOverlayReplaced(bool replaced);
+    // 状态条上的键鼠控制开关。传空函数(其他席位)时开关隐藏。
+    void setKeyboardMouseToggle(std::function<void()> toggle);
+    // 非空时跟在状态条的席位名后面,例如「键鼠控制中（Esc 退出）」。
+    void setKeyboardMouseStatus(const QString& text);
+    // 指挥手地图下的标记工具条,其他席位为 nullptr。
+    MarkToolbar* markToolbar() const { return mark_toolbar_; }
+    // 角色面板的卡片(装配/飞镖/哨兵),主程序把真正的面板放进去。不在当前布局里时返回 nullptr。
+    QWidget* paneCard(PaneId pane) const;
+
 protected:
     // The popup is outside both page layouts (see popup_ below), so nothing else
     // would ever resize it.
@@ -236,6 +253,7 @@ private:
     QLabel* recording_status_;
     QLabel* link_lights_;
     QPushButton* self_check_entry_;
+    QPushButton* keyboard_mouse_entry_;
     SelfCheckPanel* self_check_ = nullptr;
     bool self_check_enabled_ = false;
     bool was_pre_match_ = false;
@@ -245,6 +263,24 @@ private:
     bool our_base_left_ = true;
     ReminderController* reminders_ = nullptr;
     ReminderDialog* reminder_dialog_ = nullptr;
+
+    // 席位决定信息页的布局(见 layout_profile.h),本次运行内不变。
+    Role role_ = Role::Infantry;
+    QString seat_label_;
+    QString keyboard_mouse_status_;
+    bool eliminated_overlay_replaced_ = false;
+    // 每种面板外面那张卡片,按 PaneId 索引;不在当前布局里的卡片隐藏、不进网格。
+    std::map<PaneId, QWidget*> pane_cards_;
+
+    void sendMark(double x_m, double y_m, std::optional<std::uint32_t> enemy_id);
+    MarkToolbar* mark_toolbar_ = nullptr;
+    MarkGate mark_gate_;
+    std::vector<std::pair<MarkDraft, MonotonicMs>> sent_marks_;
+    CommandSender command_sender_;
+    bool link_up_ = false;
+    MonotonicMs last_now_ = 0;
+    MonotonicMs mark_lifetime_ms_ = 30000;
+    std::uint32_t own_faction_ = 1;
 
     QWidget* replay_bar_;
     QPushButton* replay_play_;

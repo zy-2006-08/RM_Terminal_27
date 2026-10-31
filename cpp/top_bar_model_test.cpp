@@ -45,7 +45,7 @@ Snapshot full_field_snapshot() {
     snapshot.game.current_round = present<std::uint32_t>(1);
     snapshot.game.total_rounds = present<std::uint32_t>(3);
 
-    for (std::uint32_t n : {1u, 3u, 4u, 6u, 7u}) {
+    for (std::uint32_t n : {1u, 3u, 4u, 7u}) {
         snapshot.robot_health.push_back(health(n, 1, 300 + n * 40, 600));
         snapshot.robot_health.push_back(health(100 + n, 2, 500 - n * 30, 600));
     }
@@ -57,24 +57,27 @@ Snapshot full_field_snapshot() {
 void every_reported_robot_fills_its_slot() {
     const TopBarModel model = top_bar_model(full_field_snapshot());
 
-    for (std::size_t i : {0u, 2u, 3u}) {
+    for (std::size_t i = 0; i < kTopBarSlotsPerSide; ++i) {
         check(model.red.cards[i].online, "every represented red robot is online");
         check(model.red.cards[i].has_hp(), "every represented red robot carries HP");
         check(model.blue.cards[i].online, "every represented blue robot is online");
         check(model.blue.cards[i].has_hp(), "every represented blue robot carries HP");
     }
 
-    check(model.red.cards[3].display_number == 4, "red slot 4 shows as number 4");
-    check(model.red.cards[3].robot_class == QStringLiteral("步兵"), "red 4 is infantry");
-    check(robot_class_name(6) == QStringLiteral("空中"), "red 6 is the air robot");
-    check(robot_class_name(7) == QStringLiteral("哨兵"), "red 7 is the sentry");
+    check(model.red.cards[2].display_number == 4, "the third red slot is number 4");
+    check(model.red.cards[2].robot_class == QStringLiteral("步兵"), "red 4 is infantry");
+    check(model.red.cards[3].display_number == 7 &&
+              model.red.cards[3].robot_class == QStringLiteral("哨兵"),
+          "the last red slot is the sentry");
 }
 
 void blue_ids_are_displayed_without_the_internal_offset() {
     const TopBarModel model = top_bar_model(full_field_snapshot());
+    const std::uint32_t expected_numbers[] = {1u, 3u, 4u, 7u};
     for (std::size_t i = 0; i < kTopBarSlotsPerSide; ++i) {
-        check(model.blue.cards[i].display_number == static_cast<std::uint32_t>(i) + 1,
+        check(model.blue.cards[i].display_number == expected_numbers[i],
               "the blue slot displays its local number");
+        check(model.blue.cards[i].id == expected_numbers[i] + 100, "the blue slot keeps the blue id");
     }
 }
 
@@ -88,12 +91,12 @@ void an_absent_robot_is_a_placeholder_not_a_healthy_one() {
     snapshot.robot_health = kept;
 
     const TopBarModel model = top_bar_model(snapshot);
-    check(!model.red.cards[3].online, "the absent robot is not reported online");
-    check(!model.red.cards[3].has_hp(), "the absent robot carries no HP");
-    check(model.red.cards[3].display_number == 4, "the absent slot still holds its place");
-    check(model.red.cards[3].robot_class == QStringLiteral("步兵"),
+    check(!model.red.cards[2].online, "the absent robot is not reported online");
+    check(!model.red.cards[2].has_hp(), "the absent robot carries no HP");
+    check(model.red.cards[2].display_number == 4, "the absent slot still holds its place");
+    check(model.red.cards[2].robot_class == QStringLiteral("步兵"),
           "the absent slot still names its class so the position is identifiable");
-    check(model.red.cards[2].online, "its neighbours are unaffected");
+    check(model.red.cards[1].online && model.red.cards[3].online, "its neighbours are unaffected");
 }
 
 // 基地血量必须来自 GameStatus 的基地字段,而不是全队血量合计。
@@ -155,7 +158,7 @@ void score_and_clock_read_from_the_protocol() {
 void an_empty_snapshot_states_that_nothing_is_known() {
     const Snapshot empty;
     const TopBarModel model = top_bar_model(empty);
-    const std::uint32_t expected_numbers[] = {1u, 2u, 3u, 4u, 5u};
+    const std::uint32_t expected_numbers[] = {1u, 3u, 4u, 7u};
 
     check(model.clock == QStringLiteral("--:--"), "an absent countdown reads as unknown");
     check(model.round == QStringLiteral("-/-"), "an absent round reads as unknown");
@@ -167,7 +170,7 @@ void an_empty_snapshot_states_that_nothing_is_known() {
         check(!model.red.cards[i].online && !model.red.cards[i].has_hp(),
               "no robot is claimed online without data");
         check(model.red.cards[i].display_number == expected_numbers[i],
-              "the layout still holds five placeholder slots");
+              "the layout still holds four placeholder slots");
     }
 }
 
@@ -201,16 +204,31 @@ void a_dead_robot_is_distinct_from_an_absent_one() {
 // 未知编号不得挤掉正常槽位,也不得凭空多出一格。
 void an_out_of_roster_id_is_ignored() {
     Snapshot snapshot = full_field_snapshot();
-    snapshot.robot_health.push_back(health(7, 1, 500, 600));
-    snapshot.robot_health.push_back(health(107, 2, 500, 600));
+    snapshot.robot_health.push_back(health(2, 1, 500, 600));
+    snapshot.robot_health.push_back(health(106, 2, 500, 600));
 
     const TopBarModel model = top_bar_model(snapshot);
-    const std::uint32_t expected_numbers[] = {1u, 2u, 3u, 4u, 5u};
-    check(model.red.cards.size() == kTopBarSlotsPerSide, "the red side keeps exactly 5 cards");
+    const std::uint32_t expected_numbers[] = {1u, 3u, 4u, 7u};
+    check(model.red.cards.size() == kTopBarSlotsPerSide, "the red side keeps exactly 4 cards");
     for (std::size_t i = 0; i < kTopBarSlotsPerSide; ++i) {
         check(model.red.cards[i].display_number == expected_numbers[i],
               "an unknown id does not displace a real slot");
     }
+}
+
+// 防御状态和控制度只透传「真收到了」的值;没收到时 QML 整块不画。
+void defense_and_control_pass_through() {
+    Snapshot snapshot = full_field_snapshot();
+    TopBarModel model = top_bar_model(snapshot);
+    check(!model.red.base_status && !model.red.control_points, "nothing invented before data");
+    snapshot.game.red_base_status = present<std::uint32_t>(2);
+    snapshot.game.blue_base_status = present<std::uint32_t>(0);
+    snapshot.game.red_control_points = present<std::uint32_t>(0);
+    snapshot.game.blue_control_points = present<std::uint32_t>(45);
+    model = top_bar_model(snapshot);
+    check(model.red.base_status == 2u && model.blue.base_status == 0u, "base status by side");
+    check(model.red.control_points == 0u && model.blue.control_points == 45u,
+          "a real zero control score is kept");
 }
 
 }  // namespace
@@ -228,6 +246,7 @@ int main() {
         the_clock_turns_critical_in_the_last_ten_seconds();
         a_dead_robot_is_distinct_from_an_absent_one();
         an_out_of_roster_id_is_ignored();
+        defense_and_control_pass_through();
     } catch (const std::exception& error) {
         std::cerr << "FAIL " << error.what() << '\n';
         return 1;

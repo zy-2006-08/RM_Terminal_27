@@ -2,6 +2,7 @@
 
 #include "domain.h"
 #include "field_map.h"
+#include "map_marks.h"
 
 #include <QColor>
 #include <QSize>
@@ -9,14 +10,13 @@
 #include <QStringList>
 #include <QWidget>
 #include <cstdint>
+#include <functional>
+#include <optional>
 #include <vector>
 
 namespace rm_terminal {
 
-// The simulated roster size (sim/match_server.py publishes 1 self + 2 ally + 5
-// enemy). It is a LOCAL simulation figure, not an RM2027 rule, and exists so the
-// operator can see "received 4 of 8" rather than a plausible-looking partial map.
-// Must track _FRIENDLY_IDS + _ENEMY_IDS there, or the map reports a false shortfall.
+// 2027 雷达消息每次报 8 台(双方 1、3、4、7),地图据此说「收到 4/8」而不是看起来齐全。
 constexpr std::size_t kExpectedRobotCount = 8;
 
 // 故障行的行距。故障行叠在场地上而不是占用独立状态带:预留出来的带子在常态下
@@ -48,6 +48,8 @@ struct MapMarker {
     bool has_position = false;
     bool has_yaw = false;
     bool stale = false;
+    // 雷达特殊标识:0 否 1 是 2 是但目标定位模块离线。
+    std::uint32_t highlight = 0;
 };
 
 std::vector<MapMarker> markers_from(const std::vector<MapRobot>& robots);
@@ -75,15 +77,31 @@ public:
     // 我方基地被攻击时闪我方半场的边框。`bright` 由调用方按时间交替,实现闪烁。
     void setBaseAlert(bool active, bool our_side_left, bool bright);
 
+    // 地图标记(收到的和自己发的)与哨兵规划路径,每个 tick 由调用方整体替换。
+    void setMarks(const std::vector<DrawnMark>& marks);
+    void setSentryPath(const std::vector<std::pair<double, double>>& points);
+
+    // 指挥手:点地图下标记。点到敌方机器人(22 像素内)时 enemy_id 有值,否则是点位标记。
+    // 没设回调时地图不响应点击。
+    using ClickHandler = std::function<void(double x_m, double y_m, std::optional<std::uint32_t> enemy_id)>;
+    void setClickHandler(ClickHandler handler, std::uint32_t own_faction);
+    // 给测试和截图用:模拟一次点击,返回是否落在场地内。
+    bool clickAt(QPointF pixel);
+
     bool hasHeightForWidth() const override { return true; }
     int heightForWidth(int width) const override;
     QSize sizeHint() const override;
 
 protected:
     void paintEvent(QPaintEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
 
 private:
     std::vector<MapMarker> markers_;
+    std::vector<DrawnMark> marks_;
+    std::vector<std::pair<double, double>> sentry_path_;
+    ClickHandler click_handler_;
+    std::uint32_t own_faction_ = 1;
     FieldExtent field_ = default_field_extent();
     bool base_alert_ = false;
     bool base_alert_left_ = true;

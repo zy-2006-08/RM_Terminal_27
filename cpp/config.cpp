@@ -1,4 +1,5 @@
 #include "config.h"
+#include "seat.h"
 
 #include <QFile>
 
@@ -66,15 +67,12 @@ bool parse_log_level(const QString& name, LogLevel* out) {
     return true;
 }
 
-bool valid_self_robot_id(int id) {
-    return id == 1 || id == 3 || id == 4 || id == 6 || id == 7
-           || id == 101 || id == 103 || id == 104 || id == 106 || id == 107;
-}
+bool valid_self_robot_id(int id) { return Seat::fromRobotId(id).has_value(); }
 
 const QStringList& alert_kind_names() {
     static const QStringList names{
         QStringLiteral("outpost"), QStringLiteral("control"), QStringLiteral("fortress"),
-        QStringLiteral("dart"),    QStringLiteral("energy"),  QStringLiteral("reinforce"),
+        QStringLiteral("dart"),    QStringLiteral("energy"),
         QStringLiteral("low_hp"),  QStringLiteral("base")};
     return names;
 }
@@ -124,11 +122,12 @@ bool load_config(const QString& path, Config* config, QString* error) {
             if (!valid_self_robot_id(config->self_robot_id)) {
                 if (error) {
                     *error = QStringLiteral("line %1: invalid self_robot_id=%2; expected "
-                                            "1, 3, 4, 6, 7, 101, 103, 104, 106, or 107")
+                                            "1, 3, 4, 6, 101, 103, 104, or 106")
                                  .arg(line).arg(config->self_robot_id);
                 }
                 return false;
             }
+            config->self_robot_id_set = true;
         } else if (key == QLatin1String("stale_window_ms")) {
             if (!parse_integer(value, key, line, &config->stale_window_ms, error)) return false;
         } else if (key == QLatin1String("mode_exit_hysteresis_ms")) {
@@ -146,6 +145,12 @@ bool load_config(const QString& path, Config* config, QString* error) {
             }
         } else if (key == QLatin1String("map_enabled")) {
             if (!parse_boolean(value, key, line, &config->map_enabled, error)) return false;
+        } else if (key == QLatin1String("map_mark_ms")) {
+            if (!parse_integer(value, key, line, &config->map_mark_ms, error)) return false;
+        } else if (key == QLatin1String("display_fullscreen")) {
+            if (!parse_boolean(value, key, line, &config->display_fullscreen, error)) return false;
+        } else if (key == QLatin1String("display_screen")) {
+            config->display_screen = value;
         } else if (key == QLatin1String("controller_serial")) {
             config->controller_serial = value;
         } else if (key == QLatin1String("controller_baud")) {

@@ -2,7 +2,8 @@
 """RM2027 模拟器控制台。
 
 按钮只负责发命令，界面不会因为命令而变，所以底部回读服务器状态：
-不显示真实赛程和血量的话，按完看起来就像没反应。
+不显示真实赛程和血量的话，按完看起来就像没反应。状态读的是模拟器单独发的
+sim/State（红蓝绝对视角），不是发给终端的协议消息——协议里的「己方/对方」相对自机。
 """
 from __future__ import annotations
 
@@ -21,21 +22,23 @@ sys.path.insert(0, str(ROOT / "generated"))
 import paho.mqtt.client as mqtt
 
 import rm_terminal_pb2 as pb
-from sim.constants import (MQTT_PORT, SELF_ROBOT_ID, SERVER_HOST, T_BLIND_STATUS,
-                           T_GAME_STATUS, T_ROBOT_HEALTH_SET, T_ROBOT_RESPAWN,
-                           T_SIM_ARM_BAD, T_SIM_ARM_ECHO, T_SIM_ARM_JOINTS,
-                           T_SIM_ARM_PLUGGED, T_SIM_AUTO_HP, T_SIM_LINK_CAR,
-                           T_SIM_LINK_MQTT, T_SIM_LINK_VIDEO)
+from sim.constants import (MQTT_PORT, SELF_ROBOT_ID, SERVER_HOST, T_ROBOT_RESPAWN,
+                           T_SIM_ARM_BAD, T_SIM_ARM_ECHO, T_SIM_ARM_FEEDBACK,
+                           T_SIM_ARM_FOLLOW, T_SIM_ARM_JOINTS, T_SIM_ARM_PLUGGED,
+                           T_SIM_AUTO_HP, T_SIM_LINK_CAR, T_SIM_LINK_MQTT,
+                           T_SIM_LINK_VIDEO, T_SIM_STATE)
 
 PY = ROOT / ".venv" / "bin" / "python"
 CTRL = ROOT / "sim" / "match_control.py"
 
+# 场上有血量的 8 台(2027:1 重装 3/4 步兵 7 哨兵)。指挥手(6)没有血量,坐 6 号时只列出来看。
 ROBOTS = [
-    ("红1 重装", 1), ("红3 步兵", 3), ("红4 步兵", 4),
-    ("红6 空中", 6), ("红7 哨兵", 7),
-    ("蓝1 重装", 101), ("蓝3 步兵", 103), ("蓝4 步兵", 104),
-    ("蓝6 空中", 106), ("蓝7 哨兵", 107),
+    ("红1 重装", 1), ("红3 步兵", 3), ("红4 步兵", 4), ("红7 哨兵", 7),
+    ("蓝1 重装", 101), ("蓝3 步兵", 103), ("蓝4 步兵", 104), ("蓝7 哨兵", 107),
 ]
+if SELF_ROBOT_ID % 100 == 6:
+    ROBOTS.insert(0 if SELF_ROBOT_ID < 100 else 4,
+                  ("红6 指挥手" if SELF_ROBOT_ID < 100 else "蓝6 指挥手", SELF_ROBOT_ID))
 ROBOTS = [(f"{name}(自机)" if robot_id == SELF_ROBOT_ID else name, robot_id)
           for name, robot_id in ROBOTS]
 ROBOT_IDS = {name: robot_id for name, robot_id in ROBOTS}
@@ -48,7 +51,8 @@ ZONE_ALLOWED = [ZONE_STATES[1:], ZONE_STATES[1:],
 ZONES = ["红方前哨区", "蓝方前哨区", "红方基地区", "蓝方基地区"]
 ZONE_SHORT = ["前哨红", "前哨蓝", "基地红", "基地蓝"]
 STRUCTURES = ["红方基地", "蓝方基地", "红方前哨站", "蓝方前哨站"]
-FORTRESS_STATES = ["自动", "未占领", "红方", "蓝方"]
+FORTRESS_STATES = ["自动", "停止激活", "蓝方激活红方堡垒", "红方激活蓝方堡垒"]
+FORTRESS_SHORT = ["无", "红方堡垒被激活", "蓝方堡垒被激活"]
 BLIND_SIDES = ["红方", "蓝方"]
 DART_TARGETS = ["前哨站", "基地固定目标", "基地随机固定目标",
                 "基地随机移动目标", "基地末端移动目标"]
@@ -56,8 +60,9 @@ DART_TARGETS = ["前哨站", "基地固定目标", "基地随机固定目标",
 state = {"online": False, "stage": None, "remain": 0, "elapsed": 0,
          "changed_at": 0.0, "action": "就绪", "hp": {},
          "zones": [0, 0, 0, 0], "control": (0, 0), "reinforce": (0, 0),
-         "base": (0, 10000, 0, 10000), "fortress": 0, "blind": (0, 0),
-         "respawn": (False, 0, 0, False, 0, False)}
+         "base": (0, 10000, 0, 10000), "fortress": (0, False, 0.0), "blind": (0, 0),
+         "armor": (False, False), "economy": (0, 0),
+         "respawn": (False, 0, 0, False, 0, False), "self": None}
 
 
 def mmss(seconds: float) -> str:
@@ -183,7 +188,7 @@ button(robot_row, "复活", lambda: set_hp(robot_max_hp(), "设为")).pack(side=
 
 
 def robot_max_hp() -> int:
-    return state["hp"].get(ROBOT_IDS[selected.get()], (0, 400))[1]
+    return state["hp"].get(ROBOT_IDS[selected.get()], (0, 600))[1]
 
 
 shoot_row = tk.Frame(robot)
@@ -211,6 +216,10 @@ button(tool_row, "买弹",
                    "buy", caliber.get(), buy_entry.get())).pack(side="left", padx=2)
 button(tool_row, "买活",
        lambda: act("金币兑换立即复活", "pay-revive")).pack(side="left", padx=2)
+# 读条满后自机要「确认复活」才起来(协议 2.2.25)。比赛时由选手端或终端点,模拟器里没有
+# 选手端,这颗按钮替它点。
+button(tool_row, "确认复活",
+       lambda: act("确认复活", "confirm-revive")).pack(side="left", padx=2)
 button(tool_row, "自机刷卡",
        lambda: act("自机刷卡解除虚弱", "card")).pack(side="left", padx=2)
 
@@ -271,7 +280,7 @@ tk.Button(zone_row, text="持续激活 6s", command=hold_zone).pack(side="left",
 
 reinforce_row = tk.Frame(zone)
 reinforce_row.pack(pady=(0, 4))
-tk.Label(reinforce_row, text="加固机会(需累计命中≥10)").pack(side="left")
+tk.Label(reinforce_row, text="加固机会(模拟器内部,2027 协议不发)").pack(side="left")
 button(reinforce_row, "红方消耗",
        lambda: act("红方消耗加固机会", "reinforce", "1")).pack(side="left", padx=2)
 button(reinforce_row, "蓝方消耗",
@@ -304,7 +313,7 @@ button(structure_row, "设定血量", set_structure_hp).pack(side="left", padx=2
 
 fortress_row = tk.Frame(structure)
 fortress_row.pack(pady=(0, 4))
-tk.Label(fortress_row, text="堡垒").pack(side="left")
+tk.Label(fortress_row, text="堡垒(被激活满 10 秒护甲展开)").pack(side="left")
 fortress_selected = tk.StringVar(value=FORTRESS_STATES[1])
 tk.OptionMenu(fortress_row, fortress_selected, *FORTRESS_STATES).pack(side="left")
 
@@ -336,7 +345,8 @@ def trigger_blind() -> None:
 
 
 button(blind_row, "中镖", trigger_blind).pack(side="left", padx=2)
-button(blind_row, "解除", lambda: act("解除手动致盲", "blind-clear")).pack(side="left", padx=2)
+button(blind_row, "清账本", lambda: act("清掉模拟器的遮挡账本(终端照常按规则倒计时)",
+                                      "blind-clear")).pack(side="left", padx=2)
 button(blind_row, "开闸",
        lambda: act("开启飞镖闸门", "dart-open",
                    str(BLIND_SIDES.index(blind_side.get()) + 1))).pack(side="left", padx=2)
@@ -344,6 +354,13 @@ button(blind_row, "发射",
        lambda: act("发射飞镖", "dart",
                    str(BLIND_SIDES.index(blind_side.get()) + 1),
                    str(DART_TARGETS.index(blind_target.get()) + 1))).pack(side="left", padx=2)
+
+mark_row = tk.Frame(dart)
+mark_row.pack(pady=(0, 4))
+tk.Label(mark_row, text="模拟指挥手标记敌方重装").pack(side="left")
+for mark_name, mark_kind in (("攻击", "1"), ("防御", "2"), ("警戒", "3")):
+    button(mark_row, mark_name,
+           lambda k=mark_kind, n=mark_name: act(f"指挥手标记({n})", "mark", k)).pack(side="left", padx=2)
 
 
 # ---------------- 链路：测终端断线时的反应 ----------------
@@ -355,7 +372,7 @@ LINK_TEXT = {"mqtt": {"ok": "正常", "cut": "断开", "freeze": "卡住"},
 LINK_TOPICS = {T_SIM_LINK_MQTT: "mqtt", T_SIM_LINK_CAR: "car", T_SIM_LINK_VIDEO: "video"}
 JOINT_NAMES = ["关节0", "关节1", "关节2", "关节3", "夹爪", "臂yaw"]
 state.update(links={"mqtt": "ok", "car": "ok", "video": "ok"}, arm_plugged=True,
-             arm_echo=None)
+             arm_echo=None, arm_feedback=None)
 panel_client: dict = {"client": None}
 
 
@@ -392,11 +409,16 @@ button(arm_row, "插回", lambda: publish(T_SIM_ARM_PLUGGED, b"1", "机械臂：
     side="left", padx=2)
 button(arm_row, "坏帧", lambda: publish(T_SIM_ARM_BAD, b"1", "机械臂：发一帧坏帧",
                                        retain=False)).pack(side="left", padx=2)
+button(arm_row, "车让控制器跟随", lambda: publish(T_SIM_ARM_FOLLOW, b"1", "车的回传标志 2：控制器跟随车")).pack(
+    side="left", padx=2)
+button(arm_row, "取消跟随", lambda: publish(T_SIM_ARM_FOLLOW, b"0", "车的回传标志 1：正常")).pack(
+    side="left", padx=2)
 
 
 def restore_links() -> None:
     for topic in (T_SIM_LINK_MQTT, T_SIM_LINK_CAR, T_SIM_LINK_VIDEO):
         publish(topic, b"ok", "")
+    publish(T_SIM_ARM_FOLLOW, b"0", "")
     publish(T_SIM_ARM_PLUGGED, b"1", "链路全部恢复")
 
 
@@ -424,13 +446,21 @@ def arm_text() -> str:
     plugged = "插着" if state["arm_plugged"] else "拔了"
     echo = state["arm_echo"]
     if not echo or echo.get("joints_deg") is None:
-        return f"假机械臂 {plugged} · 车上机械臂 还没收到"
-    if echo.get("moving"):
+        car = "车上机械臂 还没收到"
+    elif echo.get("moving"):
         angles = " ".join(f"{value:.0f}°" for value in echo["joints_deg"])
-        return f"假机械臂 {plugged} · 车上机械臂 跟随中 {angles}"
-    age_ms = echo.get("age_ms") or 0
-    age = f"{age_ms} ms" if age_ms < 1000 else f"{age_ms // 1000} 秒"
-    return f"假机械臂 {plugged} · 车上机械臂 停住（{age}没收到新姿态）"
+        car = f"车上机械臂 跟随中 {angles}"
+    else:
+        age_ms = echo.get("age_ms") or 0
+        age = f"{age_ms} ms" if age_ms < 1000 else f"{age_ms // 1000} 秒"
+        car = f"车上机械臂 停住（{age}没收到新姿态）"
+    feedback = state["arm_feedback"]
+    if not feedback or not feedback.get("frames"):
+        back = "控制器 还没收到车的回传"
+    else:
+        flag = "跟随车" if feedback.get("flag") == 2 else "正常"
+        back = f"控制器收到车的回传 {feedback['frames']} 帧（{flag}）"
+    return f"假机械臂 {plugged} · {car} · {back}"
 
 
 def on_message(_client, _userdata, message) -> None:
@@ -440,38 +470,43 @@ def on_message(_client, _userdata, message) -> None:
     if message.topic == T_SIM_ARM_PLUGGED:
         state["arm_plugged"] = message.payload != b"0"
         return
+    if message.topic == T_SIM_ARM_FEEDBACK:
+        try:
+            state["arm_feedback"] = json.loads(message.payload)
+        except ValueError:
+            pass
+        return
     if message.topic == T_SIM_ARM_ECHO:
         try:
             state["arm_echo"] = json.loads(message.payload)
         except ValueError:
             pass
         return
-    if message.topic == T_GAME_STATUS:
-        status_msg = pb.GameStatus()
+    if message.topic == T_SIM_STATE:
         try:
-            status_msg.ParseFromString(message.payload)
-        except Exception:
+            sim = json.loads(message.payload)
+        except ValueError:
             return
-        if status_msg.stage_countdown_sec != state["remain"]:
+        if sim["remain"] != state["remain"]:
             state["changed_at"] = time.monotonic()
-        state["stage"] = status_msg.current_stage
-        state["remain"] = status_msg.stage_countdown_sec
-        state["elapsed"] = status_msg.stage_elapsed_sec
-        state["zones"] = [status_msg.red_outpost_zone, status_msg.blue_outpost_zone,
-                          status_msg.red_base_zone, status_msg.blue_base_zone]
-        state["control"] = (status_msg.red_control_points, status_msg.blue_control_points)
-        state["reinforce"] = (status_msg.red_reinforce_chances,
-                              status_msg.blue_reinforce_chances)
-        state["base"] = (status_msg.red_base_hp, status_msg.red_base_max_hp,
-                         status_msg.blue_base_hp, status_msg.blue_base_max_hp)
-        state["fortress"] = status_msg.fortress_holder
-    elif message.topic == T_BLIND_STATUS:
-        blind = pb.BlindStatus()
-        try:
-            blind.ParseFromString(message.payload)
-        except Exception:
-            return
-        state["blind"] = (blind.affected_faction, blind.target_type)
+        state["stage"] = sim["stage"]
+        state["remain"] = sim["remain"]
+        state["elapsed"] = sim["elapsed"]
+        state["zones"] = sim["zones"]
+        state["control"] = tuple(sim["control"])
+        state["reinforce"] = tuple(sim["reinforce"])
+        state["base"] = (sim["base"][0], 10000, sim["base"][1], 10000)
+        state["fortress"] = tuple(sim["fortress"])
+        state["armor"] = tuple(sim["armor"])
+        state["economy"] = tuple(sim["economy"])
+        state["blind"] = (sim["blind"][0], sim["blind"][1])
+        state["hp"] = {int(rid): tuple(value) for rid, value in sim["hp"].items()}
+        state["self"] = {key: sim.get(key) for key in
+                         ("performance", "combat", "self_ammo", "rune", "rune_chances", "km")}
+        if None in (state["self"]["performance"], state["self"]["combat"]):
+            state["self"] = None
+        if SELF_ROBOT_ID not in state["hp"]:
+            state["hp"][SELF_ROBOT_ID] = tuple(sim["self_hp"])
     elif message.topic == T_ROBOT_RESPAWN:
         resp = pb.RobotRespawnStatus()
         try:
@@ -486,14 +521,6 @@ def on_message(_client, _userdata, message) -> None:
                             resp.can_pay_for_respawn)
     elif message.topic == T_SIM_AUTO_HP:
         auto_hp.set(message.payload == b"1")
-    elif message.topic == T_ROBOT_HEALTH_SET:
-        health = pb.RobotHealthSet()
-        try:
-            health.ParseFromString(message.payload)
-        except Exception:
-            return
-        for entry in health.entries:
-            state["hp"][entry.robot_id] = (entry.current_hp, entry.max_hp)
 
 
 def subscribe() -> None:
@@ -509,12 +536,38 @@ def subscribe() -> None:
             state["online"] = False
             time.sleep(1)
             continue
-        client.subscribe([(T_GAME_STATUS, 0), (T_ROBOT_HEALTH_SET, 0),
-                          (T_SIM_AUTO_HP, 0), (T_BLIND_STATUS, 0),
+        client.subscribe([(T_SIM_STATE, 0), (T_SIM_AUTO_HP, 0),
                           (T_ROBOT_RESPAWN, 0), (T_SIM_LINK_MQTT, 0), (T_SIM_LINK_CAR, 0),
-                          (T_SIM_LINK_VIDEO, 0), (T_SIM_ARM_PLUGGED, 0), (T_SIM_ARM_ECHO, 0)])
+                          (T_SIM_LINK_VIDEO, 0), (T_SIM_ARM_PLUGGED, 0), (T_SIM_ARM_ECHO, 0),
+                          (T_SIM_ARM_FEEDBACK, 0)])
         panel_client["client"] = client
         client.loop_forever(retry_first_connection=True)
+
+
+PERFORMANCE = {1: ("血量优先", "冷却优先"), 2: ("功率优先", "爆发优先")}
+RUNE_STATES = {1: "未激活", 2: "激活中", 3: "已激活"}
+
+
+def self_text() -> str:
+    """自机:允许发弹量、脱战、性能体系、能量机关。终端「本车指令」面板发的指令改的就是这些。"""
+    extra = state["self"]
+    if not extra:
+        return "自机 等待服务器状态"
+    chassis, shooter = extra["performance"]
+    out, countdown = extra["combat"]
+    return (f"自机 弹 {extra['self_ammo']} · {'脱战' if out else f'交战中 {countdown}s'}"
+            f" · 底盘 {PERFORMANCE.get(chassis, ('?',))[0]} · 发射 {PERFORMANCE.get(shooter, ('?', '?'))[1]}"
+            f" · 能量机关 {RUNE_STATES.get(extra['rune'], extra['rune'])} 机会 {extra['rune_chances']}")
+
+
+def km_text() -> str:
+    """终端发来的键鼠控制(2.2.1):最近一秒的帧率、按着的键、鼠标位移。"""
+    km = state["self"].get("km") if state["self"] else None
+    if not km:
+        return "键鼠 终端没在发"
+    held = " ".join(part for part in (km["keys"], km["buttons"] and f"{km['buttons']}键") if part) or "无按键"
+    x, y, z = km["mouse"]
+    return f"键鼠 {km['hz']} 帧/秒 · {held} · 鼠标 x{x:+d} y{y:+d} 滚轮{z:+d}"
 
 
 def tick() -> None:
@@ -536,11 +589,19 @@ def tick() -> None:
     zone_text = "阵地 " + " ".join(
         f"{short}:{ZONE_STATES[value]}"
         for short, value in zip(ZONE_SHORT, state["zones"]))
+    fortress_side, fortress_auto, fortress_sec = state["fortress"]
+    fortress_text = FORTRESS_SHORT[fortress_side] if 0 <= fortress_side < 3 else "?"
+    if fortress_side:
+        fortress_text += f" {fortress_sec:.0f}s/10s"
+    if fortress_auto:
+        fortress_text += "(随机)"
+    armor = "/".join(name for name, opened in zip(("红方", "蓝方"), state["armor"]) if opened)
     global_text = (f"控制 红{state['control'][0]} 蓝{state['control'][1]}"
-                   f" · 加固 红{state['reinforce'][0]} 蓝{state['reinforce'][1]}"
+                   f" · 经济 红{state['economy'][0]} 蓝{state['economy'][1]}"
                    f" · 后勤 红{logistics(red_base, red_max)}"
                    f" 蓝{logistics(blue_base, blue_max)}"
-                   f" · 堡垒 {FORTRESS_STATES[state['fortress']] if state['fortress'] < 4 else '?'}")
+                   f" · 堡垒 {fortress_text}"
+                   f" · 护甲展开 {armor or '无'}")
     blind_side_value, blind_type = state["blind"]
     if blind_side_value and 1 <= blind_type <= len(DART_TARGETS):
         blind_text = (f"{BLIND_SIDES[blind_side_value - 1]}/"
@@ -550,7 +611,7 @@ def tick() -> None:
     pending, total, current, free, cost, can_pay = state["respawn"]
     if pending:
         respawn_text = f"{mmss(current)}/{mmss(total)}"
-        respawn_text += (" · 可免费复活" if free
+        respawn_text += (" · 读条满，等确认复活" if free
                          else f" · 买活 {cost} 金币{'够' if can_pay else '不足'}")
     else:
         respawn_text = "无"
@@ -559,6 +620,7 @@ def tick() -> None:
         for label, key in (("裁判数据", "mqtt"), ("车端", "car"), ("图传", "video")))
     status.config(text=f"{head}\n{hp_text}\n{zone_text}\n{global_text}"
                        f" · 致盲 {blind_text} · 复活 {respawn_text}\n"
+                       f"{self_text()}\n{km_text()}\n"
                        f"{link_text}\n{arm_text()}\n{state['action']}")
     root.after(250, tick)
 

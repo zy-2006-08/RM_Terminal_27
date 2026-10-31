@@ -116,11 +116,17 @@ def main() -> int:
         ok = wait_until(lambda: count("outpost", "完全控制") == 1, 6)
         record(ok, f"转成完全控制再提醒一次（实际 {count('outpost', '完全控制')} 次）")
 
-        print("\n== 堡垒", flush=True)
-        control("fortress", "2")
-        record(wait_until(lambda: count("fortress", "敌方占领") == 1, 5), "堡垒被敌方占领")
+        print("\n== 堡垒（2027：敌方激活我方堡垒满 10 秒，我方基地护甲展开）", flush=True)
+        control("fortress", "1")   # 蓝方开始激活红方（我方）堡垒
+        record(wait_until(lambda: count("fortress", "敌方在激活我方堡垒") == 1, 5),
+               "敌方开始激活我方堡垒时提醒")
+        time.sleep(3)
+        record(count("fortress") == 1, f"激活计时在走不重复提醒（实际 {count('fortress')} 次）")
         control("fortress", "0")
-        record(wait_until(lambda: count("fortress", "空出来") == 1, 5), "堡垒空出来了")
+        time.sleep(2.5)
+        control("fortress", "1")
+        record(wait_until(lambda: count("fortress") == 2, 5), "停下再开始激活会再提醒一次")
+        control("fortress", "0")
 
         print("\n== 敌方残血", flush=True)
         control("hp", "103", "40")
@@ -147,10 +153,6 @@ def main() -> int:
         record(count("control") == 1, f"继续落后不重复提醒（实际 {count('control')} 次）")
         control("speed", "1")
 
-        # 模拟器按真实流逝的比赛时间每分钟发一次加固机会，跳转不算，所以放到最后检查。
-        print("\n== 加固机会", flush=True)
-        wait_until(lambda: count("reinforce") >= 1, 40)
-        record(count("reinforce") == 1, f"加固机会从无到有只提醒一次（实际 {count('reinforce')} 次）")
         record(terminal.poll() is None, "终端全程在运行")
     finally:
         for proc in reversed(procs):

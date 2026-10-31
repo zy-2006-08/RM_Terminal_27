@@ -12,7 +12,7 @@
 
 namespace rm_terminal {
 
-// 比赛中的事件提醒:前哨阵地易手、控制度落后、堡垒换人、飞镖闸门、能量机关、加固机会、
+// 比赛中的事件提醒:前哨阵地易手、控制度落后、敌方在激活我方堡垒、飞镖闸门、能量机关、
 // 敌方残血、我方基地被攻击。纯逻辑 —— 输入快照,输出这一刻新触发的提醒,不碰界面和
 // 音频,所以「同一次临时控制只提醒一次」这类规则都能在单元测试里逐条钉住。
 //
@@ -20,8 +20,7 @@ namespace rm_terminal {
 //   能量机关 5.6.3:比赛开始和 1:30 各给一次小能量机关机会;3:00、4:15、5:30 各给一次
 //                   大能量机关机会。
 //   飞镖     5.7.3:比赛开始 30 秒后和 4 分钟后各有一次开闸机会。
-//   加固     5.2:  每分钟 +1 次,可累积。
-// 2027 通信协议还没发布,阵地/堡垒/加固字段沿用本地模拟词汇,协议出来后在解码器一处改。
+// 数据来自 2027 通信协议 V1.0.0 的 GlobalUnitStatus / GlobalSpecialMechanism。
 enum class AlertKind {
     OutpostTemp,
     OutpostFull,
@@ -29,7 +28,6 @@ enum class AlertKind {
     Fortress,
     DartGate,
     Energy,
-    Reinforce,
     EnemyLowHp,
     BaseAttacked,
 };
@@ -80,8 +78,7 @@ private:
     bool in_match_ = false;
     std::optional<std::int32_t> last_elapsed_;
     std::optional<std::uint32_t> last_outpost_;
-    std::optional<std::uint32_t> last_fortress_;
-    std::optional<std::uint32_t> last_reinforce_;
+    std::optional<std::int32_t> last_fortress_;
     std::optional<std::uint32_t> last_base_hp_;
     std::optional<MonotonicMs> last_base_alert_;
     bool control_armed_ = true;

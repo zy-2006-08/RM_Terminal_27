@@ -1,4 +1,5 @@
-"""假机械臂：在一个 pty 上按控制器固件的格式每秒发 25 帧 0x0302。
+"""假机械臂：在一个 pty 上按控制器固件的格式每秒发 25 帧 0x0302，同时收终端转来的
+0x0309（车的机械臂回传），收到的内容发到 sim/Arm/feedback。
 
 终端的 controller_serial 指向这里的符号链接，就和接了一根真的 USB 串口线一样。
 
@@ -27,9 +28,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sim.arm_protocol import CMD_CUSTOM_CONTROLLER, encode_frame, joints_payload
+from sim.arm_protocol import (CMD_ARM_FEEDBACK, CMD_CUSTOM_CONTROLLER, FEEDBACK_BYTES,
+                              FrameParser, decode_feedback, encode_frame, joints_payload)
 from sim.constants import (ARM_SERIAL_PATH, MQTT_PORT, SERVER_HOST, T_SIM_ARM_BAD,
-                           T_SIM_ARM_JOINTS, T_SIM_ARM_PLUGGED)
+                           T_SIM_ARM_FEEDBACK, T_SIM_ARM_JOINTS, T_SIM_ARM_PLUGGED)
 
 
 class FakeArm:
@@ -42,6 +44,10 @@ class FakeArm:
         self.slave: int | None = None
         self.seq = 0
         self.sent = 0
+        self.parser = FrameParser()
+        self.feedback_frames = 0
+        self.feedback_deg: list[float] | None = None
+        self.feedback_flag: int | None = None
 
     def plug(self) -> None:
         with self.lock:
@@ -84,6 +90,30 @@ class FakeArm:
                 self.sent += 1
             except (BlockingIOError, OSError):
                 pass
+            self._read_feedback()
+
+    def _read_feedback(self) -> None:
+        while True:
+            try:
+                chunk = os.read(self.master, 4096)
+            except (BlockingIOError, OSError):
+                return
+            if not chunk:
+                return
+            for cmd_id, data in self.parser.feed(chunk):
+                if cmd_id == CMD_ARM_FEEDBACK and len(data) >= FEEDBACK_BYTES:
+                    self.feedback_deg, self.feedback_flag = decode_feedback(data)
+                    self.feedback_frames += 1
+
+    def feedback_report(self) -> bytes:
+        with self.lock:
+            return json.dumps({
+                "frames": self.feedback_frames,
+                "bad_frames": self.parser.bad_frames,
+                "flag": self.feedback_flag,
+                "joints_deg": None if self.feedback_deg is None
+                else [round(value, 1) for value in self.feedback_deg],
+            }).encode()
 
 
 def control(arm: FakeArm) -> None:
@@ -116,7 +146,10 @@ def control(arm: FakeArm) -> None:
             break
         except OSError:
             time.sleep(0.5)
-    client.loop_forever(retry_first_connection=True)
+    client.loop_start()
+    while True:
+        client.publish(T_SIM_ARM_FEEDBACK, arm.feedback_report())
+        time.sleep(0.5)
 
 
 def main() -> int:
@@ -144,7 +177,7 @@ def main() -> int:
             due += interval
             now = time.monotonic()
             if now - last_report >= 5:
-                print(f"[fake_arm] 已发 {arm.sent} 帧", flush=True)
+                print(f"[fake_arm] 已发 {arm.sent} 帧，收到车的回传 {arm.feedback_frames} 帧", flush=True)
                 last_report = now
             time.sleep(max(0.0, due - now))
     except KeyboardInterrupt:

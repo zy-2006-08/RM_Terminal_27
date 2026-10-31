@@ -9,6 +9,8 @@
 #include <QStorageInfo>
 #include <QString>
 #include <QStringList>
+#include <QKeySequence>
+#include <QShortcut>
 #include <QTimer>
 #include <memory>
 #include <csignal>
@@ -33,6 +35,14 @@
 #include "recorder.h"
 #include "reminder_repository.h"
 #include "replay_player.h"
+#include "seat.h"
+#include "seat_picker.h"
+#include "assembly_pane.h"
+#include "dart_pane.h"
+#include "km_control.h"
+#include "revive_popup.h"
+#include "self_command_pane.h"
+#include "sentry_pane.h"
 #include "store.h"
 #include "tactical_reminder_controller.h"
 #include "ui_mode.h"
@@ -46,25 +56,35 @@
 
 namespace {
 
-bool prepare_runtime(const QString& config_path, rm_terminal::Config* cfg) {
+// 席位从哪来:--seat > RM_SELF_ID > 配置里显式写的 self_robot_id;都没有时返回空,
+// 由界面弹选席位页(回放则用录像里记的席位)。
+bool prepare_runtime(const QString& config_path, rm_terminal::Config* cfg,
+                     std::optional<int> cli_seat = std::nullopt, QString* seat_source = nullptr) {
     QString error;
     if (!rm_terminal::load_config(config_path, cfg, &error)) {
         fprintf(stderr, "config error: %s\n", error.toUtf8().constData());
         return false;
     }
+    QString source = cfg->self_robot_id_set ? QStringLiteral("config") : QString();
     const QString self_id = qEnvironmentVariable("RM_SELF_ID");
     if (!self_id.isEmpty()) {
         bool ok = false;
         const int id = self_id.toInt(&ok);
         if (!ok || !rm_terminal::valid_self_robot_id(id)) {
             fprintf(stderr,
-                    "config error: invalid RM_SELF_ID=%s; expected 1, 3, 4, 6, 7, "
-                    "101, 103, 104, 106, or 107\n",
+                    "config error: invalid RM_SELF_ID=%s; expected 1, 3, 4, 6, "
+                    "101, 103, 104, or 106\n",
                     self_id.toUtf8().constData());
             return false;
         }
         cfg->self_robot_id = id;
+        source = QStringLiteral("env");
     }
+    if (cli_seat) {
+        cfg->self_robot_id = *cli_seat;
+        source = QStringLiteral("cli");
+    }
+    if (seat_source) *seat_source = source;
     if (!rm_terminal::StructuredLog::open(cfg->log_destination, cfg->log_level, &error)) {
         fprintf(stderr, "log error: %s\n", error.toUtf8().constData());
         return false;
@@ -115,8 +135,13 @@ rm_terminal::SpeechBackend* make_speech_backend(QObject* parent, const QString& 
 #endif
 }
 
-QStringList startup_fields(const QString& mode, const rm_terminal::Config& cfg) {
+QStringList startup_fields(const QString& mode, const rm_terminal::Config& cfg,
+                           const QString& seat_source = QString()) {
+    const auto seat = rm_terminal::Seat::fromRobotId(cfg.self_robot_id);
     return {QStringLiteral("mode=%1").arg(mode),
+            QStringLiteral("seat=%1").arg(cfg.self_robot_id),
+            QStringLiteral("role=%1").arg(seat ? rm_terminal::role_name(seat->role()) : QStringLiteral("none")),
+            QStringLiteral("source=%1").arg(seat_source.isEmpty() ? QStringLiteral("default") : seat_source),
             QStringLiteral("platform=%1").arg(QString::fromLatin1(rm_terminal::platform_name())),
             QStringLiteral("mqtt_host=%1").arg(cfg.mqtt_host),
             QStringLiteral("mqtt_port=%1").arg(cfg.mqtt_port),
@@ -205,6 +230,30 @@ int main(int argc, char* argv[]) {
         return rm_terminal::kExitBadArguments;
     }
 
+    std::optional<int> cli_seat;
+    const int seat_at = args.indexOf(QLatin1String("--seat"));
+    if (seat_at >= 0) {
+        if (seat_at + 1 >= args.size()) {
+            qCritical().noquote()
+                << "Missing seat after --seat; expected 1, 3, 4, 6, 101, 103, 104 or 106";
+            return rm_terminal::kExitBadArguments;
+        }
+        bool ok = false;
+        const int id = args.at(seat_at + 1).toInt(&ok);
+        if (!ok || !rm_terminal::Seat::fromRobotId(id)) {
+            qCritical().noquote() << "Invalid --seat value; expected 1, 3, 4, 6, 101, 103, 104 or 106, got"
+                                  << args.at(seat_at + 1);
+            return rm_terminal::kExitBadArguments;
+        }
+        cli_seat = id;
+        args.removeAt(seat_at + 1);
+        args.removeAt(seat_at);
+    }
+    if (args.contains(QLatin1String("--seat"))) {
+        qCritical().noquote() << "Duplicate --seat is not supported";
+        return rm_terminal::kExitBadArguments;
+    }
+
     QString replay_path;
     const int replay_at = args.indexOf(QLatin1String("--replay"));
     if (replay_at >= 0) {
@@ -251,9 +300,11 @@ int main(int argc, char* argv[]) {
         qInfo().noquote() << "RM terminal: safe smoke; platform="
                           << rm_terminal::platform_name();
         rm_terminal::Config cfg;
-        if (!prepare_runtime(config_path, &cfg)) return rm_terminal::kExitConfigError;
+        QString seat_source;
+        if (!prepare_runtime(config_path, &cfg, cli_seat, &seat_source))
+            return rm_terminal::kExitConfigError;
         rm_terminal::StructuredLog::write(rm_terminal::LogLevel::info, QStringLiteral("startup"),
-                                          startup_fields(QStringLiteral("safe_smoke"), cfg));
+                                          startup_fields(QStringLiteral("safe_smoke"), cfg, seat_source));
         log_shutdown(QStringLiteral("safe_smoke"), rm_terminal::kExitSuccess);
         return rm_terminal::kExitSuccess;
     }
@@ -268,9 +319,11 @@ int main(int argc, char* argv[]) {
             return rm_terminal::kExitBadArguments;
         }
         rm_terminal::Config cfg;
-        if (!prepare_runtime(config_path, &cfg)) return rm_terminal::kExitConfigError;
+        QString seat_source;
+        if (!prepare_runtime(config_path, &cfg, cli_seat, &seat_source))
+            return rm_terminal::kExitConfigError;
         rm_terminal::StructuredLog::write(rm_terminal::LogLevel::info, QStringLiteral("startup"),
-                                          startup_fields(QStringLiteral("diagnostic"), cfg));
+                                          startup_fields(QStringLiteral("diagnostic"), cfg, seat_source));
         rm_terminal::Store store(cfg.stale_window_ms);
         rm_terminal::MqttIntake intake(store, args.at(1), port, cfg.self_robot_id);
         QObject::connect(&intake, &rm_terminal::MqttIntake::diagnostic,
@@ -287,14 +340,14 @@ int main(int argc, char* argv[]) {
         const auto snapshot = store.snapshot(rm_terminal::monotonic_now());
         qInfo().noquote() << "diagnostic snapshot:" << snapshot.robots.size()
                           << "robot(s); game.stage=" << static_cast<int>(snapshot.game.current_stage.quality)
-                          << "event.text=" << static_cast<int>(snapshot.event.text.quality);
+                          << "events=" << static_cast<qulonglong>(snapshot.events.size());
         log_shutdown(QStringLiteral("diagnostic"), result);
         return result;
     }
 
     if (!args.isEmpty()) {
         qCritical().noquote() << "Unknown argument; supported: --safe-smoke, --config <path>,"
-                                 " --screenshot <path>, --force-mode <info|video>,"
+                                 " --seat <id>, --screenshot <path>, --force-mode <info|video>,"
                                  " --replay <path>, --dump-layout <path>, --no-record,"
                                  " --diagnostic <host> <port> <seconds>";
         return rm_terminal::kExitBadArguments;
@@ -302,9 +355,25 @@ int main(int argc, char* argv[]) {
 
     QApplication app(argc, argv);
     rm_terminal::Config cfg;
-    if (!prepare_runtime(config_path, &cfg)) return rm_terminal::kExitConfigError;
-    rm_terminal::StructuredLog::write(rm_terminal::LogLevel::info, QStringLiteral("startup"),
-                                      startup_fields(QStringLiteral("terminal"), cfg));
+    QString seat_source;
+    if (!prepare_runtime(config_path, &cfg, cli_seat, &seat_source))
+        return rm_terminal::kExitConfigError;
+    // 席位在连网和建主界面之前定下来:登录名(MQTT clientID)和布局都取决于它,
+    // 本次运行内不能再改。回放用录像里记的席位,不弹选席位页。
+    if (seat_source.isEmpty() && replay_path.isEmpty()) {
+        rm_terminal::SeatPicker picker;
+        const auto seat = picker.exec();
+        if (!seat) {
+            rm_terminal::StructuredLog::write(rm_terminal::LogLevel::info, QStringLiteral("seat_cancelled"), {});
+            log_shutdown(QStringLiteral("terminal"), rm_terminal::kExitSuccess);
+            return rm_terminal::kExitSuccess;
+        }
+        cfg.self_robot_id = static_cast<int>(seat->robotId());
+        seat_source = QStringLiteral("picker");
+    }
+    if (replay_path.isEmpty())
+        rm_terminal::StructuredLog::write(rm_terminal::LogLevel::info, QStringLiteral("startup"),
+                                          startup_fields(QStringLiteral("terminal"), cfg, seat_source));
 
     install_quit_signals();
     QTimer quit_signal_poll;
@@ -379,6 +448,12 @@ int main(int argc, char* argv[]) {
             return rm_terminal::kExitStartFailure;
         }
         qInfo().noquote() << "replaying:" << replay_path;
+        if (seat_source.isEmpty() && rm_terminal::Seat::fromRobotId(replay->selfRobotId())) {
+            cfg.self_robot_id = replay->selfRobotId();
+            seat_source = QStringLiteral("recording");
+        }
+        rm_terminal::StructuredLog::write(rm_terminal::LogLevel::info, QStringLiteral("startup"),
+                                          startup_fields(QStringLiteral("replay"), cfg, seat_source));
     } else {
         rm_terminal::VideoEndpoint endpoint;
         endpoint.port = static_cast<quint16>(cfg.udp_port);
@@ -412,6 +487,33 @@ int main(int argc, char* argv[]) {
                          // 解码器不认这个 topic,会直接跳过。
                          recorder.recordMqtt(QStringLiteral("CustomControl"),
                                              QByteArray::fromStdString(bytes));
+                     });
+    // 反方向:车经 0x0310 回传的机械臂姿态,转成控制器认的 0x0309 帧写回串口。同样不排队、
+    // 不补发,串口没开就丢。
+    std::uint8_t feedback_seq = 0;
+    std::optional<rm_terminal::MonotonicMs> last_feedback_at;
+    bool feedback_invalid = false;
+    QObject::connect(&intake, &rm_terminal::MqttIntake::customBytes, &app,
+                     [&controller, &feedback_seq, &last_feedback_at,
+                      &feedback_invalid](const QByteArray& data) {
+                         // 0x0310 最高 50Hz,这里只防车端程序写错时把串口打满。
+                         constexpr rm_terminal::MonotonicMs kMinIntervalMs = 15;
+                         const rm_terminal::MonotonicMs now = rm_terminal::monotonic_now();
+                         if (last_feedback_at && now - *last_feedback_at < kMinIntervalMs) return;
+                         const auto frame = rm_terminal::arm_feedback_frame(data, feedback_seq);
+                         if (!frame) {
+                             if (!feedback_invalid)
+                                 rm_terminal::StructuredLog::write(
+                                     rm_terminal::LogLevel::warning, QStringLiteral("arm_feedback"),
+                                     {QStringLiteral("state=invalid"),
+                                      QStringLiteral("bytes=%1").arg(data.size())});
+                             feedback_invalid = true;
+                             return;
+                         }
+                         feedback_invalid = false;
+                         if (!controller.send(*frame)) return;
+                         ++feedback_seq;
+                         last_feedback_at = now;
                      });
     controller.start();
 
@@ -455,16 +557,53 @@ int main(int argc, char* argv[]) {
                          dashboard.showAlert(text, rm_terminal::AlertLevel::Info,
                                              rm_terminal::monotonic_now());
                      });
-    dashboard.setWindowTitle("RM Terminal");
+    dashboard.setWindowTitle(QStringLiteral("RM Terminal · %1")
+                                 .arg(rm_terminal::Seat::fromRobotId(cfg.self_robot_id)
+                                          ? rm_terminal::Seat::fromRobotId(cfg.self_robot_id)->label()
+                                          : QString::number(cfg.self_robot_id)));
     // Four columns plus the flanking roster cards need more width than the old
     // two-column layout; below this the map degrades to a sliver.
     dashboard.setMinimumSize(1280, 760);
-    dashboard.resize(1440, 900);
+    // 离屏截图默认 1440x900;RM_TERMINAL_CAPTURE_SIZE=1920x1080 按官方显示器出图。
+    QSize window_size(1440, 900);
+    if (const QString wanted = qEnvironmentVariable("RM_TERMINAL_CAPTURE_SIZE"); !wanted.isEmpty()) {
+        const QStringList parts = wanted.split(QLatin1Char('x'));
+        bool w_ok = false;
+        bool h_ok = false;
+        const int w = parts.size() == 2 ? parts[0].toInt(&w_ok) : 0;
+        const int h = parts.size() == 2 ? parts[1].toInt(&h_ok) : 0;
+        if (w_ok && h_ok && w >= 1280 && h >= 760) window_size = QSize(w, h);
+        else qWarning().noquote() << "ignoring RM_TERMINAL_CAPTURE_SIZE=" << wanted;
+    }
+    dashboard.resize(window_size);
+    // 屏幕清单写进日志:display_screen 要填这里的名字。
+    QStringList screen_names;
+    for (const QScreen* screen : QGuiApplication::screens())
+        screen_names << QStringLiteral("%1:%2x%3").arg(screen->name()).arg(screen->geometry().width())
+                            .arg(screen->geometry().height());
+    rm_terminal::StructuredLog::write(rm_terminal::LogLevel::info, QStringLiteral("screens"),
+                                      {QStringLiteral("names=%1").arg(screen_names.join(QLatin1Char(',')))});
+    bool fullscreen = false;
     // 有些屏幕的可用高度装不下 900 的窗口，底部的回放控制条会被挤出屏幕。
-    // 实跑时按可用区域收一点，离屏截图仍保持固定的 1440x900。
+    // 实跑时按可用区域收一点，离屏截图仍保持固定尺寸。
     if (QGuiApplication::platformName() != QLatin1String("offscreen")) {
-        if (const QScreen* screen = QGuiApplication::primaryScreen()) {
-            const QRect available = screen->availableGeometry();
+        const QScreen* target = QGuiApplication::primaryScreen();
+        if (cfg.display_fullscreen && !cfg.display_screen.isEmpty()) {
+            target = nullptr;
+            for (QScreen* screen : QGuiApplication::screens())
+                if (screen->name() == cfg.display_screen) target = screen;
+            if (!target) {
+                rm_terminal::StructuredLog::write(
+                    rm_terminal::LogLevel::warning, QStringLiteral("display"),
+                    {QStringLiteral("state=screen_missing"), QStringLiteral("wanted=%1").arg(cfg.display_screen)});
+                target = QGuiApplication::primaryScreen();
+            }
+        }
+        if (target && cfg.display_fullscreen) {
+            dashboard.setGeometry(target->geometry());
+            fullscreen = true;
+        } else if (target) {
+            const QRect available = target->availableGeometry();
             const int width = std::min(1440, available.width());
             const int height = std::clamp(available.height() - 60, 760, 900);
             dashboard.resize(width, height);
@@ -491,7 +630,85 @@ int main(int argc, char* argv[]) {
         QObject::connect(replay.get(), &rm_terminal::ReplayPlayer::pausedChanged, &dashboard,
                          &rm_terminal::Dashboard::setReplayPaused);
     }
-    dashboard.show();
+    // 角色面板放进布局给的卡片里。回放时不发任何指令:intake 没启动,publish 必然返回假。
+    const auto send = [&intake, &replay](const char* topic, const std::string& payload) {
+        return !replay && intake.publish(topic, payload);
+    };
+    dashboard.setCommandSender(send);
+    rm_terminal::AssemblyPane* assembly = nullptr;
+    rm_terminal::DartPane* dart = nullptr;
+    rm_terminal::SentryPane* sentry = nullptr;
+    if (QWidget* card = dashboard.paneCard(rm_terminal::PaneId::Assembly)) {
+        assembly = new rm_terminal::AssemblyPane(card);
+        card->layout()->addWidget(assembly);
+        assembly->setSender(send);
+    }
+    if (QWidget* card = dashboard.paneCard(rm_terminal::PaneId::Dart)) {
+        dart = new rm_terminal::DartPane(card);
+        card->layout()->addWidget(dart);
+        dart->setSender(send);
+    }
+    if (QWidget* card = dashboard.paneCard(rm_terminal::PaneId::Sentry)) {
+        sentry = new rm_terminal::SentryPane(card);
+        card->layout()->addWidget(sentry);
+        sentry->setSender(send);
+    }
+    rm_terminal::SelfCommandPane* self_commands = nullptr;
+    if (QWidget* card = dashboard.paneCard(rm_terminal::PaneId::SelfCommands)) {
+        self_commands = new rm_terminal::SelfCommandPane(card);
+        card->layout()->addWidget(self_commands);
+        self_commands->setSender(send);
+    }
+    // 复活框照官方选手端:阵亡才弹出;读条结束后按 Y(或点「免费复活」)确认,点「金币复活」
+    // 花钱。活着时按 Y 什么都不发。
+    rm_terminal::RevivePopup* revive_popup = nullptr;
+    if (self_commands) {
+        revive_popup = new rm_terminal::RevivePopup(&dashboard);
+        dashboard.setEliminatedOverlayReplaced(true);
+        revive_popup->setActions([self_commands] { self_commands->confirmRevive(); },
+                                 [self_commands] { self_commands->payRevive(); });
+        auto* revive_key = new QShortcut(QKeySequence(Qt::Key_Y), &dashboard);
+        revive_key->setContext(Qt::ApplicationShortcut);
+        QObject::connect(revive_key, &QShortcut::activated, self_commands,
+                         [self_commands] { self_commands->confirmRevive(); });
+    }
+    // 键鼠控制只在实况下有:回放没有链路,录像里也没有这台电脑的键盘。
+    std::unique_ptr<rm_terminal::KmCapture> keyboard_mouse;
+    if (self_commands && !replay) {
+        keyboard_mouse = std::make_unique<rm_terminal::KmCapture>(&dashboard);
+        rm_terminal::KmCapture* km = keyboard_mouse.get();
+        km->setSender(send);
+        dashboard.setKeyboardMouseToggle([km] { km->toggle(); });
+        auto* toggle_key = new QShortcut(QKeySequence(Qt::Key_F9), &dashboard);
+        toggle_key->setContext(Qt::ApplicationShortcut);
+        QObject::connect(toggle_key, &QShortcut::activated, km, [km] { km->toggle(); });
+        QObject::connect(km, &rm_terminal::KmCapture::activeChanged, &dashboard,
+                         [km, self_commands, &dashboard](bool active, const QString& reason) {
+                             rm_terminal::StructuredLog::write(
+                                 rm_terminal::LogLevel::info, QStringLiteral("km_capture"),
+                                 {QStringLiteral("state=%1").arg(active ? "on" : "off"),
+                                  QStringLiteral("reason=%1").arg(reason.isEmpty() ? QStringLiteral("-") : reason),
+                                  QStringLiteral("frames=%1").arg(km->framesSent()),
+                                  QStringLiteral("pointer_lock=%1").arg(km->pointerLock() ? 1 : 0)});
+                             self_commands->setKeyboardMouseState(active, QString());
+                             dashboard.setKeyboardMouseStatus(
+                                 active ? QStringLiteral("键鼠控制中（Esc 退出）") : QString());
+                         });
+        QObject::connect(km, &rm_terminal::KmCapture::suspendedChanged, &dashboard,
+                         [km, &dashboard](bool paused) {
+                             rm_terminal::StructuredLog::write(
+                                 rm_terminal::LogLevel::info, QStringLiteral("km_capture"),
+                                 {QStringLiteral("state=%1").arg(paused ? "paused" : "resumed"),
+                                  QStringLiteral("reason=%1").arg(paused ? "阵亡" : "复活"),
+                                  QStringLiteral("frames=%1").arg(km->framesSent())});
+                             dashboard.setKeyboardMouseStatus(
+                                 paused ? QStringLiteral("键鼠控制暂停（阵亡，复活后自动继续）")
+                                        : QStringLiteral("键鼠控制中（Esc 退出）"));
+                         });
+    }
+
+    if (fullscreen) dashboard.showFullScreen();
+    else dashboard.show();
     // 从 Terminal / Finder 脚本拉起时进程没有前台权限，窗口会藏在别的窗口后面，
     // 看起来像「双击没反应」。raise + activateWindow 把它顶到最前。
     dashboard.raise();
@@ -500,11 +717,10 @@ int main(int argc, char* argv[]) {
     rm_terminal::StaleReporter reporter;
     // 链路灯和自检页只在实况下有意义:回放时没有 MQTT 也没有串口,亮一排红灯只会误导。
     struct LinkMeters {
-        rm_terminal::RateMeter referee, video, controller;
+        rm_terminal::RateMeter referee, video, controller, feedback;
         rm_terminal::LinkStateLog log;
     } meters;
     const auto sample_links = [&cfg, &intake, &video, &controller, &meters](
-                                  const rm_terminal::Snapshot& snapshot,
                                   rm_terminal::MonotonicMs now) {
         const auto mqtt = intake.linkStats();
         rm_terminal::RefereeSample referee;
@@ -515,16 +731,14 @@ int main(int argc, char* argv[]) {
         rm_terminal::LinkReport report;
         report.referee = rm_terminal::referee_status(referee);
 
-        // 车端数据取每帧必发的序号:自瞄相关字段只在锁定目标时才发,拿它们判活会把
-        // 「没锁目标」误报成「车断电」。
+        // 2027 协议里车端唯一的上行数据是 0x0310(CustomByteBlock),按它最后一帧的时间判活。
         rm_terminal::CarSample car;
         car.referee_down = report.referee.level == rm_terminal::LinkLevel::Down;
-        const auto self = snapshot.robots.find(
-            rm_terminal::RobotId{static_cast<std::uint32_t>(cfg.self_robot_id)});
-        if (self != snapshot.robots.end()) {
-            car.freshness = self->second.telemetry.sequence.freshness;
-            car.silent_ms =
-                rm_terminal::silence(self->second.telemetry.sequence.last_valid, std::nullopt, now);
+        if (mqtt.last_custom_bytes_at) {
+            car.freshness = now - *mqtt.last_custom_bytes_at < cfg.stale_window_ms
+                                ? rm_terminal::Freshness::Fresh
+                                : rm_terminal::Freshness::Stale;
+            car.silent_ms = rm_terminal::silence(mqtt.last_custom_bytes_at, std::nullopt, now);
         }
         report.car = rm_terminal::car_status(car);
 
@@ -545,22 +759,73 @@ int main(int argc, char* argv[]) {
         sample.bad_frames = arm.bad_frames;
         sample.joints = arm.joints;
         sample.can_forward = mqtt.connected;
+        sample.feedback_per_s = meters.feedback.update(arm.sent, now);
         report.controller = rm_terminal::controller_status(sample);
 
         meters.log.observe(report);
         return report;
     };
 
+    rm_terminal::RateMeter arm_rate;
+    std::optional<bool> seat_matched;
+    // 赛事事件和指挥手指令的回执也写进日志:复盘和验收脚本都靠它们看「服务器说了什么」。
+    rm_terminal::MonotonicMs logged_event_at = -1;
+    rm_terminal::MonotonicMs logged_sentry_result_at = -1;
+    std::optional<std::pair<std::uint32_t, std::uint32_t>> logged_dart;
+    rm_terminal::MonotonicMs logged_mark_at = -1;
+    // 本车的经济/发弹量/阵亡、能量机关、性能体系,变了才写一行:验收脚本靠它看
+    // 兑换、复活、开能量机关、选性能体系有没有被服务器执行,复盘也看得到。
+    struct SelfLog {
+        QString supply, rune, performance;
+    } self_log;
     QTimer freshness_timer;
     QObject::connect(&freshness_timer, &QTimer::timeout,
                      [&store, &reporter, &dashboard, &video, &reminders, &intake,
                       &recorder, &replay, &sample_links, &cfg, &recordings, speech,
-                      &match_alerts, &alert_voice]() {
+                      &match_alerts, &alert_voice, assembly, dart, sentry, &controller,
+                      &arm_rate, &seat_matched, &logged_event_at, &logged_sentry_result_at,
+                      &logged_dart, &logged_mark_at, self_commands, revive_popup, &keyboard_mouse,
+                      &self_log]() {
         // One clock read per tick, shared by the snapshot and the mode machine:
         // two reads would hand the machine an instant the snapshot never saw.
         const rm_terminal::MonotonicMs now = rm_terminal::monotonic_now();
         const auto snapshot = store.snapshot(now);
         reporter.inspect(snapshot);
+        const auto events = snapshot.events.recent(snapshot.events.size());
+        for (auto it = events.rbegin(); it != events.rend(); ++it) {
+            if (it->received_at <= logged_event_at) continue;
+            rm_terminal::StructuredLog::write(
+                rm_terminal::LogLevel::info, QStringLiteral("match_event"),
+                {QStringLiteral("id=%1").arg(it->event_id), QStringLiteral("level=%1").arg(it->level),
+                 QStringLiteral("text=%1").arg(QString::fromStdString(it->text))});
+        }
+        if (!events.empty()) logged_event_at = std::max(logged_event_at, events.front().received_at);
+        if (snapshot.sentry_result && snapshot.sentry_result->received_at > logged_sentry_result_at) {
+            logged_sentry_result_at = snapshot.sentry_result->received_at;
+            rm_terminal::StructuredLog::write(
+                rm_terminal::LogLevel::info, QStringLiteral("sentry_result"),
+                {QStringLiteral("command=%1").arg(snapshot.sentry_result->command_id),
+                 QStringLiteral("code=%1").arg(snapshot.sentry_result->result_code)});
+        }
+        for (const auto& mark : snapshot.map_marks) {
+            if (mark.received_at <= logged_mark_at) continue;
+            logged_mark_at = mark.received_at;
+            rm_terminal::StructuredLog::write(
+                rm_terminal::LogLevel::info, QStringLiteral("map_mark_received"),
+                {QStringLiteral("kind=%1").arg(mark.mode), QStringLiteral("target=%1").arg(mark.type),
+                 QStringLiteral("enemy=%1").arg(mark.enemy_id),
+                 QStringLiteral("x=%1").arg(mark.x, 0, 'f', 2), QStringLiteral("y=%1").arg(mark.y, 0, 'f', 2)});
+        }
+        if (snapshot.dart.target_id.value && snapshot.dart.gate.value) {
+            const std::pair<std::uint32_t, std::uint32_t> dart_now{*snapshot.dart.target_id.value,
+                                                                   *snapshot.dart.gate.value};
+            if (logged_dart != dart_now)
+                rm_terminal::StructuredLog::write(
+                    rm_terminal::LogLevel::info, QStringLiteral("dart_status"),
+                    {QStringLiteral("target=%1").arg(dart_now.first),
+                     QStringLiteral("gate=%1").arg(dart_now.second)});
+            logged_dart = dart_now;
+        }
         for (const auto& alert : match_alerts.observe(snapshot, now)) {
             rm_terminal::StructuredLog::write(
                 rm_terminal::LogLevel::info, QStringLiteral("alert"),
@@ -573,10 +838,94 @@ int main(int argc, char* argv[]) {
         }
         dashboard.update(snapshot, &video, now);
         dashboard.setRecordingStatus(replay ? replay->statusText() : recorder.statusText());
+        const bool link_up = !replay && intake.connected();
+        dashboard.setLinkUp(link_up);
+        if (assembly) {
+            const auto arm = controller.stats();
+            const double fps = arm_rate.update(arm.frames, now);
+            assembly->setView(rm_terminal::assembly_view(snapshot));
+            assembly->setLinkUp(link_up);
+            assembly->setArm(arm.open ? std::optional<double>(fps) : std::nullopt,
+                             arm.frames > 0 ? std::optional<std::array<float, 6>>(arm.joints)
+                                            : std::nullopt);
+            assembly->tick(now);
+        }
+        if (dart) {
+            dart->setView(rm_terminal::dart_view(snapshot));
+            dart->setLinkUp(link_up);
+            dart->tick(now);
+        }
+        if (sentry) {
+            sentry->setView(rm_terminal::sentry_view(snapshot));
+            sentry->setLinkUp(link_up);
+            sentry->tick(now);
+        }
+        if (self_commands) {
+            const rm_terminal::SelfCommandView view = rm_terminal::self_command_view(snapshot);
+            self_commands->setView(view);
+            self_commands->setLinkUp(link_up);
+            self_commands->tick(now);
+            const auto text = [](const auto& value) {
+                return value ? QString::number(*value) : QStringLiteral("--");
+            };
+            const auto log_change = [](QString& last, const QString& now_text, const char* event) {
+                if (now_text == last) return;
+                last = now_text;
+                rm_terminal::StructuredLog::write(rm_terminal::LogLevel::info, QString::fromLatin1(event),
+                                                  {now_text});
+            };
+            const auto flag = [](const std::optional<bool>& value) {
+                return value ? QString::number(*value ? 1 : 0) : QStringLiteral("--");
+            };
+            log_change(self_log.supply,
+                       QStringLiteral("economy=%1 ammo=%2 dead=%3 free=%4")
+                           .arg(text(view.economy), text(view.ammo), flag(view.dead),
+                                flag(view.can_free_revive)),
+                       "self_supply");
+            log_change(self_log.rune,
+                       QStringLiteral("status=%1 arms=%2").arg(text(view.rune_status), text(view.rune_arms)),
+                       "rune_status");
+            log_change(self_log.performance,
+                       QStringLiteral("shooter=%1 chassis=%2").arg(text(view.shooter), text(view.chassis)),
+                       "performance");
+            if (revive_popup) {
+                revive_popup->setLinkUp(link_up);
+                revive_popup->setStatus(self_commands->reviveEchoText());
+                revive_popup->setView(view);
+            }
+            if (keyboard_mouse) {
+                keyboard_mouse->setLinkUp(link_up);
+                // 阵亡就暂停键鼠控制、放开鼠标,复活框才点得到;复活后自动接着控制。
+                keyboard_mouse->setSuspended(view.dead.value_or(false));
+                QStringList held;
+                const QString keys = rm_terminal::km_keys_text(keyboard_mouse->keysDown());
+                if (!keys.isEmpty()) held << keys;
+                if (keyboard_mouse->leftDown()) held << QStringLiteral("左键");
+                if (keyboard_mouse->rightDown()) held << QStringLiteral("右键");
+                self_commands->setKeyboardMouseState(keyboard_mouse->active() && !keyboard_mouse->suspended(),
+                                                     held.join(QLatin1Char(' ')));
+            }
+        }
         if (!replay) {
             rm_terminal::SelfCheckInputs inputs;
             inputs.self_robot_id = cfg.self_robot_id;
-            inputs.links = sample_links(snapshot, now);
+            // 席位核对:服务器 RobotStaticStatus 报的编号和开机选的不一致,说明登录名填错。
+            const auto self = snapshot.robots.find(
+                rm_terminal::RobotId{static_cast<std::uint32_t>(cfg.self_robot_id)});
+            if (self != snapshot.robots.end() &&
+                self->second.statics.robot_id.quality == rm_terminal::Quality::Valid)
+                inputs.server_robot_id = self->second.statics.robot_id.value;
+            if (inputs.server_robot_id) {
+                const bool matched = static_cast<int>(*inputs.server_robot_id) == cfg.self_robot_id;
+                if (seat_matched != matched)
+                    rm_terminal::StructuredLog::write(
+                        matched ? rm_terminal::LogLevel::info : rm_terminal::LogLevel::error,
+                        matched ? QStringLiteral("seat_confirmed") : QStringLiteral("seat_mismatch"),
+                        {QStringLiteral("seat=%1").arg(cfg.self_robot_id),
+                         QStringLiteral("server=%1").arg(*inputs.server_robot_id)});
+                seat_matched = matched;
+            }
+            inputs.links = sample_links(now);
             inputs.recording = recorder.active();
             inputs.recording_error = recorder.error();
             const QStorageInfo disk(QDir(recordings).exists() ? recordings : QDir::homePath());

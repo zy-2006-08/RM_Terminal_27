@@ -10,15 +10,8 @@ QString freshness_text(Freshness freshness);
 QString quality_text(Quality quality);
 QString snapshot_text(const Snapshot& snapshot);
 
-// Authoritative source: core/constants.py:80-86 CHASSIS_MODES. Lives here rather
-// than in dashboard.cpp so CTest can pin the values; drift between the Python and
-// C++ names is a wrong readout on the operator's screen, not a cosmetic issue.
-QString chassis_name(std::uint32_t mode);
-
-// RMUC 2027 阵容（规则手册表 3-1）：1 重装 / 3,4 步兵 / 6 空中 / 7 哨兵。
-// 正式协议尚未发布，以下编号→兵种的对应为本地模拟词汇，不得视为正式合同；
-// 规则正式发布后此表是唯一需要修改的地方。
-// 蓝方内部沿用 +100 偏移（附录二既有约定），故 101 与 1 同为重装。
+// RMUC 2027 阵容（规则手册表 3-1，协议附录二）：1 重装 / 3,4 步兵 / 6 空中 / 7 哨兵，
+// 蓝方 +100，故 101 与 1 同为重装。
 // 返回空字符串表示该编号不在已知阵容内 —— 调用方必须显示编号本身而非编造兵种。
 QString robot_class_name(std::uint32_t robot_id);
 

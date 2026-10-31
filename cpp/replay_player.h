@@ -35,6 +35,8 @@ public:
     qint64 positionMs() const;
     qint64 durationMs() const;
     QString statusText() const;
+    // 录像里记的席位(元数据 self_robot_id),start() 成功后才有意义。
+    int selfRobotId() const { return self_id_; }
 
     void togglePause();
     void seek(qint64 position_ms);

@@ -82,6 +82,10 @@ void video_and_controller_states() {
     check(ok.level == LinkLevel::Ok, "flowing and forwarding is ok");
     check(ok.detail.contains(QStringLiteral("90°")), "joints are shown in degrees");
     check(ok.detail.contains(QStringLiteral("坏帧 2")), "bad frames are disclosed");
+    check(!ok.detail.contains(QStringLiteral("回传")), "no feedback line before the car sends any");
+    arm.feedback_per_s = 10;
+    check(rm_terminal::controller_status(arm).detail.contains(QStringLiteral("车的回传每秒 10 帧")),
+          "the relayed feedback rate is shown");
 }
 
 void silence_restarts_at_reconnect() {
@@ -112,7 +116,9 @@ void self_check_counts_only_failures() {
     inputs.free_bytes = 120LL * 1000 * 1000 * 1000;
     inputs.speech_available = false;
     auto report = rm_terminal::build_self_check(inputs);
-    check(report.rows.front().detail == QStringLiteral("蓝方 3 号 步兵"), "self robot label");
+    check(report.rows.front().detail == QStringLiteral("蓝方 3 号 步兵 · 未核对") &&
+              report.rows.front().level == rm_terminal::CheckLevel::Warn,
+          "an unchecked seat is a warning, not a failure");
     check(report.failures == 0, "warnings and off rows do not block");
     check(report.verdict == QStringLiteral("可以上场"), "all clear says go");
 
@@ -121,6 +127,21 @@ void self_check_counts_only_failures() {
     report = rm_terminal::build_self_check(inputs);
     check(report.failures == 2, "two down links are two failures");
     check(report.verdict == QStringLiteral("有 2 项异常，先别上场"), "failures say do not go");
+
+    inputs.links.car.level = LinkLevel::Ok;
+    inputs.links.video.level = LinkLevel::Ok;
+    inputs.server_robot_id = 103;
+    report = rm_terminal::build_self_check(inputs);
+    check(report.rows.front().level == rm_terminal::CheckLevel::Ok &&
+              report.rows.front().detail.contains(QStringLiteral("席位正确")),
+          "a matching seat is confirmed");
+    inputs.server_robot_id = 3;
+    report = rm_terminal::build_self_check(inputs);
+    check(report.rows.front().level == rm_terminal::CheckLevel::Fail && report.failures == 1,
+          "a wrong seat blocks going on");
+    check(report.rows.front().detail ==
+              QStringLiteral("席位选错：选的是蓝方 3 号 步兵，服务器说是红方 3 号 步兵"),
+          "the mismatch names both seats");
 }
 
 }  // namespace

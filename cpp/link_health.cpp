@@ -120,8 +120,13 @@ LinkStatus controller_status(const ControllerSample& sample) {
         return make(LinkLevel::Warn, QStringLiteral("发不出"),
                     rate + QStringLiteral("，但裁判数据断了，发不出去") + bad,
                     QStringLiteral("先查裁判数据"));
+    const QString feedback =
+        sample.feedback_per_s > 0
+            ? QStringLiteral(" · 车的回传每秒 %1 帧").arg(per_second(sample.feedback_per_s))
+            : QString();
     return make(LinkLevel::Ok, QString(),
-                rate + QStringLiteral("，正在转发 · 关节 ") + degrees.join(QLatin1Char(' ')) + bad);
+                rate + QStringLiteral("，正在转发") + feedback + QStringLiteral(" · 关节 ") +
+                    degrees.join(QLatin1Char(' ')) + bad);
 }
 
 double RateMeter::update(std::uint64_t total, MonotonicMs now) {
@@ -170,8 +175,21 @@ QString self_robot_label(int robot_id) {
 
 SelfCheck build_self_check(const SelfCheckInputs& inputs) {
     SelfCheck check;
-    check.rows.push_back({QStringLiteral("自机"), CheckLevel::Ok,
-                          self_robot_label(inputs.self_robot_id), QString()});
+    const QString seat = self_robot_label(inputs.self_robot_id);
+    if (!inputs.server_robot_id) {
+        check.rows.push_back({QStringLiteral("席位"), CheckLevel::Warn,
+                              seat + QStringLiteral(" · 未核对"),
+                              QStringLiteral("连上裁判系统后会自动核对")});
+    } else if (static_cast<int>(*inputs.server_robot_id) != inputs.self_robot_id) {
+        check.rows.push_back(
+            {QStringLiteral("席位"), CheckLevel::Fail,
+             QStringLiteral("席位选错：选的是%1，服务器说是%2")
+                 .arg(seat, self_robot_label(static_cast<int>(*inputs.server_robot_id))),
+             QStringLiteral("退出终端，重新选席位")});
+    } else {
+        check.rows.push_back({QStringLiteral("席位"), CheckLevel::Ok,
+                              seat + QStringLiteral(" · 席位正确"), QString()});
+    }
     const auto link_row = [&check](const QString& name, const LinkStatus& status) {
         check.rows.push_back({name, check_level(status.level), status.detail, status.hint});
     };

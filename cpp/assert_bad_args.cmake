@@ -7,7 +7,8 @@ foreach(case IN ITEMS unknown extra duplicate positional empty
                      force_mode_missing force_mode_invalid force_mode_duplicate
                      force_mode_with_safe_smoke force_mode_with_diagnostic
                      dump_layout_missing dump_layout_duplicate
-                     dump_layout_with_safe_smoke dump_layout_with_diagnostic)
+                     dump_layout_with_safe_smoke dump_layout_with_diagnostic
+                     seat_missing seat_sentry seat_text seat_duplicate)
     # Given: malformed command-line arguments, plus the diagnostic each one must
     # produce. Exit code 2 alone is too weak an assertion: a flag-specific guard can
     # be deleted and the leftover token still exits 2 via the unknown-argument
@@ -57,6 +58,20 @@ foreach(case IN ITEMS unknown extra duplicate positional empty
     elseif(case STREQUAL "dump_layout_with_diagnostic")
         set(args --diagnostic localhost 1883 2 --dump-layout "${REJECTED_DUMP}")
         set(expect "--dump-layout requires the GUI")
+    # 席位只有 1/3/4/6 和蓝方 +100:哨兵 7 号没有操作手,写错要在启动时就拒绝,
+    # 不能等连上服务器才发现登录名不对。
+    elseif(case STREQUAL "seat_missing")
+        set(args --seat)
+        set(expect "Missing seat after --seat")
+    elseif(case STREQUAL "seat_sentry")
+        set(args --seat 7)
+        set(expect "Invalid --seat value")
+    elseif(case STREQUAL "seat_text")
+        set(args --seat red3)
+        set(expect "Invalid --seat value")
+    elseif(case STREQUAL "seat_duplicate")
+        set(args --seat 3 --seat 103)
+        set(expect "Duplicate --seat is not supported")
     else()
         set(args "")
         set(expect "Unknown argument; supported:")

@@ -63,6 +63,7 @@ Panel {
                 robotClass: entry.cls
                 hasPosition: entry.hasPosition
                 positionStale: entry.positionStale
+                bullets: entry.bullets
             }
         }
     }

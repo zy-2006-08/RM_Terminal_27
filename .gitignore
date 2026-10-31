@@ -32,3 +32,5 @@ compile_commands.json
 # .venv in the repo root; see README.md for the create-and-install commands.
 venv/
 .venv/
+# CAD 参考模型，624MB，超过 GitHub 单文件 100MB 限制
+*.stp

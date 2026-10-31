@@ -6,8 +6,9 @@
     RM_TERMINAL_BINARY=build/ubuntu/rm_terminal .venv/bin/python scripts/accept_links.py
 
 脚本自己起 broker、链路开关、模拟服务器、图传、假机械臂和一个离屏终端，跑完全部关掉，
-约 2 分钟。判定依据是终端日志里的 link_state 记录（只在状态变化时写），以及模拟的车
-回报的机械臂姿态（sim/ArmEcho）。已有模拟器在跑时拒绝启动：两套模拟器挤在同一个
+约 2 分钟。判定依据是终端日志里的 link_state 记录（只在状态变化时写）、模拟的车
+回报的机械臂姿态（sim/ArmEcho），以及假机械臂收到的车的回传（sim/Arm/feedback，终端把
+车经 0x0310 发来的回传按 0x0309 转给控制器）。已有模拟器在跑时拒绝启动：两套模拟器挤在同一个
 broker 上，断言会被另一套的数据搅乱。
 """
 
@@ -32,8 +33,9 @@ sys.path.insert(0, str(ROOT / "generated"))
 import paho.mqtt.client as mqtt
 
 from sim.constants import (MQTT_PORT, MQTT_PROXY_PORT, SERVER_HOST, T_SIM_ARM_BAD,
-                           T_SIM_ARM_ECHO, T_SIM_ARM_JOINTS, T_SIM_ARM_PLUGGED,
-                           T_SIM_LINK_CAR, T_SIM_LINK_MQTT, T_SIM_LINK_VIDEO)
+                           T_SIM_ARM_ECHO, T_SIM_ARM_FEEDBACK, T_SIM_ARM_FOLLOW,
+                           T_SIM_ARM_JOINTS, T_SIM_ARM_PLUGGED, T_SIM_LINK_CAR,
+                           T_SIM_LINK_MQTT, T_SIM_LINK_VIDEO)
 
 LINKS = ("referee", "car", "video", "controller")
 NAMES = {"referee": "裁判数据", "car": "车端数据", "video": "图传", "controller": "控制器"}
@@ -79,15 +81,21 @@ class TerminalLog:
 class Sim:
     def __init__(self) -> None:
         self.echo: dict = {}
+        self.feedback: dict = {}
         self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="accept-links")
         self.client.on_message = self._on_message
-        self.client.on_connect = lambda c, *_: c.subscribe(T_SIM_ARM_ECHO)
+        self.client.on_connect = lambda c, *_: c.subscribe([(T_SIM_ARM_ECHO, 0),
+                                                            (T_SIM_ARM_FEEDBACK, 0)])
 
     def _on_message(self, _client, _userdata, message) -> None:
         try:
-            self.echo = json.loads(message.payload)
+            value = json.loads(message.payload)
         except ValueError:
-            pass
+            return
+        if message.topic == T_SIM_ARM_FEEDBACK:
+            self.feedback = value
+        else:
+            self.echo = value
 
     def connect(self) -> None:
         self.client.connect(SERVER_HOST, MQTT_PORT, keepalive=5)
@@ -190,6 +198,21 @@ def main() -> int:
             abs(a - b) < 0.5 for a, b in zip(sim.echo["joints_deg"], target)), 3)
         record(took is not None, f"机械臂姿态经终端转发到车：{sim.echo.get('joints_deg')}")
 
+        print("\n== 车的机械臂回传（0x0310 -> 终端 -> 0x0309 -> 控制器）", flush=True)
+        took = wait_until(lambda: sim.feedback.get("joints_deg") is not None and all(
+            abs(a - b) < 0.5 for a, b in zip(sim.feedback["joints_deg"], target)), 3)
+        record(took is not None,
+               f"控制器收到车的回传，姿态和车上一致：{sim.feedback.get('joints_deg')}"
+               f"（{sim.feedback.get('frames')} 帧）")
+        record(sim.feedback.get("flag") == 1 and not sim.feedback.get("bad_frames"),
+               f"回传标志是 1、没有坏帧（{sim.feedback}）")
+        sim.send(T_SIM_ARM_FOLLOW, b"1")
+        took = wait_until(lambda: sim.feedback.get("flag") == 2, 3)
+        record(took is not None, "车发出跟随标志 2，控制器收到")
+        sim.send(T_SIM_ARM_FOLLOW, b"0")
+        took = wait_until(lambda: sim.feedback.get("flag") == 1, 3)
+        record(took is not None, "取消跟随后标志回到 1")
+
         scenario(log, sim, "断开裁判数据（网线拔了）", [("mqtt", "cut")], {"referee": 3},
                  ("video",), [("mqtt", "ok")], 5)
         scenario(log, sim, "裁判数据卡住（连接没断但没数据）", [("mqtt", "freeze")],
@@ -219,6 +242,9 @@ def main() -> int:
         record(took is not None, f"插回去自动连上：{'没连上' if took is None else f'{took:.1f} 秒'}")
         took = wait_until(lambda: sim.echo.get("moving") is True, 3)
         record(took is not None, "插回后车上机械臂重新跟随")
+        frames = sim.feedback.get("frames") or 0
+        took = wait_until(lambda: (sim.feedback.get("frames") or 0) > frames, 3)
+        record(took is not None, "插回后车的回传重新送到控制器")
 
         print("\n== 坏帧", flush=True)
         bad_before = log.count("state=bad_frames")

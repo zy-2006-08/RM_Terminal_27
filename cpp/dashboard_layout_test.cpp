@@ -53,6 +53,7 @@ Field<T> present(T value, Freshness freshness = Freshness::Fresh) {
 
 Snapshot base_snapshot() {
     Snapshot snapshot;
+    snapshot.self = RobotId{3};
     snapshot.game.stage_countdown_sec = present<std::int32_t>(154);
     snapshot.game.current_stage = present<std::uint32_t>(4);
 
@@ -67,7 +68,7 @@ Snapshot base_snapshot() {
 
     RobotState state;
     state.dynamic.current_hp = present<std::uint32_t>(412);
-    state.dynamic.max_hp = present<std::uint32_t>(600);
+    state.statics.max_hp = present<std::uint32_t>(600);
     snapshot.robots.emplace(RobotId{3}, state);
     return snapshot;
 }
@@ -282,8 +283,10 @@ void clicking_video_panes_switches_the_visible_page() {
     check(dashboard.mode() == UiMode::Video, "manual expansion reports the actual visible mode");
     check(dashboard.reason() == ModeReason::ManualVideo &&
               dashboard.layoutDump().find("ManualVideo") != std::string::npos &&
-              find_label(dashboard, "modeBanner")->text().contains("ManualVideo"),
-          "manual mode reason, dump and banner agree");
+              find_label(dashboard, "modeBanner")->toolTip().contains("ManualVideo"),
+          "manual mode reason, dump and banner tooltip agree");
+    check(find_label(dashboard, "modeBanner")->text() == QStringLiteral("红方 3 号 · 步兵"),
+          "the status bar shows the seat instead of the mode");
     capture("dashboard-expanded");
     dashboard.update(clear_snapshot(), nullptr, 4800);
     settle(dashboard);
@@ -431,6 +434,14 @@ void a_critical_event_is_listed_and_coloured() {
     check(alert_pixels > 0, "the red banner actually renders red pixels");
 }
 
+void the_event_time_fits_its_column() {
+    const QFont time_font = event_time_font();
+    check(QFontMetrics(time_font).horizontalAdvance(QStringLiteral("00:00")) <= kEventTimeWidth,
+          "the event time fits its column instead of being cut");
+    check(time_font.pointSizeF() < EventFeedPane().font().pointSizeF(),
+          "the event time is drawn smaller than the event text");
+}
+
 // (7): both panes are handed the SAME frame every tick, including the hidden one.
 // A per-pane latestFrame() call could straddle a frame advance, and a visibility
 // short-circuit would leave the target page one frame stale at the switch.
@@ -557,6 +568,15 @@ void a_blocking_popup_renders_above_both_pages_without_moving_the_layout() {
 
     check(popup->isVisible(), "hp=0 shows the popup overlay");
     check(dashboard.popup() == Popup::Eliminated, "the dashboard reports Eliminated");
+    // 步兵、重装由复活框接管阵亡:状态照报 Eliminated,但不再画「已阵亡」盖在复活框上面。
+    dashboard.setEliminatedOverlayReplaced(true);
+    dashboard.update(dead, nullptr, 1300);
+    settle(dashboard);
+    check(!popup->isVisible() && dashboard.popup() == Popup::Eliminated,
+          "with the revive popup attached, death keeps its state but not the old overlay");
+    dashboard.setEliminatedOverlayReplaced(false);
+    dashboard.update(dead, nullptr, 1350);
+    settle(dashboard);
 
     // 文案断言落在纯函数上,而不是从控件里抓字符串:弹窗内容现在由 QML 排版,
     // 从宿主控件读不到文字,而「这个状态说了什么」仍然必须被钉住。
@@ -772,11 +792,140 @@ void alert_banners_float_and_queue() {
 
 }  // namespace
 
+// 三种席位的布局 × 两档屏幕:档案里的面板都在、互不重叠、不出窗口;不在档案里的
+// 面板藏起来;地图保持 28:15;花名册两列等宽。RM_UI_EVIDENCE_DIR 设了就顺手出图。
+void every_role_layout_fits_its_screens() {
+    const std::vector<PaneId> all_panes{PaneId::AllyRoster, PaneId::EnemyRoster, PaneId::Map,
+                                        PaneId::Events,     PaneId::Analysis,    PaneId::Video,
+                                        PaneId::Assembly,   PaneId::Dart,        PaneId::Sentry,
+                                        PaneId::SelfCommands};
+    for (const int seat : {3, 1, 6}) {
+        for (const QSize size : {QSize(kMinWidth, kMinHeight), QSize(1920, 1080)}) {
+            Config config;
+            config.self_robot_id = seat;
+            Dashboard dashboard(config);
+            dashboard.resize(size);
+            drive_to_info(dashboard);
+            const LayoutProfile& profile = layout_profile(dashboard.role());
+            const std::string tag = role_name(dashboard.role()).toStdString() + " " +
+                                    std::to_string(size.width()) + "x" + std::to_string(size.height());
+            check(dashboard.size() == size, ("the window keeps the requested size: " + tag).c_str());
+
+            std::vector<QRect> boxes;
+            for (const PaneSlot& cell : profile.cells) {
+                const QWidget* card = dashboard.paneCard(cell.pane);
+                check(card && card->isVisible(), ("every profile pane is visible: " + tag).c_str());
+                const QRect box(card->mapTo(&dashboard, QPoint(0, 0)), card->size());
+                check(dashboard.rect().contains(box), ("every pane stays inside the window: " + tag).c_str());
+                check(box.width() >= 150 && box.height() >= 100,
+                      ("no pane collapses to a sliver: " + tag).c_str());
+                for (const QRect& other : boxes)
+                    check(!other.intersects(box), ("panes never overlap: " + tag).c_str());
+                boxes.push_back(box);
+            }
+            for (const PaneId pane : all_panes) {
+                const bool listed = std::any_of(profile.cells.begin(), profile.cells.end(),
+                                                [pane](const PaneSlot& cell) { return cell.pane == pane; });
+                if (!listed)
+                    check(dashboard.paneCard(pane) == nullptr, ("panes outside the profile stay hidden: " + tag).c_str());
+            }
+            const QWidget* ally = find(dashboard, "allyRoster");
+            const QWidget* enemy = find(dashboard, "enemyRoster");
+            check(ally->width() == enemy->width(), ("both rosters are equally wide: " + tag).c_str());
+            // 场地按比例画在格子里:格子不比场地需要的更高(上下没有黑带),画出来的场地是 28:15,
+            // 而且至少占格子宽或高的 90%。
+            const QWidget* map = find(dashboard, "mapPane");
+            const FieldExtent field = default_field_extent();
+            const MapViewport drawn = map_viewport(field, map->width(), map->height());
+            check(map->height() <= map_height_for_width(field, map->width()) + 2,
+                  ("the map cell is not taller than the field: " + tag).c_str());
+            check(std::abs(static_cast<double>(drawn.width) / drawn.height - field.width_m / field.height_m) < 0.02,
+                  ("the field is drawn at 28:15: " + tag).c_str());
+            check(drawn.width >= map->width() * 0.9 || drawn.height >= map->height() * 0.9,
+                  ("the field fills its cell: " + tag).c_str());
+            const std::string dump = dashboard.layoutDump();
+            check(dump.find("\"role\": \"" + role_name(dashboard.role()).toStdString() + "\"") != std::string::npos,
+                  ("the layout dump names the role: " + tag).c_str());
+
+            const QString directory = qEnvironmentVariable("RM_UI_EVIDENCE_DIR");
+            if (!directory.isEmpty()) {
+                QImage shot = grab_rendered(&dashboard);
+                QPainter painter(&shot);
+                for (auto* quick : dashboard.findChildren<QQuickWidget*>()) {
+                    if (quick->isVisible() && quick->status() == QQuickWidget::Ready)
+                        painter.drawImage(QRect(quick->mapTo(&dashboard, QPoint()), quick->size()),
+                                          quick->grabFramebuffer());
+                }
+                painter.end();
+                QDir().mkpath(directory);
+                shot.save(QStringLiteral("%1/layout-%2-%3x%4.png")
+                              .arg(directory, role_name(dashboard.role()))
+                              .arg(size.width())
+                              .arg(size.height()));
+            }
+        }
+    }
+    check(Dashboard(Config{}).role() == Role::Infantry, "the default seat is the infantry layout");
+}
+
+// 指挥手点地图:点空地发点位标记、点敌方车发目标标记;0.5 秒内第二次被拦;断线时不发。
+// 其他席位地图不响应点击,但照样画收到的标记。
+void the_commander_marks_the_map() {
+    Config config;
+    config.self_robot_id = 6;
+    Dashboard dashboard(config);
+    dashboard.resize(1920, 1080);
+    Snapshot snapshot = clear_snapshot();
+    snapshot.self = RobotId{6};
+    MapRobot enemy;
+    enemy.id = RobotId{103};
+    enemy.faction = 2;
+    enemy.from_radar = true;
+    enemy.position.x = present<double>(20.0);
+    enemy.position.y = present<double>(7.0);
+    snapshot.map_robots.push_back(enemy);
+    dashboard.update(snapshot, nullptr, 1000);
+    settle(dashboard);
+
+    std::vector<std::string> sent;
+    dashboard.setCommandSender([&sent](const char* topic, const std::string& payload) {
+        sent.push_back(std::string(topic) + ":" + std::to_string(payload.size()));
+        return true;
+    });
+    MapPane* map = const_cast<MapPane*>(static_cast<const MapPane*>(find(dashboard, "mapPane")));
+    const MapViewport view = map_viewport(default_field_extent(), map->width(), map->height());
+    const Projected empty_spot = project(default_field_extent(), view, 8.0, 4.0);
+    const Projected on_enemy = project(default_field_extent(), view, 20.0, 7.0);
+    check(dashboard.markToolbar() != nullptr, "the commander has a mark toolbar");
+
+    map->clickAt(QPointF(empty_spot.point.x, empty_spot.point.y));
+    check(sent.empty() && dashboard.markToolbar()->statusText().contains(QStringLiteral("断线")),
+          "while the link is down a mark is dropped, not queued");
+    dashboard.setLinkUp(true);
+    map->clickAt(QPointF(empty_spot.point.x, empty_spot.point.y));
+    check(sent.size() == 1 && sent[0].rfind("MapClickCmd:", 0) == 0, "a click on open ground sends one MapClickCmd");
+    map->clickAt(QPointF(on_enemy.point.x, on_enemy.point.y));
+    check(sent.size() == 1 && dashboard.markToolbar()->statusText().contains(QStringLiteral("0.5")),
+          "a second mark within 0.5 s is blocked");
+    dashboard.update(snapshot, nullptr, 1600);
+    map->clickAt(QPointF(on_enemy.point.x, on_enemy.point.y));
+    check(sent.size() == 2 && dashboard.markToolbar()->statusText().contains(QStringLiteral("敌方 3 号")),
+          "a click on an enemy robot marks that robot");
+
+    Dashboard infantry(test_config());
+    infantry.resize(1440, 900);
+    check(infantry.markToolbar() == nullptr, "other seats have no mark toolbar");
+    MapPane* infantry_map = const_cast<MapPane*>(static_cast<const MapPane*>(find(infantry, "mapPane")));
+    check(!infantry_map->clickAt(QPointF(100, 100)), "other seats' maps ignore clicks");
+}
+
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     qInstallMessageHandler(messages);
     try {
         info_mode_is_map_dominant_with_a_capped_thumbnail();
+        every_role_layout_fits_its_screens();
+        the_commander_marks_the_map();
         the_layout_fits_the_requested_screen_size();
         the_thumbnail_and_its_stats_never_overlap();
         clicking_video_panes_switches_the_visible_page();
@@ -787,6 +936,7 @@ int main(int argc, char* argv[]) {
         the_overlays_never_swallow_clicks_on_the_reminder_entry();
         video_mode_keeps_the_countdown_and_hp();
         a_critical_event_is_listed_and_coloured();
+        the_event_time_fits_its_column();
         both_panes_receive_one_identical_frame();
         the_frame_source_is_read_exactly_once();
         the_layout_dump_is_reproducible_and_hides_unlaid_geometry();

@@ -20,11 +20,11 @@ add_library(terminal_proto ${PROTO_CPP})
 target_include_directories(terminal_proto PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(terminal_proto PUBLIC protobuf::libprotobuf absl::log_internal_check_op absl::log_internal_message)
 
-add_library(terminal_logging cpp/logging.cpp cpp/logging.h cpp/config.cpp cpp/config.h)
+add_library(terminal_logging cpp/logging.cpp cpp/logging.h cpp/config.cpp cpp/config.h cpp/seat.cpp cpp/seat.h)
 target_include_directories(terminal_logging PUBLIC cpp)
 target_link_libraries(terminal_logging PUBLIC Qt6::Core)
 
-add_library(terminal_domain cpp/conversion.cpp cpp/store.cpp cpp/decoder.cpp cpp/clock.cpp cpp/clock.h)
+add_library(terminal_domain cpp/conversion.cpp cpp/store.cpp cpp/decoder.cpp cpp/match_event.cpp cpp/match_event.h cpp/clock.cpp cpp/clock.h)
 target_include_directories(terminal_domain PUBLIC cpp)
 target_link_libraries(terminal_domain PUBLIC terminal_proto)
 add_library(terminal_video cpp/video.cpp cpp/video_receiver.cpp cpp/video_receiver.h cpp/video_recovery.cpp cpp/video_recovery.h)
@@ -42,7 +42,9 @@ target_include_directories(terminal_controller PUBLIC cpp)
 target_link_libraries(terminal_controller PUBLIC terminal_domain terminal_logging Qt6::Core)
 add_library(terminal_presentation cpp/presentation.cpp cpp/ui_mode.cpp cpp/ui_mode.h cpp/popup_state.cpp cpp/popup_state.h cpp/game_result.cpp cpp/game_result.h cpp/field_map.cpp cpp/field_map.h cpp/top_bar_model.cpp cpp/top_bar_model.h cpp/reminder_scheduler.cpp cpp/reminder_scheduler.h cpp/tactical_reminder.h
     cpp/link_health.cpp cpp/link_health.h
-    cpp/match_alerts.cpp cpp/match_alerts.h)
+    cpp/match_alerts.cpp cpp/match_alerts.h
+    cpp/layout_profile.cpp cpp/layout_profile.h
+    cpp/map_marks.cpp cpp/map_marks.h)
 target_link_libraries(terminal_presentation PUBLIC terminal_domain terminal_logging Qt6::Core)
 
 # 战术提醒的持久化和语音后端。独立于 terminal_presentation:调度器是纯逻辑,
@@ -88,13 +90,33 @@ add_library(terminal_visual
     cpp/battle_analysis.cpp cpp/battle_analysis.h
     cpp/battle_analysis_pane.cpp cpp/battle_analysis_pane.h
     cpp/event_feed_pane.cpp cpp/event_feed_pane.h
+    cpp/mark_toolbar.cpp cpp/mark_toolbar.h
     cpp/top_bar.cpp cpp/top_bar.h)
 target_link_libraries(terminal_visual PUBLIC terminal_presentation Qt6::Widgets Qt6::QuickWidgets)
 
+# 角色专属面板(重装装配、指挥手飞镖/哨兵)和它们的发送侧纯逻辑。单独一个目标
+# 而不是并进 terminal_visual:这是唯一需要直接链 terminal_proto 的界面层(要编码
+# 三条上行指令),分开后共享面板的测试不会因为协议头改动而重编。
+add_library(terminal_role_panes
+    cpp/role_commands.cpp cpp/role_commands.h
+    cpp/assembly_pane.cpp cpp/assembly_pane.h
+    cpp/dart_pane.cpp cpp/dart_pane.h
+    cpp/sentry_pane.cpp cpp/sentry_pane.h
+    cpp/self_command_pane.cpp cpp/self_command_pane.h
+    cpp/revive_popup.cpp cpp/revive_popup.h
+    cpp/km_control.cpp cpp/km_control.h)
+target_link_libraries(terminal_role_panes PUBLIC terminal_visual terminal_domain Qt6::Widgets)
+target_compile_definitions(terminal_role_panes PRIVATE QT_NO_KEYWORDS)
+
 # 切图资源。挂在**可执行文件**上而不是 terminal_visual 静态库上:塞进静态库时资源的
 # 自注册符号没有任何 TU 引用它,链接器会整段丢掉,运行期表现为 qrc:/qml/TopBar.qml
-# 404 而不是构建报错。每个要显示顶部栏的可执行文件都得带上它。
+# 404 而不是构建报错。每个要显示顶部栏的可执行文件都得链上 terminal_qrc。
 qt_add_resources(TOPBAR_RES resources.qrc)
+# 生成的 qrc_resources.cpp 只能归一个目标:多个可执行文件各自列出同一个生成文件时,并行构建会
+# 同时跑几份 rcc 写同一个文件,改完 QML 后第一次构建出来的程序里可能没有资源(qrc:/qml/... 404)。
+# OBJECT 库的目标文件直接链进可执行文件,不经过静态库归档,资源的自注册符号不会被链接器丢掉。
+add_library(terminal_qrc OBJECT ${TOPBAR_RES})
+target_link_libraries(terminal_qrc PRIVATE Qt6::Core)
 
 # 结算逐帧素材(红胜 131 帧 + 蓝胜 132 帧,约 550MB)。刻意**不进 qrc、不进 git**:
 # 塞进二进制会让产物涨三个数量级,提交进仓库则是不可逆的历史膨胀。运行时按
@@ -128,6 +150,12 @@ add_library(terminal_reminder_ui
 target_link_libraries(terminal_reminder_ui PUBLIC terminal_reminders terminal_visual Qt6::Widgets)
 target_compile_definitions(terminal_reminder_ui PRIVATE QT_NO_KEYWORDS)
 
+# 开机选席位页。独立于 terminal_dashboard:它在 Dashboard 和网络接入**之前**运行,
+# 反过来依赖整个主界面只会让「还没选席位」的阶段拖着一套用不上的面板。
+add_library(terminal_seat_picker cpp/seat_picker.cpp cpp/seat_picker.h)
+target_link_libraries(terminal_seat_picker PUBLIC terminal_visual terminal_logging Qt6::QuickWidgets)
+target_compile_definitions(terminal_seat_picker PRIVATE QT_NO_KEYWORDS)
+
 # A library rather than sources compiled straight into the executable, so the
 # offscreen layout test can link the real Dashboard instead of a reimplementation.
 add_library(terminal_dashboard cpp/dashboard.cpp cpp/dashboard.h
@@ -142,11 +170,10 @@ add_executable(rm_terminal
     cpp/mqtt_intake.h
     cpp/replay_player.cpp
     cpp/replay_player.h
-    ${TOPBAR_RES}
 )
 target_include_directories(rm_terminal PRIVATE ${MOSQUITTO_INCLUDE_DIR})
-target_link_libraries(rm_terminal PRIVATE terminal_dashboard terminal_recording terminal_controller
-    ${MOSQUITTO_LIBRARY} Qt6::Widgets)
+target_link_libraries(rm_terminal PRIVATE terminal_qrc terminal_dashboard terminal_recording terminal_controller
+    terminal_seat_picker terminal_role_panes ${MOSQUITTO_LIBRARY} Qt6::Widgets)
 target_compile_features(rm_terminal PRIVATE cxx_std_17)
 target_compile_definitions(rm_terminal PRIVATE QT_NO_KEYWORDS)
 
@@ -164,6 +191,16 @@ if(BUILD_TESTING)
     add_executable(config_test cpp/config_test.cpp)
     target_link_libraries(config_test PRIVATE terminal_logging)
     add_test(NAME config_contract COMMAND config_test)
+    add_executable(seat_test cpp/seat_test.cpp)
+    target_link_libraries(seat_test PRIVATE terminal_logging)
+    add_test(NAME seat_model COMMAND seat_test)
+    # 带上 qrc 并离屏运行:这个测试加载真的 SeatPicker.qml,资源不链进来就只会
+    # 得到一个空 rootObject,而「QML 没加载」正是它要抓的失败之一。
+    add_executable(seat_picker_test cpp/seat_picker_test.cpp)
+    target_link_libraries(seat_picker_test PRIVATE terminal_qrc terminal_seat_picker Qt6::Widgets Qt6::QuickWidgets)
+    target_compile_definitions(seat_picker_test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME seat_picker COMMAND seat_picker_test)
+    set_tests_properties(seat_picker PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
     add_executable(intake_test cpp/intake_test.cpp)
     add_executable(video_test cpp/video_test.cpp)
     target_link_libraries(video_test PRIVATE terminal_video)
@@ -205,8 +242,8 @@ if(BUILD_TESTING)
     add_test(NAME popup_state COMMAND popup_state_test)
     # 带上 qrc:异常终止那 7 帧是唯一打进二进制的序列,不链接资源的话
     # qrc 分支就永远是死代码,注册漏写要到运行期才暴露。
-    add_executable(game_result_test cpp/game_result_test.cpp ${TOPBAR_RES})
-    target_link_libraries(game_result_test PRIVATE terminal_presentation)
+    add_executable(game_result_test cpp/game_result_test.cpp)
+    target_link_libraries(game_result_test PRIVATE terminal_qrc terminal_presentation)
     add_test(NAME game_result COMMAND game_result_test)
     add_executable(field_map_test cpp/field_map_test.cpp)
     target_link_libraries(field_map_test PRIVATE terminal_presentation)
@@ -214,6 +251,24 @@ if(BUILD_TESTING)
     add_executable(battle_analysis_test cpp/battle_analysis_test.cpp)
     target_link_libraries(battle_analysis_test PRIVATE terminal_visual)
     add_test(NAME battle_analysis_metrics COMMAND battle_analysis_test)
+    # 纯逻辑:编码逐字段往返、限频、按住确认、回显状态机。不链 Widgets。
+    add_executable(role_commands_test cpp/role_commands_test.cpp)
+    target_link_libraries(role_commands_test PRIVATE terminal_role_panes)
+    target_compile_definitions(role_commands_test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME role_commands COMMAND role_commands_test)
+    # 离屏运行:断线禁用和「一次点击只发一条」要在真实 QPushButton 上验证。
+    add_executable(role_panes_test cpp/role_panes_test.cpp)
+    target_link_libraries(role_panes_test PRIVATE terminal_role_panes Qt6::Widgets)
+    target_compile_definitions(role_panes_test PRIVATE QT_NO_KEYWORDS
+        RM_TERMINAL_ARTIFACT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/artifacts")
+    add_test(NAME role_panes COMMAND role_panes_test)
+    set_tests_properties(role_panes PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
+    # 键鼠控制:键位映射、累积和 75Hz 节拍是纯逻辑;接管窗口那层用离屏窗口和合成事件验。
+    add_executable(km_control_test cpp/km_control_test.cpp)
+    target_link_libraries(km_control_test PRIVATE terminal_role_panes Qt6::Widgets)
+    target_compile_definitions(km_control_test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME km_control COMMAND km_control_test)
+    set_tests_properties(km_control PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
     # 真实 say/afplay 子进程测试,只在 macOS 注册:它断言的是本机语音后端,
     # 在没有这些工具的平台上注册只会得到必然失败的红灯。
     if(APPLE)
@@ -244,12 +299,12 @@ if(BUILD_TESTING)
     target_link_libraries(top_bar_model_test PRIVATE terminal_presentation)
     add_test(NAME top_bar_model COMMAND top_bar_model_test)
     # 资源随可执行文件带:这个测试构造真的 Dashboard,顶部栏要能真的加载 QML。
-    add_executable(dashboard_layout_test cpp/dashboard_layout_test.cpp ${TOPBAR_RES})
-    add_executable(roster_runtime_test cpp/roster_runtime_test.cpp ${TOPBAR_RES})
-    target_link_libraries(roster_runtime_test PRIVATE terminal_visual Qt6::QuickWidgets)
+    add_executable(dashboard_layout_test cpp/dashboard_layout_test.cpp)
+    add_executable(roster_runtime_test cpp/roster_runtime_test.cpp)
+    target_link_libraries(roster_runtime_test PRIVATE terminal_qrc terminal_visual Qt6::QuickWidgets)
     add_test(NAME roster_runtime COMMAND roster_runtime_test)
     set_tests_properties(roster_runtime PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 15)
-    target_link_libraries(dashboard_layout_test PRIVATE terminal_dashboard Qt6::Widgets Qt6::QuickWidgets)
+    target_link_libraries(dashboard_layout_test PRIVATE terminal_qrc terminal_dashboard Qt6::Widgets Qt6::QuickWidgets)
     target_compile_definitions(dashboard_layout_test PRIVATE
         QT_NO_KEYWORDS
         RM_TERMINAL_DASHBOARD_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/cpp/dashboard.cpp")
@@ -257,19 +312,27 @@ if(BUILD_TESTING)
     set_tests_properties(dashboard_layout PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
 
     # 验收用截图工具,不注册为测试:它只产出图片,不做断言。
-    add_executable(popup_shots cpp/popup_shots.cpp ${TOPBAR_RES})
-    target_link_libraries(popup_shots PRIVATE terminal_dashboard Qt6::Widgets)
+    add_executable(popup_shots cpp/popup_shots.cpp)
+    target_link_libraries(popup_shots PRIVATE terminal_qrc terminal_dashboard Qt6::Widgets)
     target_compile_definitions(popup_shots PRIVATE QT_NO_KEYWORDS)
 
     # 结算动画验收工具,同样不注册为测试:红胜/蓝胜素材按设计不进仓库,
     # 缺素材的机器上它只会退回静态标题,不该因此让 ctest 变红。
-    add_executable(result_shots cpp/result_shots.cpp ${TOPBAR_RES})
-    target_link_libraries(result_shots PRIVATE terminal_dashboard Qt6::Widgets)
+    add_executable(result_shots cpp/result_shots.cpp)
+    target_link_libraries(result_shots PRIVATE terminal_qrc terminal_dashboard Qt6::Widgets)
     target_compile_definitions(result_shots PRIVATE QT_NO_KEYWORDS)
+
+    # 选席位页出图工具,同样不注册为测试:它产出 picker.png 这张验收图,不做断言。
+    add_executable(picker_shot cpp/picker_shot.cpp)
+    target_link_libraries(picker_shot PRIVATE terminal_qrc terminal_seat_picker Qt6::Widgets)
+    target_compile_definitions(picker_shot PRIVATE QT_NO_KEYWORDS)
 
     add_executable(map_pane_test cpp/map_pane_test.cpp)
     target_link_libraries(map_pane_test PRIVATE terminal_map Qt6::Widgets)
     add_test(NAME map_pane_render COMMAND map_pane_test)
+    add_executable(map_marks_test cpp/map_marks_test.cpp)
+    target_link_libraries(map_marks_test PRIVATE terminal_presentation)
+    add_test(NAME map_marks COMMAND map_marks_test)
     # Offscreen so the pixel assertions run identically on a headless Ubuntu box
     # and on a macOS workstation with a real display attached.
     set_tests_properties(map_pane_render PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
@@ -282,7 +345,7 @@ if(BUILD_TESTING)
     set_tests_properties(safe_start domain_state reject_unknown_args PROPERTIES TIMEOUT 15)
     # Simulator-backed end-to-end timing check. It starts its own broker, match
     # server and video sender, and needs ~65s of wall clock because it must observe
-    # a 12s blind window plus the 3s exit hysteresis.
+    # a 10s blind window plus the 3s exit hysteresis.
     #
     # Registration is opt-in because a CTest label cannot keep this out of a plain
     # `ctest` run: -L selects and -LE excludes, but neither makes a registered test

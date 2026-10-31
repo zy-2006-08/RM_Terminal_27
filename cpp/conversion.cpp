@@ -19,6 +19,7 @@ bool merge(Field<T>& field, const std::optional<T>& value, MonotonicMs now, Pred
 const auto any_value = [](const auto&) { return true; };
 const auto finite = [](double value) { return std::isfinite(value); };
 const auto nonnegative = [](double value) { return std::isfinite(value) && value >= 0; };
+const auto positive = [](auto value) { return value > 0; };
 auto between(double low, double high) {
     return [=](double value) { return std::isfinite(value) && value >= low && value <= high; };
 }
@@ -29,8 +30,8 @@ auto between(double low, double high) {
 
 bool convert(GameFields<Field>& state, const inbound::GameStatus& patch, MonotonicMs now) {
     bool ok = true;
-    MERGE(current_round, [](auto v) { return v > 0; });
-    MERGE(total_rounds, [](auto v) { return v > 0; });
+    MERGE(current_round, positive);
+    MERGE(total_rounds, positive);
     MERGE(red_score, any_value);
     MERGE(blue_score, any_value);
     MERGE(current_stage, between(0, 5));
@@ -42,49 +43,74 @@ bool convert(GameFields<Field>& state, const inbound::GameStatus& patch, Monoton
     // 漏掉一个 MERGE 不报错:字段停在 NeverReceived,界面谎报「无数据」。max 为 0
     // 会让血条除零,故按无效拒绝。
     MERGE(red_base_hp, any_value);
-    MERGE(red_base_max_hp, [](auto v) { return v > 0; });
+    MERGE(red_base_max_hp, positive);
     MERGE(blue_base_hp, any_value);
-    MERGE(blue_base_max_hp, [](auto v) { return v > 0; });
+    MERGE(blue_base_max_hp, positive);
+    MERGE(red_base_status, between(0, 2));
+    MERGE(blue_base_status, between(0, 2));
     MERGE(red_outpost_hp, any_value);
-    MERGE(red_outpost_max_hp, [](auto v) { return v > 0; });
+    MERGE(red_outpost_max_hp, positive);
     MERGE(blue_outpost_hp, any_value);
-    MERGE(blue_outpost_max_hp, [](auto v) { return v > 0; });
-    MERGE(red_team_name, [](const std::string& v) { return !v.empty(); });
-    MERGE(blue_team_name, [](const std::string& v) { return !v.empty(); });
-    MERGE(red_economy, any_value);
-    MERGE(blue_economy, any_value);
-    MERGE(red_total_damage, any_value);
-    MERGE(blue_total_damage, any_value);
-    MERGE(red_fortress_sec, any_value);
-    MERGE(blue_fortress_sec, any_value);
-    MERGE(fortress_holder, between(0, 2));
-    MERGE(red_kills, any_value);
-    MERGE(blue_kills, any_value);
-    MERGE(red_energy_activations, any_value);
-    MERGE(blue_energy_activations, any_value);
+    MERGE(blue_outpost_max_hp, positive);
     // 阵地状态只有 0..4 五个合法值,未知编码一律拒绝:画成「未控」会谎报战场。
     const auto zone = between(0, 4);
     MERGE(red_outpost_zone, zone);
     MERGE(blue_outpost_zone, zone);
     MERGE(red_base_zone, zone);
     MERGE(blue_base_zone, zone);
+    MERGE(red_total_damage, any_value);
+    MERGE(blue_total_damage, any_value);
     MERGE(red_control_points, any_value);
     MERGE(blue_control_points, any_value);
-    MERGE(red_reinforce_chances, any_value);
-    MERGE(blue_reinforce_chances, any_value);
+    MERGE(red_fortress_activation_sec, nonnegative);
+    MERGE(blue_fortress_activation_sec, nonnegative);
+    MERGE(red_outpost_zone_progress, any_value);
+    MERGE(blue_outpost_zone_progress, any_value);
+    MERGE(red_base_zone_progress, any_value);
+    MERGE(blue_base_zone_progress, any_value);
+    MERGE(economy, any_value);
+    MERGE(total_economy, any_value);
+    MERGE(tech_level, any_value);
+    MERGE(encryption_level, any_value);
+    MERGE(rune_status, between(0, 3));
+    MERGE(rune_activated_arms, any_value);
+    MERGE(rune_average_rings, nonnegative);
+    MERGE(selected_shooter, between(1, 2));
+    MERGE(selected_chassis, between(1, 2));
     return ok;
 }
 bool convert(DynamicFields<Field>& state, const inbound::RobotDynamicStatus& patch, MonotonicMs now) {
     bool ok = true;
     MERGE(current_hp, any_value);
-    MERGE(max_hp, any_value);
-    MERGE(shooter_heat_17mm, any_value);
-    MERGE(shooter_heat_limit, any_value);
+    MERGE(heat, nonnegative);
     MERGE(bullet_speed, nonnegative);
+    MERGE(buffer_energy, any_value);
+    MERGE(experience, any_value);
+    MERGE(experience_for_upgrade, any_value);
+    MERGE(total_fired, any_value);
     MERGE(remaining_ammo, any_value);
-    MERGE(coin, any_value);
-    MERGE(chassis_power, nonnegative);
-    MERGE(buffer_energy, nonnegative);
+    MERGE(out_of_combat, any_value);
+    MERGE(out_of_combat_countdown, any_value);
+    MERGE(can_remote_heal, any_value);
+    MERGE(can_remote_ammo, any_value);
+    return ok;
+}
+bool convert(StaticFields<Field>& state, const inbound::RobotStaticStatus& patch, MonotonicMs now) {
+    bool ok = true;
+    MERGE(connection_state, between(0, 1));
+    MERGE(field_state, between(0, 1));
+    MERGE(alive_state, between(0, 2));
+    MERGE(robot_id, positive);
+    MERGE(robot_type, any_value);
+    MERGE(shooter_system, any_value);
+    MERGE(chassis_system, any_value);
+    MERGE(level, any_value);
+    MERGE(max_hp, positive);
+    MERGE(max_heat, any_value);
+    MERGE(heat_cooldown_rate, nonnegative);
+    MERGE(max_power, any_value);
+    MERGE(max_buffer_energy, any_value);
+    MERGE(max_chassis_energy, any_value);
     return ok;
 }
 bool convert(ModuleFields<Field>& state, const inbound::RobotModuleStatus& patch, MonotonicMs now) {
@@ -100,7 +126,7 @@ bool convert(ModuleFields<Field>& state, const inbound::RobotModuleStatus& patch
     MERGE(video_transmission, module);
     MERGE(capacitor, module);
     MERGE(main_controller, module);
-    MERGE(laser_detection_module, module);
+    MERGE(modular_42mm, between(0, 1));
     return ok;
 }
 bool convert(PositionFields<Field>& state, const inbound::RobotPosition& patch, MonotonicMs now) {
@@ -110,43 +136,39 @@ bool convert(PositionFields<Field>& state, const inbound::RobotPosition& patch, 
     MERGE(yaw, finite);
     return ok;
 }
-bool convert(EventFields<Field>& state, const inbound::Event& patch, MonotonicMs now) {
+bool convert(RespawnFields<Field>& state, const inbound::RobotRespawnStatus& patch, MonotonicMs now) {
     bool ok = true;
-    MERGE(timestamp_ms, any_value);
-    MERGE(level, between(0, 3));
-    MERGE(text, [](const auto& v) { return v.size() <= 4096; });
-    MERGE(faction, between(0, 2));
+    MERGE(pending, any_value);
+    MERGE(total_progress, any_value);
+    MERGE(current_progress, any_value);
+    MERGE(can_free, any_value);
+    MERGE(gold_cost, any_value);
+    MERGE(can_pay, any_value);
     return ok;
 }
-bool convert(TelemetryFields<Field>& state, const inbound::RobotTelemetry& patch, MonotonicMs now) {
+bool convert(TechCoreFields<Field>& state, const inbound::TechCoreStatus& patch, MonotonicMs now) {
     bool ok = true;
-    MERGE(sequence, any_value);
-    MERGE(timestamp_us, any_value);
-    MERGE(gimbal_yaw, finite);
-    MERGE(gimbal_pitch, finite);
-    MERGE(chassis_mode, any_value);
-    MERGE(vision_online, any_value);
-    MERGE(autoaim_enabled, any_value);
-    MERGE(target_locked, any_value);
-    MERGE(target_id, any_value);
-    MERGE(target_distance, nonnegative);
-    MERGE(target_yaw_err, finite);
-    MERGE(target_pitch_err, finite);
-    MERGE(confidence, between(0, 1));
-    MERGE(friction_rpm, nonnegative);
-    MERGE(fire_permit, any_value);
-    MERGE(bbox_cx, between(0, 1920));
-    MERGE(bbox_cy, between(0, 1080));
-    MERGE(bbox_w, between(0, 1920));
-    MERGE(bbox_h, between(0, 1080));
+    MERGE(maximum_difficulty, any_value);
+    MERGE(basic_state, between(0, 3));
+    MERGE(putin_state, between(0, 1));
+    MERGE(move_state, between(0, 1));
+    MERGE(rotate_state, between(0, 1));
+    MERGE(enemy_core_status, between(0, 2));
+    MERGE(remain_time_all, any_value);
+    MERGE(remain_time_step, any_value);
     return ok;
 }
-bool convert(BlindFields<Field>& state, const inbound::BlindStatus& patch, MonotonicMs now) {
+bool convert(DartFields<Field>& state, const inbound::DartStatus& patch, MonotonicMs now) {
     bool ok = true;
-    MERGE(self_base_blinded, any_value);
-    MERGE(blind_started_ms, any_value);
-    MERGE(blind_remaining_ms, nonnegative);
-    MERGE(cause, between(0, 2));
+    MERGE(target_id, between(0, 5));
+    MERGE(gate, between(0, 2));
+    return ok;
+}
+bool convert(SentryFields<Field>& state, const inbound::SentryStatus& patch, MonotonicMs now) {
+    bool ok = true;
+    MERGE(posture, between(0, 3));
+    MERGE(weakened, any_value);
+    MERGE(powered, any_value);
     return ok;
 }
 #undef MERGE

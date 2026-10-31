@@ -21,6 +21,8 @@ Item {
     property string robotClass: ""
     property bool hasPosition: false
     property bool positionStale: false
+    // 只有己方有:剩余累计发弹量(GlobalUnitStatus.robot_bullets),-1 = 没有数据。
+    property int bullets: -1
 
     readonly property bool kia: liveState === 2
     readonly property bool noData: liveState === 0
@@ -35,6 +37,9 @@ Item {
     // 字号随行高缩放,但夹在 [0.85, 1.35]:行高由面板均分决定,不夹住会在
     // 大窗口下把编号顶成巨字、小窗口下缩到不可读。
     readonly property real k: Math.max(0.85, Math.min(1.35, height / 78))
+    // 行高放不下「编号行 + 血量行 + 血条」时(指挥手布局里两列花名册上下叠放,1440x900
+    // 下每行不到 50px),血量挪到编号那一行、不画百分比:否则血量数字会被血条压住。
+    readonly property bool compact: height < 62
 
     Rectangle {
         id: card
@@ -107,7 +112,7 @@ Item {
         anchors.left: portrait.right
         anchors.leftMargin: 10
         anchors.top: card.top
-        anchors.topMargin: Math.round(9 * root.k)
+        anchors.topMargin: Math.round((root.compact ? 6 : 9) * root.k)
     }
 
     // 兵种名。顶栏受宽度限制只能给出编号,这里有空间就写全,
@@ -124,6 +129,21 @@ Item {
         anchors.baseline: title.baseline
     }
 
+    // 己方的剩余发弹量写在编号这一行的右端,和下面的百分比右对齐。
+    Text {
+        objectName: "bulletsText"
+        // 紧凑行里「阵亡 KIA」也在这一行右端,两个只留一个。
+        visible: root.bullets >= 0 && !root.noData && !(root.compact && root.kia)
+        text: "弹 " + root.bullets
+        color: root.bullets === 0 ? Theme.warn : Theme.textSecondary
+        font.family: Theme.numericFamily
+        font.pixelSize: Math.round(11 * root.k)
+        font.bold: true
+        anchors.right: card.right
+        anchors.rightMargin: 10
+        anchors.baseline: title.baseline
+    }
+
     // 当前血量单独一段:它是全行变化最快的数字,给足字重。上限值用次级色小一号,
     // 「578 / 600」里 600 是常量,不该和 578 一样抢眼。
     Row {
@@ -133,11 +153,14 @@ Item {
         anchors.left: title.left
         anchors.top: title.bottom
         anchors.topMargin: Math.round(4 * root.k)
+        // Row 自己没有基线,紧凑行按基线对齐时要借第一个数字的基线,否则整行挂在基线下面。
+        baselineOffset: hpCurrent.y + hpCurrent.baselineOffset
 
         // 数字统一白色。参考端 RobotStatsRow 的 HP 文本就是 #FFFFFF,只有血条本身
         // 带颜色 —— 绿/黄数字配绿/黄血条等于同一条信息上两次色彩编码,
         // 面板里十行同时闪绿闪黄反而盖掉了真正该抢眼的告警。
         Text {
+            id: hpCurrent
             text: root.currentHp
             color: root.kia ? Theme.textMuted : "#FFFFFF"
             font.family: Theme.numericFamily
@@ -161,6 +184,7 @@ Item {
     }
 
     Text {
+        id: kiaText
         visible: root.kia
         text: "阵亡  KIA"
         color: Theme.danger
@@ -173,7 +197,7 @@ Item {
     }
 
     Text {
-        visible: !root.kia && root.hasHp
+        visible: !root.kia && root.hasHp && !root.compact
         text: Math.round(root.ratio * 100) + "%"
         color: Theme.textSecondary
         font.family: Theme.numericFamily
@@ -186,6 +210,7 @@ Item {
 
     // 无数据:状态点 + 文字,绝不画空血条 —— 空条会被读成血量 0 即阵亡。
     Row {
+        id: noDataRow
         visible: root.noData
         anchors.left: title.left
         anchors.top: title.bottom
@@ -270,5 +295,27 @@ Item {
             color: Qt.lighter(bar.fill, 1.25)
             opacity: 0.75
         }
+    }
+
+    // 锚点切换必须走 AnchorChanges:直接在绑定里切 top/baseline,中间会有一刻两个锚点
+    // 同时存在,Qt 报「Baseline anchor cannot be used in conjunction with top」。
+    states: State {
+        name: "compact"
+        when: root.compact
+        AnchorChanges {
+            target: hpText
+            anchors.top: undefined
+            anchors.left: className.right
+            anchors.baseline: title.baseline
+        }
+        PropertyChanges { target: hpText; anchors.leftMargin: 10 }
+        AnchorChanges {
+            target: noDataRow
+            anchors.top: undefined
+            anchors.left: className.right
+            anchors.verticalCenter: title.verticalCenter
+        }
+        PropertyChanges { target: noDataRow; anchors.leftMargin: 10 }
+        AnchorChanges { target: kiaText; anchors.verticalCenter: title.verticalCenter }
     }
 }

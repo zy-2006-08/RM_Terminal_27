@@ -130,6 +130,14 @@ void ControllerLink::tryOpen() {
                           QStringLiteral("baud=%1").arg(baud_)});
 }
 
+bool ControllerLink::send(const QByteArray& frame) {
+    if (fd_ < 0) return false;
+    const ssize_t wrote = ::write(fd_, frame.constData(), static_cast<size_t>(frame.size()));
+    if (wrote != frame.size()) return false;
+    ++stats_.sent;
+    return true;
+}
+
 void ControllerLink::onReadable() {
     char buffer[4096];
     while (fd_ >= 0) {

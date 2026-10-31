@@ -83,5 +83,6 @@
     <file alias="qml/BaseHealthBar.qml">qml/BaseHealthBar.qml</file>
     <file alias="qml/RobotCard.qml">qml/RobotCard.qml</file>
     <file alias="qml/OutpostBadge.qml">qml/OutpostBadge.qml</file>
+    <file alias="qml/SeatPicker.qml">qml/SeatPicker.qml</file>
   </qresource>
 </RCC>

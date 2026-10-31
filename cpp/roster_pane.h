@@ -15,11 +15,11 @@ namespace rm_terminal {
 // 相反的决策,所以类型层面就把它们分开,不给渲染层「顺手合并」的机会。
 enum class LiveState { NoData, Alive, Kia };
 
-// One row in the ally/enemy column: id, faction, and whatever telemetry we
-// actually receive for that robot.
+// One row in the ally/enemy column: id, faction, and whatever we actually
+// receive for that robot.
 //
-// `hp` 和 `max_hp` 仍是 optional:全场血量来自 RobotHealthSet,而经济/热量一类
-// 只有自机的 RobotDynamicStatus 才有。缺失一律不画,绝不用 0 冒充测量值。
+// `hp` 和 `max_hp` 仍是 optional:全场血量来自 GlobalUnitStatus,上限血量协议不发
+// (见 RobotHealth)。缺失一律不画,绝不用 0 冒充测量值。
 struct RosterEntry {
     RobotId id;
     std::uint32_t faction = 0;
@@ -29,34 +29,37 @@ struct RosterEntry {
     LiveState live = LiveState::NoData;
     std::optional<std::uint32_t> hp;
     std::optional<std::uint32_t> max_hp;
+    // 只有己方:剩余累计发弹量(GlobalUnitStatus.robot_bullets)。
+    std::optional<std::int32_t> bullets;
 
-    // 官方状态卡还有等级角标、经济、模块灯排。协议里只有自机有 RobotModuleStatus,
-    // 等级与经济根本没有字段 —— 所以这两项保持 optional 并在卡上标注,
-    // 绝不用占位数字冒充真实 telemetry。
-    std::optional<std::uint32_t> coin;
+    // 以下只有自机有:RobotDynamicStatus / RobotStaticStatus / RobotModuleStatus /
+    // RobotRespawnStatus 只发所连的那台。经济是全队的(GlobalLogisticsStatus)。
+    std::optional<std::uint32_t> economy;
     std::optional<std::uint32_t> modules_online;
     std::optional<std::uint32_t> modules_total;
-
-    // 只有自机会收到 RobotDynamicStatus/RobotTelemetry。缺失字段必须不画,
-    // 画 0 会被当成真实测量值。
-    std::optional<std::uint32_t> heat;
+    std::optional<std::uint32_t> level;
+    std::optional<double> heat;
     std::optional<std::uint32_t> heat_limit;
     std::optional<std::uint32_t> ammo;
     std::optional<double> bullet_speed;
-    std::optional<double> chassis_power;
-    std::optional<double> buffer_energy;
-    std::optional<bool> vision_online;
-    std::optional<bool> autoaim_enabled;
-    std::optional<bool> target_locked;
-    std::optional<bool> fire_permit;
+    std::optional<std::uint32_t> buffer_energy;
+    std::optional<std::uint32_t> buffer_limit;
+    std::optional<bool> out_of_combat;
+    std::optional<bool> can_remote_heal;
+    std::optional<bool> can_remote_ammo;
+    std::optional<bool> pending_respawn;
 };
 
 // Derived from the snapshot rather than stored: the roster is a view of
-// map_robots + robots, and caching it would let the two disagree.
+// robot_health + map_robots + robots, and caching it would let them disagree.
+// 每方最多 4 行(1、3、4、7):空中没有血量,不占花名册的行。
 std::vector<RosterEntry> build_roster(const Snapshot& snapshot, std::uint32_t faction);
 
-// 我方阵营,取自协议标记 is_self 的机器人 —— 本校每场可能被编在红方或蓝方。
-// 自机缺失时返回 nullopt,调用方只能显示「红方/蓝方」:猜错阵营会让操作手读反全场。
+// 自机那一行,任何席位都有(指挥手的空中席位不在花名册里,但仍有自机数据)。
+std::optional<RosterEntry> self_entry(const Snapshot& snapshot);
+
+// 我方阵营,取自开机选定的席位。没有席位时返回 nullopt,调用方只能显示「红方/蓝方」:
+// 猜错阵营会让操作手读反全场。
 std::optional<std::uint32_t> self_faction(const Snapshot& snapshot);
 
 // A column of robot cards. Draws every row itself: a QLabel per field cannot

@@ -14,22 +14,6 @@ QString freshness_text(Freshness freshness) {
     }
     return QStringLiteral("unknown");
 }
-// Value-by-value mirror of core/constants.py:80-86 CHASSIS_MODES (authoritative,
-// aligned to the 2026 protocol). Python is the source of truth; if these ever
-// disagree, fix this table, never constants.py.
-//   0 停机          1 手动驾驶      2 底盘跟随云台
-//   3 小陀螺        4 自瞄模式      other 未知
-QString chassis_name(std::uint32_t mode) {
-    switch (mode) {
-    case 0: return QStringLiteral("停机");
-    case 1: return QStringLiteral("手动驾驶");
-    case 2: return QStringLiteral("底盘跟随云台");
-    case 3: return QStringLiteral("小陀螺");
-    case 4: return QStringLiteral("自瞄模式");
-    default: return QStringLiteral("未知");
-    }
-}
-
 QString robot_class_name(std::uint32_t robot_id) {
     switch (robot_id > 100 ? robot_id - 100 : robot_id) {
     case 1: return QStringLiteral("重装");
@@ -70,13 +54,13 @@ void StaleReporter::inspect(const Snapshot& snapshot) {
     };
     Snapshot copy = snapshot;
     note(QStringLiteral("game"), count_stale(copy.game));
-    note(QStringLiteral("event"), count_stale(copy.event));
     for (auto& entry : copy.robots) {
         const auto id = QString::number(entry.first.value);
         note(QStringLiteral("robot%1.dynamic").arg(id), count_stale(entry.second.dynamic));
+        note(QStringLiteral("robot%1.static").arg(id), count_stale(entry.second.statics));
         note(QStringLiteral("robot%1.modules").arg(id), count_stale(entry.second.modules));
         note(QStringLiteral("robot%1.position").arg(id), count_stale(entry.second.position));
-        note(QStringLiteral("robot%1.telemetry").arg(id), count_stale(entry.second.telemetry));
+        note(QStringLiteral("robot%1.respawn").arg(id), count_stale(entry.second.respawn));
     }
     if (stale == stale_) return;
     stale_ = stale;

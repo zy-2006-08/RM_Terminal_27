@@ -3,11 +3,13 @@
 # that cpp/ui_mode_test.cpp proves at the unit level. A unit-green machine fed the
 # wrong clock or the wrong freshness still flaps, and only a real run catches that.
 #
-# Timeline it relies on (sim/match_server.py _BLIND_SCHEDULE):
+# Timeline it relies on (sim/match_server.py, RM_BLIND_AUTO=1):
 #   prep/check/countdown are pinned to 1s each below, so stage()==4 begins at sim
-#   elapsed ~3s; blind runs match-internal [30s, 42s). Relative to simulator start:
-#   blind ASSERTS at ~+33s, CLEARS at ~+45s, and the terminal's 3000ms exit
-#   hysteresis puts the return to info at ~+48s. The run reaches +62s with margin.
+#   elapsed ~3s. At match-internal 30s the simulated enemy dart hits our base's
+#   random moving target (Event 9 "2,4"); the terminal computes the 10s blind window
+#   itself (rules 5.7.3). Relative to simulator start: blind ASSERTS at ~+33s,
+#   CLEARS at ~+43s, and the 3000ms exit hysteresis returns to info at ~+46s. The
+#   run reaches +62s with margin.
 #
 # Exits non-zero on any failed assertion, and prints an actual-vs-expected table.
 set -u -o pipefail
@@ -78,6 +80,9 @@ fi
 
 # -u matters: without it Python block-buffers stdout when redirected, so the
 # readiness line never arrives and the blind-timeline lines are lost on signal.
+# Both sides must sit on the same seat: the simulator speaks to seat 3 and the
+# terminal, given RM_SELF_ID, skips its seat picker.
+export RM_SELF_ID=3
 RM_BLIND_AUTO=1 RM_PREP_SEC=1 RM_CHECK_SEC=1 RM_COUNTDOWN_SEC=1 "$VENV_PY" -u sim/match_server.py > "$RUN_DIR/match_server.log" 2>&1 &
 SIM_PID=$!
 STARTED_PIDS+=("$SIM_PID")
@@ -145,7 +150,7 @@ sim_log_path = os.environ["RM_SIM_LOG"]
 
 # Expected, derived from sim/match_server.py and the 3000ms default hysteresis.
 BLIND_ASSERT_AT = 34.0
-BLIND_DURATION = 12.0
+BLIND_DURATION = 10.0
 EXIT_HYSTERESIS = 3.0
 ENTER_TOLERANCE = 2.0
 DELTA_TOLERANCE = 1.5

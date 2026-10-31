@@ -5,6 +5,7 @@
     .venv/bin/python -m sim.links video off|ok         # 图传：停 / 恢复
     .venv/bin/python -m sim.links arm unplug|plug|bad  # 机械臂：拔线 / 插回 / 发一帧坏帧
     .venv/bin/python -m sim.links arm joints 0 30 -20 0 10 45   # 6 个关节角（度）
+    .venv/bin/python -m sim.links arm follow on|off    # 车的回传标志 2（让控制器跟随车）/ 恢复 1
     .venv/bin/python -m sim.links reset                # 全部恢复
 """
 
@@ -18,9 +19,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import paho.mqtt.client as mqtt
 
-from sim.constants import (MQTT_PORT, SERVER_HOST, T_SIM_ARM_BAD, T_SIM_ARM_JOINTS,
-                           T_SIM_ARM_PLUGGED, T_SIM_LINK_CAR, T_SIM_LINK_MQTT,
-                           T_SIM_LINK_VIDEO)
+from sim.constants import (MQTT_PORT, SERVER_HOST, T_SIM_ARM_BAD, T_SIM_ARM_FOLLOW,
+                           T_SIM_ARM_JOINTS, T_SIM_ARM_PLUGGED, T_SIM_LINK_CAR,
+                           T_SIM_LINK_MQTT, T_SIM_LINK_VIDEO)
 
 _LINKS = {
     "mqtt": (T_SIM_LINK_MQTT, {"cut", "freeze", "ok"}),
@@ -32,7 +33,8 @@ _LINKS = {
 def messages(args: list[str]) -> list[tuple[str, bytes, bool]] | None:
     if args == ["reset"]:
         return [(T_SIM_LINK_MQTT, b"ok", True), (T_SIM_LINK_CAR, b"ok", True),
-                (T_SIM_LINK_VIDEO, b"ok", True), (T_SIM_ARM_PLUGGED, b"1", True)]
+                (T_SIM_LINK_VIDEO, b"ok", True), (T_SIM_ARM_PLUGGED, b"1", True),
+                (T_SIM_ARM_FOLLOW, b"0", True)]
     if len(args) == 2 and args[0] in _LINKS and args[1] in _LINKS[args[0]][1]:
         return [(_LINKS[args[0]][0], args[1].encode(), True)]
     if len(args) == 2 and args[0] == "arm":
@@ -40,6 +42,8 @@ def messages(args: list[str]) -> list[tuple[str, bytes, bool]] | None:
             return [(T_SIM_ARM_PLUGGED, b"1" if args[1] == "plug" else b"0", True)]
         if args[1] == "bad":
             return [(T_SIM_ARM_BAD, b"1", False)]
+    if len(args) == 3 and args[:2] == ["arm", "follow"] and args[2] in ("on", "off"):
+        return [(T_SIM_ARM_FOLLOW, b"1" if args[2] == "on" else b"0", True)]
     if len(args) == 8 and args[:2] == ["arm", "joints"]:
         try:
             joints = [float(value) for value in args[2:]]

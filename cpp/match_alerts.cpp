@@ -55,7 +55,6 @@ QString alert_kind_name(AlertKind kind) {
     case AlertKind::Fortress: return QStringLiteral("fortress");
     case AlertKind::DartGate: return QStringLiteral("dart");
     case AlertKind::Energy: return QStringLiteral("energy");
-    case AlertKind::Reinforce: return QStringLiteral("reinforce");
     case AlertKind::EnemyLowHp: return QStringLiteral("low_hp");
     case AlertKind::BaseAttacked: return QStringLiteral("base");
     }
@@ -75,13 +74,10 @@ QStringList match_alert_phrases() {
     QStringList phrases{QStringLiteral("敌方临时控制我方前哨阵地"),
                         QStringLiteral("我方前哨阵地被敌方完全控制"),
                         QStringLiteral("控制度落后了"),
-                        QStringLiteral("堡垒被敌方占领"),
-                        QStringLiteral("我方占领堡垒"),
-                        QStringLiteral("堡垒空出来了"),
-                        QStringLiteral("有可用的加固机会"),
+                        QStringLiteral("敌方在激活我方堡垒"),
                         QStringLiteral("基地被攻击")};
     for (const auto& point : timeline()) phrases << QString::fromUtf8(point.speech);
-    for (const std::uint32_t id : {101u, 103u, 104u, 106u, 107u}) phrases << low_hp_speech(id);
+    for (const std::uint32_t id : {101u, 103u, 104u, 107u}) phrases << low_hp_speech(id);
     phrases.removeDuplicates();
     return phrases;
 }
@@ -97,7 +93,6 @@ void MatchAlerts::resetRound() {
     last_elapsed_.reset();
     last_outpost_.reset();
     last_fortress_.reset();
-    last_reinforce_.reset();
     last_base_hp_.reset();
     control_armed_ = true;
     low_hp_armed_.clear();
@@ -164,30 +159,13 @@ std::vector<MatchAlert> MatchAlerts::observe(const Snapshot& snapshot, Monotonic
         }
     }
 
-    // 堡垒:0 无人 1 红 2 蓝。
-    if (const auto holder = fresh(game.fortress_holder)) {
-        const std::uint32_t self = red ? 1u : 2u;
-        if (last_fortress_ != *holder) {
-            if (*holder != 0 && *holder != self)
-                report(out, {AlertKind::Fortress, AlertLevel::Warning, QStringLiteral("堡垒被敌方占领"),
-                           QStringLiteral("堡垒被敌方占领")});
-            else if (last_fortress_ && *holder == self)
-                report(out, {AlertKind::Fortress, AlertLevel::Info, QStringLiteral("我方占领堡垒"),
-                           QStringLiteral("我方占领堡垒")});
-            else if (last_fortress_ && *last_fortress_ != 0 && *holder == 0)
-                report(out, {AlertKind::Fortress, AlertLevel::Info, QStringLiteral("堡垒空出来了"),
-                           QStringLiteral("堡垒空出来了")});
-        }
-        last_fortress_ = *holder;
-    }
-
-    // 加固机会:从没有变成有的那一刻提醒;机会累积期间不再重复。
-    if (const auto chances =
-            fresh(red ? game.red_reinforce_chances : game.blue_reinforce_chances)) {
-        if (*chances > 0 && last_reinforce_.value_or(0) == 0)
-            report(out, {AlertKind::Reinforce, AlertLevel::Info, QStringLiteral("有可用的加固机会"),
-                       QStringLiteral("有可用的加固机会")});
-        last_reinforce_ = *chances;
+    // 堡垒(2027):敌方开始激活我方堡垒时提醒一次。激活满 10 秒我方基地护甲展开。
+    if (const auto activation =
+            fresh(red ? game.red_fortress_activation_sec : game.blue_fortress_activation_sec)) {
+        if (*activation > 0 && last_fortress_.value_or(0) == 0)
+            report(out, {AlertKind::Fortress, AlertLevel::Warning,
+                       QStringLiteral("敌方在激活我方堡垒"), QStringLiteral("敌方在激活我方堡垒")});
+        last_fortress_ = *activation;
     }
 
     // 我方基地掉血。10 秒内只报一次:持续被打时每 250ms 报一次等于没有提醒。

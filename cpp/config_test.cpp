@@ -56,6 +56,9 @@ void missing_file_uses_documented_defaults(const QTemporaryDir& dir) {
     check(cfg.mqtt_port == 3333, "default mqtt_port");
     check(cfg.udp_port == 3334, "default udp_port");
     check(cfg.self_robot_id == 3, "default self_robot_id");
+    check(!cfg.self_robot_id_set, "a missing self_robot_id is not explicit, so the picker asks");
+    check(cfg.map_mark_ms == 30000 && !cfg.display_fullscreen && cfg.display_screen.isEmpty(),
+          "default map marks and display");
     // 2200 rather than 500: RobotPosition publishes at 1Hz, so any window at or
     // below one publish interval marks every position stale on arrival.
     check(cfg.stale_window_ms == 2200, "default stale_window_ms");
@@ -81,6 +84,9 @@ void every_key_is_honoured(const QTemporaryDir& dir) {
                                          "mode_exit_hysteresis_ms=4500\n"
                                          "event_history_capacity=120\n"
                                          "map_enabled=false\n"
+                                         "map_mark_ms=12000\n"
+                                         "display_fullscreen=true\n"
+                                         "display_screen=HDMI-1\n"
                                          "blind_stale_fallback_ms=9000\n")),
           "write full config");
     // When: the config is loaded.
@@ -98,6 +104,10 @@ void every_key_is_honoured(const QTemporaryDir& dir) {
     check(cfg.log_destination == QLatin1String("custom.log"), "override log_destination");
     check(cfg.mode_exit_hysteresis_ms == 4500, "override mode_exit_hysteresis_ms");
     check(cfg.event_history_capacity == 120, "override event_history_capacity");
+    check(cfg.map_mark_ms == 12000, "override map_mark_ms");
+    check(cfg.display_fullscreen, "override display_fullscreen");
+    check(cfg.display_screen == QLatin1String("HDMI-1"), "override display_screen");
+    check(cfg.self_robot_id_set, "an explicit self_robot_id is remembered as explicit");
     check(!cfg.map_enabled, "override map_enabled");
     check(cfg.blind_stale_fallback_ms == 9000, "override blind_stale_fallback_ms");
 }
@@ -286,7 +296,9 @@ void sink_reaches_the_log_without_deadlock(const QTemporaryDir& dir) {
 
 void self_robot_id_validation() {
     check(rm_terminal::valid_self_robot_id(3), "valid self_robot_id 3");
-    check(rm_terminal::valid_self_robot_id(107), "valid self_robot_id 107");
+    check(rm_terminal::valid_self_robot_id(106), "valid self_robot_id 106");
+    check(!rm_terminal::valid_self_robot_id(7), "the sentry has no operator seat");
+    check(!rm_terminal::valid_self_robot_id(107), "the blue sentry has no operator seat");
     check(!rm_terminal::valid_self_robot_id(2), "reject self_robot_id 2");
     check(!rm_terminal::valid_self_robot_id(100), "reject self_robot_id 100");
 }

@@ -1,9 +1,11 @@
 #!/bin/bash
-# 赛程控制验收:起模拟环境 -> 跳转/开赛/倍速/暂停 -> 读 GameStatus 断言
+# 模拟器验收:起模拟环境 -> 赛程控制、血量、阵地、建筑、堡垒、飞镖逐项操作 ->
+# 读模拟器发给终端的 2027 官方消息断言(席位固定为红方 3 号步兵,「己方」= 红方)。
 set -e
 cd "$(dirname "$0")/.."
 PY=.venv/bin/python
 LOG=/tmp/rm_accept_server.log
+export RM_SELF_ID=3
 
 cleanup() {
   pkill -f 'sim.match_server' 2>/dev/null || true
@@ -16,6 +18,7 @@ cleanup() {
   pkill -9 -f 'sim.match_server' 2>/dev/null || true
   pkill -9 -f 'mosquitto -p 3333' 2>/dev/null || true
   pkill -9 -f 'sim/control_panel.py' 2>/dev/null || true
+  rm -f /tmp/rm_accept_probe.py
 }
 trap cleanup EXIT
 cleanup
@@ -45,374 +48,187 @@ if ! kill -0 "$PANEL" 2>/dev/null; then
 fi
 kill "$PANEL" 2>/dev/null || true
 
-echo "[1/8] 复位 -> 跳到第 100 秒 -> 开赛"
+# 各段断言共用的读取函数:收一段时间内的帧取最新的一帧(指令和状态上报都是异步的,
+# 首帧可能还是指令生效前的),Event 则全部收下。
+cat > /tmp/rm_accept_probe.py <<'EOF'
+import subprocess, sys, time
+sys.path[:0] = ['.', 'generated']
+import paho.mqtt.client as mqtt
+import rm_terminal_pb2 as pb
+
+MESSAGES = {"GameStatus": pb.GameStatus, "GlobalUnitStatus": pb.GlobalUnitStatus,
+            "GlobalSpecialMechanism": pb.GlobalSpecialMechanism, "Event": pb.Event}
+
+
+def control(*args):
+    subprocess.run([sys.executable, "sim/match_control.py", *map(str, args)], check=True,
+                   stdout=subprocess.DEVNULL)
+
+
+def read(topics, duration=1.3, during=None):
+    """订阅 topics,可选在订阅后执行 during();返回 {topic: 最新一帧},Event 为全部列表。"""
+    latest, events = {}, []
+    def on_msg(c, u, m):
+        message = MESSAGES[m.topic]()
+        message.ParseFromString(m.payload)
+        if m.topic == "Event":
+            events.append((message.event_id, message.param))
+        else:
+            latest[m.topic] = message
+    c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"accept-{time.time()}")
+    c.on_message = on_msg
+    c.connect("127.0.0.1", 3333)
+    c.subscribe([(topic, 0) for topic in topics])
+    c.loop_start()
+    time.sleep(0.3)
+    if during:
+        during()
+    time.sleep(duration)
+    c.disconnect()
+    c.loop_stop()
+    latest["Event"] = events
+    return latest
+EOF
+
+echo "[1/7] 复位 -> 跳到第 100 秒 -> 开赛 -> 5 倍速 -> 暂停"
 $PY sim/match_control.py reset >/dev/null
 $PY sim/match_control.py seek 100 >/dev/null
 $PY sim/match_control.py start >/dev/null
 sleep 2
-
-echo "[2/8] 切 5 倍速跑 2 秒"
 $PY sim/match_control.py speed 5 >/dev/null
 sleep 2
-
-echo "[3/8] 暂停"
 $PY sim/match_control.py pause >/dev/null
-
-echo "[4/8] 从 GameStatus 读实时状态"
 $PY - <<'EOF'
-import sys, time
-sys.path[:0] = ['.', 'generated']
-import paho.mqtt.client as mqtt
-import rm_terminal_pb2 as pb
-
-def read():
-    """收 0.5s 内的帧取最新:指令和状态上报都是异步的,首帧可能是指令生效前的。"""
-    box = {}
-    def on_msg(c, u, m):
-        s = pb.GameStatus()
-        s.ParseFromString(m.payload)
-        box.update(stage=s.current_stage, elapsed=s.stage_elapsed_sec)
-    c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"accept-{time.time()}")
-    c.on_message = on_msg
-    c.connect("127.0.0.1", 3333)
-    c.subscribe("GameStatus")
-    c.loop_start()
-    for _ in range(10):
-        if box:
-            break
-        time.sleep(0.2)
-    time.sleep(0.5)
-    c.disconnect()
-    c.loop_stop()
-    return box
-
-a = read()
+exec(open("/tmp/rm_accept_probe.py").read())
+a = read(["GameStatus"])["GameStatus"]
 time.sleep(1.2)
-b = read()
-print("暂停瞬间:", a)
-print("1.2 秒后:", b)
-assert a and b, "没读到 GameStatus"
-assert a["stage"] == 4, f"阶段应为 4(比赛中),实际 {a['stage']}"
-assert 105 <= a["elapsed"] <= 140, f"赛程应落在 105~140s,实际 {a['elapsed']}"
-assert abs(a["elapsed"] - b["elapsed"]) <= 1, "暂停后时钟仍在走"
+b = read(["GameStatus"])["GameStatus"]
+print("暂停瞬间:", a.current_stage, a.stage_elapsed_sec, "1.2 秒后:", b.stage_elapsed_sec)
+assert a.current_stage == 4, f"阶段应为 4(比赛中),实际 {a.current_stage}"
+assert 105 <= a.stage_elapsed_sec <= 140, f"赛程应落在 105~140s,实际 {a.stage_elapsed_sec}"
+assert abs(a.stage_elapsed_sec - b.stage_elapsed_sec) <= 1, "暂停后时钟仍在走"
+assert a.is_paused, "比赛中暂停要报 is_paused"
+assert a.game_result == 255 and a.end_reason == 255, "非结算阶段胜负和原因都报 255"
 print("PASS: 跳转、开赛、5 倍速、暂停全部生效")
 EOF
 
-echo "[5/8] 关随机掉血,把蓝1重装设为 123 血"
+echo "[2/7] 关随机掉血,把蓝 1 重装设为 123 血"
 $PY sim/match_control.py auto 0 >/dev/null
 $PY sim/match_control.py hp 101 123 >/dev/null
 sleep 0.6
 $PY - <<'EOF'
-import sys, time
-sys.path[:0] = ['.', 'generated']
-import paho.mqtt.client as mqtt
-import rm_terminal_pb2 as pb
-
-def read_hp(robot_id, duration=1.2):
-    """整段窗口内的血量都收下来:同时有旧进程在发时,单帧读取会碰巧通过。"""
-    values = []
-    def on_msg(c, u, m):
-        s = pb.RobotHealthSet()
-        s.ParseFromString(m.payload)
-        for e in s.entries:
-            if e.robot_id == robot_id:
-                values.append(e.current_hp)
-    c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"accept-hp-{time.time()}")
-    c.on_message = on_msg
-    c.connect("127.0.0.1", 3333)
-    c.subscribe("RobotHealthSet")
-    c.loop_start()
-    time.sleep(duration)
-    c.disconnect()
-    c.loop_stop()
-    return values
-
-a = read_hp(101)
+exec(open("/tmp/rm_accept_probe.py").read())
+# 红方席位的 robot_health:己方 1,3,4,7 在前,对方 101,103,104,107 在后,蓝 1 是第 5 个。
+a = read(["GlobalUnitStatus"], 2.2)["GlobalUnitStatus"]
 time.sleep(0.5)
-b = read_hp(101)
-print("蓝1重装:", a, "-> 0.5 秒后:", b)
-assert a and all(v == 123 for v in a), f"血量应持续为 123,实际 {a}"
-assert b and all(v == 123 for v in b), f"关掉随机掉血后血量仍被覆盖: {b}"
-print("PASS: 机器人血量可手动设置且不被随机覆盖")
+b = read(["GlobalUnitStatus"], 2.2)["GlobalUnitStatus"]
+print("robot_health:", list(a.robot_health), "->", list(b.robot_health))
+assert len(a.robot_health) == 8 and len(a.robot_bullets) == 4, "8 个血量、4 个己方发弹量"
+assert a.robot_health[4] == 123 and b.robot_health[4] == 123, "蓝 1 重装应保持 123"
+print("PASS: 机器人血量可手动设置,按官方顺序上报且不被随机覆盖")
 EOF
 
-echo "[6/8] 设置阵地并验证控制度增长"
+echo "[3/7] 设置阵地并验证控制度增长"
 $PY sim/match_control.py start >/dev/null
 $PY sim/match_control.py speed 5 >/dev/null
-$PY sim/match_control.py zone 0 2 >/dev/null   # 红方前哨:红方完全控制
-$PY sim/match_control.py zone 3 4 >/dev/null   # 蓝方基地:蓝方完全控制
+$PY sim/match_control.py zone 0 2 >/dev/null   # R 前哨阵地:红方完全控制
+$PY sim/match_control.py zone 3 4 >/dev/null   # B 基地阵地:蓝方完全控制
 sleep 1
 $PY sim/match_control.py pause >/dev/null
 $PY - <<'EOF'
-import sys, time, subprocess
-sys.path[:0] = ['.', 'generated']
-import paho.mqtt.client as mqtt
-import rm_terminal_pb2 as pb
-
-def read():
-    """收 0.5s 内的帧取最新:指令异步生效,首帧可能是旧状态。"""
-    box = {}
-    def on_msg(c, u, m):
-        s = pb.GameStatus()
-        s.ParseFromString(m.payload)
-        box.update(red_outpost_zone=s.red_outpost_zone,
-                   blue_outpost_zone=s.blue_outpost_zone,
-                   red_base_zone=s.red_base_zone,
-                   blue_base_zone=s.blue_base_zone,
-                   red_cp=s.red_control_points, blue_cp=s.blue_control_points,
-                   red_rf=s.red_reinforce_chances, blue_rf=s.blue_reinforce_chances)
-    c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"accept-zone-{time.time()}")
-    c.on_message = on_msg
-    c.connect("127.0.0.1", 3333)
-    c.subscribe("GameStatus")
-    c.loop_start()
-    for _ in range(10):
-        if box:
-            break
-        time.sleep(0.2)
-    time.sleep(0.5)
-    c.disconnect()
-    c.loop_stop()
-    return box
-
-subprocess.run([sys.executable, "sim/match_control.py", "zone", "1", "1"], check=True,
-               stdout=subprocess.DEVNULL)
-t = read()
-assert t and t["blue_outpost_zone"] == 1, f"蓝前哨应先为红方临时控制 1,实际 {t}"
-subprocess.run([sys.executable, "sim/match_control.py", "speed", "1"], check=True,
-               stdout=subprocess.DEVNULL)
-subprocess.run([sys.executable, "sim/match_control.py", "start"], check=True,
-               stdout=subprocess.DEVNULL)
-subprocess.run([sys.executable, "sim/match_control.py", "hold", "1", "1", "6"], check=True,
-               stdout=subprocess.DEVNULL)
-subprocess.run([sys.executable, "sim/match_control.py", "pause"], check=True,
-               stdout=subprocess.DEVNULL)
-p = read()
-assert p and p["blue_outpost_zone"] == 1, f"持续激活只维持临时控制,应保持 1,实际 {p}"
-subprocess.run([sys.executable, "sim/match_control.py", "speed", "5"], check=True,
-               stdout=subprocess.DEVNULL)
-subprocess.run([sys.executable, "sim/match_control.py", "zone", "2", "3"], check=True,
-               stdout=subprocess.DEVNULL)
-a = read()
-assert a and a["red_base_zone"] == 3, f"红基地应为蓝方临时控制 3,实际 {a}"
-subprocess.run([sys.executable, "sim/match_control.py", "start"], check=True,
-               stdout=subprocess.DEVNULL)
+exec(open("/tmp/rm_accept_probe.py").read())
+t = read(["GlobalUnitStatus", "Event"], 1.3, lambda: control("zone", 1, 1))
+assert t["GlobalUnitStatus"].outpost_B_status == 2, \
+    f"B 前哨阵地被红方临时控制,对红方席位是「己方临时」2,实际 {t['GlobalUnitStatus'].outpost_B_status}"
+assert (6, "1") in t["Event"], f"阵地易手要发 Event 6 参数 1(红方临时),实际 {t['Event']}"
+control("speed", 1)
+control("start")
+control("hold", 1, 1, 6)
+control("pause")
+p = read(["GlobalUnitStatus"])["GlobalUnitStatus"]
+assert p.outpost_B_status == 2, f"持续激活只维持临时控制,应保持 2,实际 {p.outpost_B_status}"
+control("speed", 5)
+a = read(["GlobalUnitStatus", "GlobalSpecialMechanism"], 1.3, lambda: control("zone", 2, 3))
+unit = a["GlobalUnitStatus"]
+assert unit.base_shield == 2, f"R 基地阵地被蓝方临时控制,己方基地阵地应为 2,实际 {unit.base_shield}"
+assert 5 in a["GlobalSpecialMechanism"].mechanism_id, "临时控制的阵地要报激活计时(机制 5)"
+control("start")
 time.sleep(1.5)
-b = read()
-print("阵地:", {k: a[k] for k in a if k.endswith("_zone")})
-print("控制度:", a["red_cp"], a["blue_cp"], "->", b["red_cp"], b["blue_cp"])
-assert b, "没读到 GameStatus"
-assert a["red_outpost_zone"] == 2, f"红前哨应为 2,实际 {a['red_outpost_zone']}"
-assert a["blue_outpost_zone"] == 1, f"蓝前哨应保持红方临时控制 1,实际 {a['blue_outpost_zone']}"
-assert b["red_base_zone"] == 2, f"临时控制 5 秒未激活应回退为红方完全控制 2,实际 {b['red_base_zone']}"
-assert a["blue_base_zone"] == 4, f"蓝基地应为 4,实际 {a['blue_base_zone']}"
-assert b["red_cp"] > a["red_cp"], f"红方控制度应增长,实际 {a['red_cp']} -> {b['red_cp']}"
-assert b["blue_cp"] > a["blue_cp"], f"蓝方控制度应增长,实际 {a['blue_cp']} -> {b['blue_cp']}"
-assert a["red_rf"] == a["blue_rf"], "加固机会应双方同步累积"
-print("PASS: 阵地状态可设置,控制度按阵地类型累计")
+b = read(["GlobalUnitStatus"])["GlobalUnitStatus"]
+print("阵地:", unit.outpost_R_status, unit.outpost_B_status, unit.base_shield, unit.enemy_base_shield)
+print("控制度:", unit.total_CP_ally, unit.total_CP_enemy, "->", b.total_CP_ally, b.total_CP_enemy)
+assert unit.outpost_R_status == 1, f"R 前哨阵地红方完全控制 = 己方完全 1,实际 {unit.outpost_R_status}"
+assert unit.enemy_base_shield == 1, f"B 基地阵地蓝方完全控制 = 对方完全 1,实际 {unit.enemy_base_shield}"
+assert b.base_shield == 1, f"临时控制 5 秒未激活应回退为己方完全控制 1,实际 {b.base_shield}"
+assert b.total_CP_ally > unit.total_CP_ally, "红方(己方)控制度应增长"
+assert b.total_CP_enemy > unit.total_CP_enemy, "蓝方(对方)控制度应增长"
+print("PASS: 阵地状态按己方/对方编码上报,控制度按阵地类型累计")
 EOF
 
-echo "[7/8] 建筑血量/堡垒/致盲/加固机会"
-# 加固机会按比赛秒累积(规则 5.2),seek 不补累计器,所以先倍速真跑一段。
-# 随机掉血只在这段开启,用来把累计命中数推过 10 发门槛。
-$PY sim/match_control.py speed 10 >/dev/null
-$PY sim/match_control.py auto 1 >/dev/null
-sleep 6
+echo "[4/7] 建筑血量、堡垒、我方基地被攻击"
 $PY sim/match_control.py speed 1 >/dev/null
-$PY sim/match_control.py auto 0 >/dev/null
-# 暂停后比赛时钟冻结,加固机会/致盲剩余时间都不会在断言期间漂移。
 $PY sim/match_control.py pause >/dev/null
-$PY sim/match_control.py structure 0 1234 >/dev/null   # 红方基地
-$PY sim/match_control.py structure 2 777 >/dev/null    # 红方前哨
-$PY sim/match_control.py fortress 1 >/dev/null         # 堡垒归红方
-$PY sim/match_control.py blind 2 4 >/dev/null          # 蓝方中「基地随机移动目标」
-sleep 0.8
 $PY - <<'EOF'
-import sys, time
-sys.path[:0] = ['.', 'generated']
-import paho.mqtt.client as mqtt
-import rm_terminal_pb2 as pb
-
-def read_both():
-    game, blind = {}, {}
-    def on_msg(c, u, m):
-        if m.topic == "GameStatus":
-            s = pb.GameStatus(); s.ParseFromString(m.payload)
-            game.update(red_base_hp=s.red_base_hp, red_outpost_hp=s.red_outpost_hp,
-                        blue_base_hp=s.blue_base_hp, fortress=s.fortress_holder,
-                        red_rf=s.red_reinforce_chances, blue_rf=s.blue_reinforce_chances)
-        elif m.topic == "BlindStatus":
-            s = pb.BlindStatus(); s.ParseFromString(m.payload)
-            blind.update(side=s.affected_faction, target=s.target_type,
-                         self_blinded=s.self_base_blinded,
-                         remain=s.blind_remaining_ms)
-        if game and blind:
-            c.disconnect()
-    c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"accept-rule-{time.time()}")
-    c.on_message = on_msg
-    c.connect("127.0.0.1", 3333)
-    c.subscribe([("GameStatus", 0), ("BlindStatus", 0)])
-    c.loop_start()
-    for _ in range(15):
-        if game and blind:
-            break
-        time.sleep(0.2)
-    c.loop_stop()
-    return game, blind
-
-game, blind = read_both()
-print("建筑/堡垒:", game)
-print("致盲:", blind)
-assert game.get("red_base_hp") == 1234, f"红基地血量应为 1234,实际 {game}"
-assert game.get("red_outpost_hp") == 777, f"红前哨血量应为 777,实际 {game}"
-assert game.get("fortress") == 1, f"堡垒应归红方(1),实际 {game.get('fortress')}"
-assert blind.get("side") == 2, f"致盲方应为蓝方(2),实际 {blind}"
-assert blind.get("target") == 4, f"飞镖类型应为 4,实际 {blind}"
-assert blind.get("self_blinded") is False, "红方视角不应显示我方基地致盲"
-print("PASS: 建筑血量、堡垒归属、蓝方随机移动目标致盲")
+exec(open("/tmp/rm_accept_probe.py").read())
+def act():
+    control("structure", 0, 1234)   # 红方基地
+    control("structure", 2, 777)    # R 前哨站
+    control("fortress", 1)          # 蓝方开始激活红方堡垒
+got = read(["GlobalUnitStatus", "GlobalSpecialMechanism", "Event"], 1.5, act)
+unit, special = got["GlobalUnitStatus"], got["GlobalSpecialMechanism"]
+print("基地/前哨:", unit.base_health, unit.outpost_R_health, " 机制:", list(special.mechanism_id),
+      list(special.mechanism_time_sec), " 事件:", got["Event"])
+assert unit.base_health == 1234, f"己方基地血量应为 1234,实际 {unit.base_health}"
+assert unit.outpost_R_health == 777, f"R 前哨站血量应为 777,实际 {unit.outpost_R_health}"
+assert 1 in special.mechanism_id, "红方堡垒被激活,对红方席位是机制 1(己方堡垒被对方激活)"
+assert (11, "") in got["Event"], "我方基地掉血要发 Event 11"
+control("fortress", 0)
+print("PASS: 建筑血量、堡垒激活计时、基地被攻击事件")
 EOF
 
+echo "[5/7] 飞镖命中(手动注入)"
+$PY - <<'EOF'
+exec(open("/tmp/rm_accept_probe.py").read())
+got = read(["Event"], 1.0, lambda: control("blind", 1, 4))   # 红方中「基地随机移动目标」
+print("事件:", got["Event"])
+assert (9, "2,4") in got["Event"], f"红方被蓝方飞镖命中 = Event 9「2,4」,实际 {got['Event']}"
+print("PASS: 飞镖命中只发 Event 9,遮挡时长交给终端按规则算")
+EOF
 $PY sim/match_control.py blind-clear >/dev/null
-sleep 0.8
-$PY - <<'EOF'
-import sys, time
-sys.path[:0] = ['.', 'generated']
-import paho.mqtt.client as mqtt
-import rm_terminal_pb2 as pb
 
-def read_blind():
-    box = {}
-    def on_msg(c, u, m):
-        s = pb.BlindStatus(); s.ParseFromString(m.payload)
-        box.update(side=s.affected_faction, remain=s.blind_remaining_ms)
-        c.disconnect()
-    c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"accept-clear-{time.time()}")
-    c.on_message = on_msg
-    c.connect("127.0.0.1", 3333)
-    c.subscribe("BlindStatus")
-    c.loop_start()
-    for _ in range(10):
-        if box:
-            break
-        time.sleep(0.2)
-    c.loop_stop()
-    return box
-
-b = read_blind()
-print("解除后:", b)
-assert b.get("side") == 0 and b.get("remain") == 0, f"手动致盲未解除: {b}"
-print("PASS: 手动致盲可解除")
-EOF
-
-# 仍处于暂停,读数和命令之间加固机会不会自己增长。
-$PY - <<'EOF'
-import sys, time
-sys.path[:0] = ['.', 'generated']
-import paho.mqtt.client as mqtt
-import rm_terminal_pb2 as pb
-
-def read_rf():
-    box = {}
-    def on_msg(c, u, m):
-        s = pb.GameStatus(); s.ParseFromString(m.payload)
-        box.update(red=s.red_reinforce_chances, blue=s.blue_reinforce_chances)
-        c.disconnect()
-    c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"accept-rf-{time.time()}")
-    c.on_message = on_msg
-    c.connect("127.0.0.1", 3333)
-    c.subscribe("GameStatus")
-    c.loop_start()
-    for _ in range(10):
-        if box:
-            break
-        time.sleep(0.2)
-    c.loop_stop()
-    return box
-
-a = read_rf()
-assert a, "没读到 GameStatus"
-assert a["red"] > 0, f"红方加固机会应已累积,实际 {a}"
-open("/tmp/rm_accept_rf_before", "w").write(str(a["red"]))
-print("消耗前:", a)
-EOF
-
-$PY sim/match_control.py reinforce 1 >/dev/null
-sleep 0.8
-$PY - <<'EOF'
-import sys, time
-sys.path[:0] = ['.', 'generated']
-import paho.mqtt.client as mqtt
-import rm_terminal_pb2 as pb
-
-before = int(open("/tmp/rm_accept_rf_before").read())
-
-def read_rf():
-    box = {}
-    def on_msg(c, u, m):
-        s = pb.GameStatus(); s.ParseFromString(m.payload)
-        box.update(red=s.red_reinforce_chances, blue=s.blue_reinforce_chances)
-        c.disconnect()
-    c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"accept-rf2-{time.time()}")
-    c.on_message = on_msg
-    c.connect("127.0.0.1", 3333)
-    c.subscribe("GameStatus")
-    c.loop_start()
-    for _ in range(10):
-        if box:
-            break
-        time.sleep(0.2)
-    c.loop_stop()
-    return box
-
-b = read_rf()
-print("消耗后:", b)
-assert b["red"] == before - 1, f"红方加固机会应减 1:{before} -> {b['red']}"
-print("PASS: 累计命中满 10 发后可消耗加固机会")
-EOF
-
-echo "[8/8] 飞镖开闸/发射"
+echo "[6/7] 飞镖开闸/发射(走闸门和冷却规则)"
 $PY sim/match_control.py zone 1 4 >/dev/null
 $PY sim/match_control.py seek 34 >/dev/null   # 比赛内 30s,第一个开闸窗口
 $PY sim/match_control.py dart-open 1 >/dev/null
 $PY sim/match_control.py seek 41 >/dev/null   # 比赛内 37s,7 秒开闸完成
-$PY sim/match_control.py dart 1 1 >/dev/null
-sleep 0.8
 $PY - <<'EOF'
-import sys, time, subprocess
-sys.path[:0] = ['.', 'generated']
-import paho.mqtt.client as mqtt
-import rm_terminal_pb2 as pb
-
-def read():
-    box = {}
-    def on_msg(c, u, m):
-        s = pb.GameStatus(); s.ParseFromString(m.payload)
-        box.update(blue_outpost=s.blue_outpost_hp, stage=s.current_stage,
-                   blue_outpost_zone=s.blue_outpost_zone)
-        c.disconnect()
-    c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"accept-dart-{time.time()}")
-    c.on_message = on_msg
-    c.connect("127.0.0.1", 3333)
-    c.subscribe("GameStatus")
-    c.loop_start()
-    for _ in range(10):
-        if box:
-            break
-        time.sleep(0.2)
-    c.loop_stop()
-    return box
-
-a = read()
-print("飞镖后:", a)
-assert a.get("blue_outpost") == 0, f"击毁后前哨站应倒下,实际 {a}"
-assert a.get("blue_outpost_zone") == 3, f"完全控制被击毁后应降为蓝方临时控制,实际 {a}"
+exec(open("/tmp/rm_accept_probe.py").read())
+got = read(["GlobalUnitStatus", "Event"], 1.5, lambda: control("dart", 1, 1))
+unit = got["GlobalUnitStatus"]
+print("飞镖后:", unit.outpost_B_health, unit.outpost_B_status, " 事件:", got["Event"])
+assert unit.outpost_B_health == 0, f"击毁后 B 前哨站应倒下,实际 {unit.outpost_B_health}"
+assert unit.outpost_B_status == 3, f"蓝方完全控制被击毁降为蓝方临时 = 对方临时 3,实际 {unit.outpost_B_status}"
+for expected in ((2, "111"), (9, "1,1"), (6, "3")):
+    assert expected in got["Event"], f"缺少事件 {expected},实际 {got['Event']}"
 for second in range(42, 47):
-    subprocess.run([sys.executable, "sim/match_control.py", "seek", str(second)],
-                   check=True, stdout=subprocess.DEVNULL)
+    control("seek", second)
     time.sleep(0.3)
-b = read()
-print("5 秒未激活后:", b)
-assert b.get("blue_outpost") == 500, f"5s 未激活后应重建 500 HP,实际 {b}"
-assert b.get("blue_outpost_zone") == 2, f"5s 未激活后应转红方完全控制,实际 {b}"
+b = read(["GlobalUnitStatus"])["GlobalUnitStatus"]
+print("5 秒未激活后:", b.outpost_B_health, b.outpost_B_status)
+assert b.outpost_B_health == 500, f"5s 未激活后应重建 500 HP,实际 {b.outpost_B_health}"
+assert b.outpost_B_status == 1, f"5s 未激活后转红方完全控制 = 己方完全 1,实际 {b.outpost_B_status}"
 print("PASS: 开闸窗口内发射飞镖,击毁后按表 5-21 转化并重建")
 EOF
+
+echo "[7/7] 结算:基地被击毁"
+$PY - <<'EOF'
+exec(open("/tmp/rm_accept_probe.py").read())
+control("structure", 1, 0)          # 蓝方基地
+time.sleep(0.6)
+game = read(["GameStatus"])["GameStatus"]
+print("结算:", game.current_stage, game.game_result, game.end_reason, game.red_score)
+assert game.current_stage == 5 and game.game_result == 1 and game.end_reason == 1, \
+    "蓝方基地被击毁:进入结算,红方胜,原因 1"
+print("PASS: 结算阶段报胜方和结束原因")
+EOF
+echo "ALL PASS"

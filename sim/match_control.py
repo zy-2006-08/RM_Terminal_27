@@ -14,18 +14,21 @@
     .venv/bin/python sim/match_control.py zone 2 2     # 红基地设为红方完全控制(状态 0-4)
     .venv/bin/python sim/match_control.py hold 1 1 6   # 蓝方前哨区连续激活 6 秒(维持临时控制)
     .venv/bin/python sim/match_control.py structure 0 1234  # 红方基地血量设为 1234
-    .venv/bin/python sim/match_control.py fortress 1        # 堡垒设为红方,auto 恢复随机
-    .venv/bin/python sim/match_control.py reinforce 1       # 红方消耗 1 次加固机会
-    .venv/bin/python sim/match_control.py blind 2 4         # 蓝方中「基地随机移动目标」飞镖
-    .venv/bin/python sim/match_control.py blind-clear       # 解除手动致盲
+    .venv/bin/python sim/match_control.py fortress 1        # 蓝方开始激活红方堡垒(满 10 秒红方护甲展开)
+    .venv/bin/python sim/match_control.py fortress 0        # 停止激活堡垒,auto 随机
+    .venv/bin/python sim/match_control.py reinforce 1       # 红方消耗 1 次加固机会(模拟器内部,协议不发)
+    .venv/bin/python sim/match_control.py blind 2 4         # 蓝方中「基地随机移动目标」飞镖(发 Event 9)
+    .venv/bin/python sim/match_control.py blind-clear       # 清掉模拟器的遮挡账本(终端自己算,不受影响)
     .venv/bin/python sim/match_control.py shoot 17 10       # 对锁定目标打 10 发 17mm
     .venv/bin/python sim/match_control.py module            # 重装安装 42mm 模块
     .venv/bin/python sim/match_control.py buy 17 100        # 花金币兑换 100 发 17mm
     .venv/bin/python sim/match_control.py pay-revive        # 花金币立即复活自机
+    .venv/bin/python sim/match_control.py confirm-revive    # 读条满后确认复活(替官方选手端点,发协议 CommonCommand 3)
     .venv/bin/python sim/match_control.py card              # 模拟自机刷场地交互卡解除虚弱
     .venv/bin/python sim/match_control.py card 101          # 对指定地面机器人刷卡
     .venv/bin/python sim/match_control.py dart-open 1       # 红方在 30s/240s 窗口开闸
     .venv/bin/python sim/match_control.py dart 1 1          # 红方飞镖打蓝方前哨站
+    .venv/bin/python sim/match_control.py mark 1            # 模拟指挥手标记敌方重装(1 攻击 2 防御 3 警戒)
 
 配合 RM_HOLD=1 启动 match_server.py:那样服务器起来后停在准备阶段等指令,
 不发 start 就一直不开赛。不带 RM_HOLD 则维持既有的启动即开赛行为。
@@ -48,7 +51,7 @@ from sim.constants import MQTT_PORT, SERVER_HOST, T_COMMON_COMMAND
 from sim.match_server import (
     CTRL_AUTO_HP, CTRL_BEGIN, CTRL_BLIND, CTRL_BLIND_CLEAR, CTRL_BUY, CTRL_CARD,
     CTRL_CHECK, CTRL_COUNTDOWN, CTRL_DART_OPEN, CTRL_DART_SHOOT, CTRL_HOLD,
-    CTRL_MODULE, CTRL_PAY_REVIVE, CTRL_PREP,
+    CTRL_MARK, CTRL_MODULE, CTRL_PAY_REVIVE, CTRL_PREP,
     CTRL_RESET, CTRL_RESUME, CTRL_SEEK, CTRL_SET_FORTRESS, CTRL_SET_HP,
     CTRL_SET_STRUCTURE_HP, CTRL_SET_ZONE, CTRL_SHOOT, CTRL_SPEED,
     CTRL_USE_REINFORCE,
@@ -69,7 +72,7 @@ _ACTIONS = {
     "zone": (CTRL_SET_ZONE, "设置阵地状态"),
     "hold": (CTRL_SET_ZONE, "持续激活阵地"),
     "structure": (CTRL_SET_STRUCTURE_HP, "设置建筑血量"),
-    "fortress": (CTRL_SET_FORTRESS, "设置堡垒占领方"),
+    "fortress": (CTRL_SET_FORTRESS, "设置哪一方的堡垒正被激活"),
     "reinforce": (CTRL_USE_REINFORCE, "消耗加固机会"),
     "blind": (CTRL_BLIND, "手动触发飞镖致盲"),
     "blind-clear": (CTRL_BLIND_CLEAR, "解除手动致盲"),
@@ -77,9 +80,12 @@ _ACTIONS = {
     "module": (CTRL_MODULE, "安装 42mm 模块"),
     "buy": (CTRL_BUY, "兑换允许发弹量"),
     "pay-revive": (CTRL_PAY_REVIVE, "金币兑换立即复活"),
+    # 这一条不是赛程控制:直接发协议的 cmd_type 3,和终端、官方选手端发的一模一样。
+    "confirm-revive": (3, "确认复活"),
     "card": (CTRL_CARD, "模拟检测到场地交互卡"),
     "dart-open": (CTRL_DART_OPEN, "开启飞镖闸门"),
     "dart": (CTRL_DART_SHOOT, "发射飞镖"),
+    "mark": (CTRL_MARK, "模拟指挥手地图标记"),
 }
 _NEEDS_VALUE = {"seek": 1.0, "speed": 10.0}
 
@@ -92,7 +98,7 @@ def main() -> int:
         return 2
 
     action = args[0]
-    command_id, label = _ACTIONS[action]
+    cmd_type, label = _ACTIONS[action]
     param = 0
     hold_seconds = 0.0
     if action in _NEEDS_VALUE:
@@ -140,14 +146,14 @@ def main() -> int:
         try:
             value = args[1]
         except IndexError:
-            print("fortress 需要 0/1/2/auto", file=sys.stderr)
+            print("fortress 需要 0(停止)/1(红方堡垒被激活)/2(蓝方堡垒被激活)/auto", file=sys.stderr)
             return 2
         if value == "auto":
             param = 3
         elif value in ("0", "1", "2"):
             param = int(value)
         else:
-            print("fortress 需要 0/1/2/auto", file=sys.stderr)
+            print("fortress 需要 0(停止)/1(红方堡垒被激活)/2(蓝方堡垒被激活)/auto", file=sys.stderr)
             return 2
     elif action == "reinforce":
         try:
@@ -196,6 +202,12 @@ def main() -> int:
             print("dart 需要阵营 1/2 和目标类型 1-5,例如: dart 1 1", file=sys.stderr)
             return 2
         param = side * 10 + target_type
+    elif action == "mark":
+        try:
+            param = int(args[1]) if len(args) > 1 else 1
+        except ValueError:
+            print("mark 的类型是 1(攻击)/2(防御)/3(警戒)", file=sys.stderr)
+            return 2
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="sim-control")
     try:
@@ -204,8 +216,9 @@ def main() -> int:
         print(f"无法连接 Broker {SERVER_HOST}:{MQTT_PORT} -> {exc}", file=sys.stderr)
         return 1
 
+    # 赛程控制借用 CommonCommand(2.2.25)下行,编号从 0x10 起,和协议的 1–6 不冲突。
     message = pb.CommonCommand()
-    message.command_id = command_id
+    message.cmd_type = cmd_type
     message.param = param
     client.loop_start()
     end = time.monotonic() + hold_seconds

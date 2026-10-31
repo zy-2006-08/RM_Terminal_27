@@ -9,11 +9,9 @@
 
 namespace rm_terminal {
 
-// 自机作战状态。存在的理由是数据不对称:热量、弹速、允许发弹量、经济、底盘功率
-// 和自瞄状态都只有自机的 RobotDynamicStatus / RobotTelemetry 携带,协议不下发
-// 他机的这些字段。花名册按编号平铺十台,放这些格子会有九台永远是 "--"。
-std::optional<RosterEntry> self_entry(const Snapshot& snapshot);
-
+// 自机作战状态。存在的理由是数据不对称:热量、弹速、允许发弹量、缓冲能量、等级只有
+// 自机的 RobotDynamicStatus / RobotStaticStatus 携带,协议不下发他机的这些字段。
+// self_entry() 在 roster_pane.h。
 class SelfStatusPane final : public QWidget {
     Q_OBJECT
 public:

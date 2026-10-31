@@ -24,8 +24,21 @@ Field<T> present(T value) {
     return field;
 }
 
+EventRecord event(std::int32_t id, std::uint32_t level, const char* text, MonotonicMs at,
+                  std::uint32_t faction, std::int32_t countdown) {
+    EventRecord record;
+    record.event_id = id;
+    record.level = level;
+    record.text = text;
+    record.received_at = at;
+    record.faction = faction;
+    record.countdown_sec = countdown;
+    return record;
+}
+
 Snapshot live_match() {
     Snapshot snapshot;
+    snapshot.self = RobotId{3};
     snapshot.game.stage_countdown_sec = present<std::int32_t>(154);
     snapshot.game.current_stage = present<std::uint32_t>(4);
     snapshot.blind.self_base_blinded = present<bool>(false);
@@ -41,25 +54,23 @@ Snapshot live_match() {
 
     RobotState state;
     state.dynamic.current_hp = present<std::uint32_t>(412);
-    state.dynamic.max_hp = present<std::uint32_t>(600);
+    state.statics.max_hp = present<std::uint32_t>(600);
     snapshot.robots.emplace(RobotId{3}, state);
 
-    snapshot.game.red_economy = present<std::uint32_t>(1240);
-    snapshot.game.blue_economy = present<std::uint32_t>(1080);
+    snapshot.game.economy = present<std::uint32_t>(1240);
+    snapshot.game.total_economy = present<std::uint64_t>(3600);
     snapshot.game.red_total_damage = present<std::uint32_t>(5200);
     snapshot.game.blue_total_damage = present<std::uint32_t>(4350);
-    snapshot.game.red_fortress_sec = present<std::uint32_t>(48);
-    snapshot.game.blue_fortress_sec = present<std::uint32_t>(31);
-    snapshot.game.fortress_holder = present<std::uint32_t>(1);
-    snapshot.game.red_energy_activations = present<std::uint32_t>(3);
-    snapshot.game.blue_energy_activations = present<std::uint32_t>(2);
+    snapshot.game.red_fortress_activation_sec = present<std::int32_t>(0);
+    snapshot.game.blue_fortress_activation_sec = present<std::int32_t>(4);
+    snapshot.game.rune_status = present<std::uint32_t>(3);
+    snapshot.kills = KillTally{3, 2};
 
-    snapshot.events.push(EventRecord{1758000000000, 0, "红方能量机关激活", 900, 1});
-    snapshot.events.push(EventRecord{1758000004000, 2, "蓝方前哨站被摧毁", 904, 2});
-    snapshot.events.push(EventRecord{1758000008000, 1, "红方步兵阵亡", 908, 1});
-    snapshot.events.push(EventRecord{1758000012000, 0, "底盘模式切换为 2", 912, 0});
-    snapshot.events.push(EventRecord{1758000016000, 3, "红方基地被飞镖命中，图传致盲", 916, 1});
-    snapshot.events.push(EventRecord{1758000020000, 0, "蓝方能量机关激活", 920, 2});
+    snapshot.events.push(event(4, 1, "小能量机关已激活", 900, 0, 290));
+    snapshot.events.push(event(2, 1, "敌方前哨站被击毁", 904, 2, 250));
+    snapshot.events.push(event(1, 2, "敌方 3 号步兵击毁我方 4 号步兵", 908, 2, 230));
+    snapshot.events.push(event(9, 3, "敌方飞镖命中我方基地随机移动目标，遮挡 10 秒", 916, 2, 200));
+    snapshot.events.push(event(6, 1, "敌方前哨阵地被我方临时控制", 920, 1, 160));
     return snapshot;
 }
 

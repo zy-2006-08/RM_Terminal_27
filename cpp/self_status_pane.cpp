@@ -88,14 +88,6 @@ QString double_text(std::optional<double> v, int precision) {
 
 }  // namespace
 
-std::optional<RosterEntry> self_entry(const Snapshot& snapshot) {
-    for (std::uint32_t faction : {1u, 2u}) {
-        for (const RosterEntry& entry : build_roster(snapshot, faction))
-            if (entry.is_self) return entry;
-    }
-    return std::nullopt;
-}
-
 SelfStatusPane::SelfStatusPane(QWidget* parent) : QWidget(parent) {
     setMinimumHeight(kContentHeight);
 }
@@ -125,9 +117,13 @@ void SelfStatusPane::paintEvent(QPaintEvent*) {
     painter.setPen(theme::kCyan);
     painter.drawText(QRect(0, 0, width_avail, kHeaderHeight),
                      Qt::AlignLeft | Qt::AlignVCenter,
-                     QStringLiteral("自机 %1 · %2")
-                         .arg(display_robot_number(e.id.value))
-                         .arg(robot_class_name(e.id.value)));
+                     e.level ? QStringLiteral("自机 %1 · %2 · %3 级")
+                                   .arg(display_robot_number(e.id.value))
+                                   .arg(robot_class_name(e.id.value))
+                                   .arg(*e.level)
+                             : QStringLiteral("自机 %1 · %2")
+                                   .arg(display_robot_number(e.id.value))
+                                   .arg(robot_class_name(e.id.value)));
 
     if (e.hp && e.max_hp && *e.max_hp > 0) {
         const double ratio = static_cast<double>(*e.hp) / static_cast<double>(*e.max_hp);
@@ -146,7 +142,7 @@ void SelfStatusPane::paintEvent(QPaintEvent*) {
     paint_tile(painter, QRect(tile_w + kTileGap, tile_y, tile_w, kTileHeight),
                QStringLiteral("允许发弹量"), uint_text(e.ammo), theme::kTextPrimary);
     paint_tile(painter, QRect((tile_w + kTileGap) * 2, tile_y, tile_w, kTileHeight),
-               QStringLiteral("剩余金币"), uint_text(e.coin), theme::kTextPrimary);
+               QStringLiteral("我方经济"), uint_text(e.economy), theme::kTextPrimary);
 
     const int gauge_w = (width_avail - kTileGap * 2) / 3;
     int y = tile_y + kTileHeight + 5;
@@ -154,20 +150,24 @@ void SelfStatusPane::paintEvent(QPaintEvent*) {
     // 热量的危险方向和血量相反,所以取 1-ratio 喂给 healthColor:热量越接近上限
     // 越该显红,而 healthColor 的语义是「值越高越安全」。
     if (e.heat && e.heat_limit && *e.heat_limit > 0) {
-        const double ratio =
-            static_cast<double>(*e.heat) / static_cast<double>(*e.heat_limit);
+        const double ratio = *e.heat / static_cast<double>(*e.heat_limit);
         paint_gauge(painter, QRect(0, y, gauge_w, kGaugeHeight), QStringLiteral("枪口热量"),
-                    QStringLiteral("%1 / %2").arg(*e.heat).arg(*e.heat_limit), ratio,
+                    QStringLiteral("%1 / %2").arg(*e.heat, 0, 'f', 0).arg(*e.heat_limit), ratio,
                     theme::healthColor(1.0 - ratio));
     } else {
         paint_gauge(painter, QRect(0, y, gauge_w, kGaugeHeight), QStringLiteral("枪口热量"),
                     QStringLiteral("--"), 0.0, theme::kOffline);
     }
 
-    paint_gauge(painter, QRect(gauge_w + kTileGap, y, gauge_w, kGaugeHeight),
-                QStringLiteral("底盘功率 W"), double_text(e.chassis_power, 1),
-                e.chassis_power ? std::clamp(*e.chassis_power / 120.0, 0.0, 1.0) : 0.0,
-                theme::kCyan);
+    if (e.buffer_energy && e.buffer_limit && *e.buffer_limit > 0) {
+        paint_gauge(painter, QRect(gauge_w + kTileGap, y, gauge_w, kGaugeHeight),
+                    QStringLiteral("缓冲能量"),
+                    QStringLiteral("%1 / %2").arg(*e.buffer_energy).arg(*e.buffer_limit),
+                    static_cast<double>(*e.buffer_energy) / *e.buffer_limit, theme::kCyan);
+    } else {
+        paint_gauge(painter, QRect(gauge_w + kTileGap, y, gauge_w, kGaugeHeight),
+                    QStringLiteral("缓冲能量"), uint_text(e.buffer_energy), 0.0, theme::kOffline);
+    }
 
     if (e.modules_online && e.modules_total) {
         paint_gauge(painter, QRect((gauge_w + kTileGap) * 2, y, gauge_w, kGaugeHeight),
@@ -184,10 +184,10 @@ void SelfStatusPane::paintEvent(QPaintEvent*) {
     y += kGaugeHeight + 5;
     const int pip_w = (width_avail - 3 * 6) / 4;
     const struct { QString text; std::optional<bool> on; QColor colour; } pips[] = {
-        {QStringLiteral("视觉"), e.vision_online, theme::kOk},
-        {QStringLiteral("自瞄"), e.autoaim_enabled, theme::kCyan},
-        {QStringLiteral("锁定"), e.target_locked, theme::kWarn},
-        {QStringLiteral("允许击发"), e.fire_permit, theme::kOk},
+        {QStringLiteral("脱战"), e.out_of_combat, theme::kOk},
+        {QStringLiteral("可远程补血"), e.can_remote_heal, theme::kCyan},
+        {QStringLiteral("可远程补弹"), e.can_remote_ammo, theme::kCyan},
+        {QStringLiteral("待复活"), e.pending_respawn, theme::kWarn},
     };
     for (int i = 0; i < 4; ++i)
         paint_pip(painter, QRect(i * (pip_w + 6), y, pip_w, 18), pips[i].text, pips[i].on,

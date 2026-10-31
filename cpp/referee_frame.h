@@ -18,10 +18,20 @@ constexpr std::uint8_t kRefereeSof = 0xA5;
 constexpr std::uint16_t kCustomControllerCmd = 0x0302;
 constexpr int kCustomControllerDataBytes = 30;
 
+// 车回传给控制器的机械臂姿态:6 个 float 关节角 + 1 字节标志位(2 = 让控制器跟随车)。
+// 2027 协议取消了 0x0309,车改用 0x0310(MQTT 上的 CustomByteBlock)发到终端,终端再按
+// 控制器固件认的 0x0309 帧格式写给控制器,固件不用改。
+constexpr std::uint16_t kArmFeedbackCmd = 0x0309;
+constexpr int kArmFeedbackBytes = 25;
+
 std::uint8_t referee_crc8(const std::uint8_t* data, std::size_t size);
 std::uint16_t referee_crc16(const std::uint8_t* data, std::size_t size);
 
 QByteArray encode_referee_frame(std::uint16_t cmd_id, const QByteArray& data, std::uint8_t seq);
+
+// CustomByteBlock 的数据 -> 发给控制器的 0x0309 帧(数据段补零到 30 字节,和以前车发的一样)。
+// 不足 25 字节或关节角不是有限数时返回空:这些字节来自网络,不能原样喂给机械臂。
+std::optional<QByteArray> arm_feedback_frame(const QByteArray& custom_bytes, std::uint8_t seq);
 
 struct RefereeFrame {
     std::uint16_t cmd_id = 0;

@@ -6,14 +6,27 @@ only terminal implementation. The legacy Python/PySide6 launcher (`main.py`,
 Python simulator in `sim/`, which remains the only data source for local runs
 and for `mode_regression_e2e`. The native target is C++17/Qt6.
 
-Task 2 uses the six inbound message families in `proto/rm_terminal.proto`:
-GameStatus, RobotDynamicStatus, RobotModuleStatus, RobotPosition, Event, and
-RobotTelemetry. The C++ inbound vocabulary is a LOCAL SIMULATION schema
-adapter only; it is not an official RM2027 wire contract or a protobuf
-decoder. Optional fields are patches: omitted fields do not change state,
-invalid fields preserve their last valid value but report invalid quality, and
-each field has independent freshness. Robot updates require an explicit source
-identity unless the message embeds one. Events and match state are global.
+`proto/rm_terminal.proto` is the official RoboMaster 2027 custom-terminal protocol
+(通信协议 V1.0.0, 2026-10-29, chapter 2, messages 2.2.1–2.2.32), copied message by
+message; the topic name is the message name. The only deviation is
+`RadarInfoToClient`, whose official text has no field number: the proto reads field 1
+as `repeated RadarSingleRobotInfo`, and `cpp/decoder.cpp` also accepts the other
+plausible encoding (flat packed `uint32` triples). `cpp/decoder.cpp` is the single
+place that turns the protocol's seat-relative fields (己方/对方, R/B outpost zones,
+ally-first `robot_health`, enemy-first radar, centimetres, decimetres) into the
+red/blue, metre-based domain model, so nothing above it knows which side the seat is
+on. Optional fields are patches: omitted fields do not change state, invalid fields
+preserve their last valid value but report invalid quality, and each field has
+independent freshness. Robot messages carry no robot id (2027 sends only the seat's
+own robot), except `RobotPosition`, which the commander also receives for the own
+sentry (7/107). `Store` is locked: MQTT delivers on its network thread while the UI
+reads snapshots on the main thread.
+
+Values the protocol does not send are derived locally and named as such: base and
+outpost maximum HP come from the rules manual (10000 / 1000); another robot's
+maximum HP is the highest HP seen this round, floored at its class minimum; kills
+are counted from Event 1; the blind window is computed from Event 9 (see 双模式行为);
+the logistics factor λ comes from base HP (rules 5.6.1).
 
 Freshness uses caller-provided monotonic milliseconds, expires at age >= a
 positive threshold, and rejects backwards time. Every `MonotonicMs` in the
@@ -27,8 +40,10 @@ this: `monotonic_clock` asserts the clock is process-relative and never
 retreats, and `monotonic_clock_guard` fails the build if
 `currentMSecsSinceEpoch` reappears in `cpp/`. `domain_test` uses explicit
 checks rather than `assert`, so Release retains all semantic verification.
-Its only outbound message is `CustomControl`, forwarded from the custom
-controller's serial port (see [链路状态与自检页](#链路状态与自检页-link-status-and-self-check)). Platform-specific
+Outbound messages: `CustomControl` (forwarded from the custom controller's serial
+port, see [链路状态与自检页](#链路状态与自检页-link-status-and-self-check)), and the
+seat-specific commands `MapClickCmd`, `DartCommand`, `SentryCtrlCommand` and
+`AssemblyCommand` (see [席位与布局](#席位与布局-seats-and-role-layouts)). Platform-specific
 selection is limited to compile-time identity in `cpp/platform.h`; core
 application code uses Qt and standard C++ APIs.
 
@@ -40,8 +55,9 @@ required to change them. Copy `rm_terminal.conf.sample` and edit it.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `mqtt_host` | `127.0.0.1` | MQTT broker host for the local simulator |
-| `mqtt_port` | `3333` | MQTT broker port (2026 protocol baseline) |
-| `udp_port` | `3334` | H.265 video UDP listen port (2026 protocol baseline) |
+| `mqtt_port` | `3333` | MQTT broker port (2027 protocol: server `192.168.12.1:3333`) |
+| `udp_port` | `3334` | H.265 video UDP listen port (2027 protocol) |
+| `self_robot_id` | (unset) | Seat: `1` hero, `3`/`4` infantry, `6` commander, blue `+100`. Unset = ask with the seat picker; `--seat` and `RM_SELF_ID` override it |
 | `stale_window_ms` | `2200` | Field freshness window; older fields report stale |
 | `log_level` | `info` | Minimum level written: `debug`, `info`, `warning`, `error` |
 | `log_destination` | `rm_terminal.log` | Log file path; records append across restarts |
@@ -52,9 +68,12 @@ required to change them. Copy `rm_terminal.conf.sample` and edit it.
 | `controller_serial` | (unset) | Custom controller serial port; unset means this seat has none |
 | `controller_baud` | `115200` | Controller baud rate; one of 9600 … 921600. The firmware uses 115200 |
 | `mqtt_keepalive_s` | `5` | MQTT keepalive; a pulled cable is detected after about two of these |
-| `alerts_disabled` | (none) | Comma list of event alerts to switch off: `outpost`, `control`, `fortress`, `dart`, `energy`, `reinforce`, `low_hp`, `base` |
+| `alerts_disabled` | (none) | Comma list of event alerts to switch off: `outpost`, `control`, `fortress`, `dart`, `energy`, `low_hp`, `base` |
 | `alert_control_gap` | `30` | Control-point deficit that triggers the 控制度落后 alert |
 | `speech_dir` | (default) | Linux voice install directory; default `~/.local/share/rm_terminal/tts` |
+| `map_mark_ms` | `30000` | How long a map mark (sent or received) stays on the map; the last 5 s fade |
+| `display_fullscreen` | `false` | Fullscreen on start (hero and commander seats with the official 1080p monitor) |
+| `display_screen` | (primary) | Screen name for `display_fullscreen`; the `screens` log record lists the names |
 
 Every integer key rejects zero and negatives except `blind_stale_fallback_ms`,
 which accepts `0` to mean "never fall back to video just because blind telemetry
@@ -88,6 +107,7 @@ Command-line flags:
 | Flag | Meaning |
 | --- | --- |
 | `--config <path>` | Configuration file path; highest precedence |
+| `--seat <id>` | Seat for this run (`1 3 4 6 101 103 104 106`); skips the seat picker. `7`/`107` exit `2` (the sentry has no operator) |
 | `--safe-smoke` | Report startup state and exit without a window |
 | `--screenshot <path>` | Render the window to a PNG, then exit |
 | `--diagnostic <host> <port> <seconds>` | Bounded headless MQTT observation |
@@ -100,12 +120,16 @@ tools, not operator features. They are documented together under
 
 ### Window
 
-The window shows game state (stage, countdown, round, score), per-robot state
-(HP, heat, ammo, bullet speed, chassis power, buffer, gimbal yaw/pitch, chassis
-mode, vision, auto-aim, target, friction wheel, position), the live H.265 video
-pane with packet/frame statistics, and the latest match event. Values that are
-absent render as `--`; values that aged past `stale_window_ms` are suffixed
-`(过期)` individually, so one stale field never makes fresh neighbours look stale.
+The window shows the seat label, link lights and self-check in the status bar; the
+top bar (score, round, countdown, base and outpost HP, base defence state, control
+points); four robots per side with HP (and remaining bullets for our side); the
+tactical map (own robot from `RobotPosition`, the rest from the radar, map marks);
+the event feed (Event 2.2.7 in Chinese, stamped with the match clock); the battle
+analysis (our economy, damage, kills, energy mechanism, fortress, the four zones,
+control points and logistics); the live H.265 video pane; and the role panes of the
+seat (see 席位与布局). Values that are absent render as `--`; values that aged past
+`stale_window_ms` are suffixed `(过期)` individually, so one stale field never makes
+fresh neighbours look stale.
 
 ### Structured log
 
@@ -118,7 +142,17 @@ ts=<ISO8601 UTC with ms> level=<level> event=<token> key=value ...
 Event tokens: `startup`, `shutdown`, `reconnect_mqtt`, `reconnect_udp`,
 `decode_failure`, `stale_data`, `packet_loss`,
 `ui_mode_switch`, `quit_signal`, `link_state`, `controller_link`, `alert`,
-`alert_voice`.
+`alert_voice`, `seat_cancelled`, `seat_confirmed`, `seat_mismatch`, `screens`,
+`display`, `match_event`, `sentry_result`, `dart_status`, `map_mark`,
+`map_mark_received`, `arm_feedback`.
+
+`startup` carries `seat`, `role` (`infantry`, `hero`, `commander`) and `source`
+(`cli`, `env`, `config`, `picker`, `recording`). `seat_confirmed` / `seat_mismatch`
+compare the seat with the robot id the server reports in `RobotStaticStatus`.
+`match_event` is every decoded Event (2.2.7) with its id, level and the Chinese text
+shown in the event feed; `sentry_result`, `dart_status` (target and gate on change)
+and `map_mark_received` record what the server answered, `map_mark` what the
+commander sent.
 
 `alert` carries `kind` (an `alerts_disabled` name, or `tactical` for a due tactical
 reminder), `level` (`critical`, `warning`, `info`) and the banner `text`.
@@ -154,7 +188,13 @@ The window has two resident modes and switches between them by itself. Info mode
 shows the tactical map as the primary area with video as a thumbnail; video mode
 gives the video feed the window and hides the map.
 
-The switch is driven by the simulated `BlindStatus` signal, never by an operator:
+The switch is driven by the blind window, never by an operator. The 2027 protocol has
+no blind message: the terminal starts the window itself when Event 9 reports an
+enemy dart hit, with the rules-manual durations (§5.7.3: 10/5/3/2 s for the 1st–4th
+hit on the outpost or a fixed base target this round, 2 s after that; 10 s for every
+random-moving or terminal-moving hit; consecutive hits add up). While no window is
+open, the reading is as fresh as the server stream (`GameStatus`), because a dead
+stream could hide a hit:
 
 - Blind asserted (fresh reading, value true) enters video mode immediately. Losing
   the picture late is worse than entering early, so there is no entry delay.
@@ -163,7 +203,7 @@ The switch is driven by the simulated `BlindStatus` signal, never by an operator
   flickers around the threshold would flip the whole layout several times a second.
 - A re-assertion during the exit window cancels it, so the full window restarts
   rather than resuming a partial one.
-- Stale blind telemetry HOLDS video mode rather than dropping it, and time measured
+- A stale stream HOLDS video mode rather than dropping it, and time measured
   while the data was untrustworthy is not credited toward leaving. If staleness
   lasts `blind_stale_fallback_ms` (default `15000`) the terminal returns to info
   with `reason=BlindSignalLost`, so a dead publisher cannot pin it fullscreen
@@ -244,8 +284,10 @@ clock or the wrong freshness still flaps. The script starts its own broker (only
 none is listening), match server and video sender, runs the terminal offscreen
 against a per-run log, then asserts that the run produced exactly two transitions —
 `Info -> Video (BlindAsserted)` then `Video -> Info (BlindClearedHysteresis)` — with
-entry near +40s and a gap of the 12s blind window plus the 3s exit hysteresis. It
-prints an actual-vs-expected table and exits non-zero on any failure.
+entry near +34s (the simulated enemy dart hits our base's random moving target at
+match second 30, `RM_BLIND_AUTO=1`) and a gap of the 10 s blind window plus the 3 s
+exit hysteresis. It prints an actual-vs-expected table and exits non-zero on any
+failure.
 
 ```sh
 bash scripts/verify_mode_regression.sh
@@ -280,24 +322,22 @@ are checked in, so they must be regenerated by hand after every proto edit:
 protoc --python_out=generated -Iproto proto/rm_terminal.proto
 ```
 
-`BlindStatus`, `RobotPositionSet`, and `RobotPositionEntry` are LOCAL SIMULATION
-vocabulary. RM2027 has published no official protocol, so these are not a wire
-contract. Every field is `optional`, which is load-bearing: a missing coordinate
-reports `has_x() == false` while a real origin reports `has_x() == true` with
-`x == 0.0`, so absent positions are never drawn as the field corner. The inbound
-`RobotPosition` message predates them and stays as-is.
+Every field is `optional`, as in the official text, which is load-bearing: a missing
+value reports `has_x() == false` while a real zero reports `has_x() == true`, so an
+absent position is never drawn at the field corner and absent HP is never drawn as
+dead. `intake_test` pins the decoding of every message for a red and a blue seat.
 
-`CustomControl` (terminal to robot) and `CommonCommand` (terminal to server) are
-the outbound messages in the proto. The terminal publishes `CustomControl` (the
-custom controller's 30-byte payload) and does not use `CommonCommand`. It
-subscribes only to the inbound topics, and `intake_test` asserts the decoder
-rejects `CustomControl`, so a recording that contains outbound records replays
-without feeding them back into match state.
+The terminal subscribes to the inbound topics listed in `Decoder::topics()` plus
+`CustomByteBlock`. Outbound records (`CustomControl`, commands) are recorded too;
+the decoder rejects them, so a recording replays without feeding them back into
+match state. The simulator also uses `CommonCommand` (2.2.25) as its own match-control
+channel, with command types from `0x10` so they never collide with the protocol's 1–6.
 
 ## 链路状态与自检页 (link status and self-check)
 
 Four lights sit in the banner row, to the right of the alert strip: 裁判 (MQTT),
-车端 (the robot's own telemetry, `RobotTelemetry`), 图传 and 控制器. A green dot
+车端 (`CustomByteBlock`, the robot's 0x0310 data — in 2027 the only data the robot
+itself sends to the terminal), 图传 and 控制器. A green dot
 means fine; red adds two or three words saying what is wrong; grey means the seat
 does not use that link. Hovering shows the full detail. The rules live in
 `cpp/link_health.cpp` and are unit-tested in `link_health_test`:
@@ -305,7 +345,7 @@ does not use that link. Hovering shows the full detail. The rules live in
 | Link | Red when |
 | --- | --- |
 | 裁判 | disconnected (`重连中`), or connected but nothing received for 2 s (`无数据`) |
-| 车端 | the self robot's `sequence` field is stale (`stale_window_ms`) or never arrived |
+| 车端 | no `CustomByteBlock` within `stale_window_ms`, or never one |
 | 图传 | no decoded frame for 1 s |
 | 控制器 | serial port missing or closed (`未接`), or no valid frame for 200 ms (`无数据`); amber `发不出` when frames arrive but MQTT is down |
 
@@ -313,7 +353,9 @@ The 2 s rule matters because a pulled cable does not close the TCP connection; t
 connection only drops after the MQTT keepalive times out, about two keepalive
 periods (`mqtt_keepalive_s`, default 5 s).
 
-The self-check page (`自检` button) lists 自机, the four links, 录像 and 语音提醒,
+The self-check page (`自检` button) lists 席位 (未核对 until `RobotStaticStatus`
+arrives, then 席位正确, or a red 席位选错 naming both seats), the four links, 录像
+and 语音提醒,
 each 正常 / 注意 / 异常 / 未启用, and says `可以上场` only when nothing is 异常. It
 opens by itself when the match is not yet running (no match data, 赛外, 准备 or
 自检), closes when the countdown starts, and stays closed for the rest of that
@@ -322,8 +364,12 @@ Replay mode shows neither the lights nor the page.
 
 The controller link (`cpp/controller_link.cpp`) reads the firmware's frames
 (`0xA5` header with CRC8, command `0x0302`, 30 data bytes, CRC16; 115200 8N1, 25 Hz)
-and forwards each valid frame once, as `CustomControl`, capped at 75 Hz (2026
-protocol limit). It never re-sends a frame: when the cable is pulled or MQTT is
+and forwards each valid frame once, as `CustomControl` (the robot receives it as
+0x0311, at most 60 bytes in 2027), capped at 75 Hz. The other direction exists since
+2027 dropped 0x0309: the hero puts its arm feedback (6 joint angles + flag, 25 bytes)
+at the start of its 0x0310 data, the terminal takes those bytes from
+`CustomByteBlock` and writes them to the controller as the 0x0309 frame the firmware
+already expects, at most every 15 ms. It never re-sends a frame: when the cable is pulled or MQTT is
 down, nothing is queued, so the robot never chases a stale pose. Reopening is
 automatic every 500 ms, so a replugged cable recovers without restarting. On Linux
 the user must be in the `dialout` group to open `/dev/ttyUSB*`; use a
@@ -342,18 +388,17 @@ whether or not the machine has a voice.
 | --- | --- | --- |
 | `outpost` | our outpost zone becomes enemy temporary control; again when it becomes enemy full control | once per change |
 | `control` | enemy control points lead by `alert_control_gap` | once; re-armed after the gap falls below half |
-| `fortress` | the fortress is taken by the enemy, by us, or vacated | once per change |
+| `fortress` | the enemy starts activating our fortress (10 s of activation open our base armour) | once per activation |
 | `dart` | 10 s before and at the dart gate chances (0:30, 4:00) | once per point |
 | `energy` | small energy chances (0:00, 1:30), large (3:00, 4:15, 5:30) | once per point |
-| `reinforce` | our reinforce chances go from 0 to at least 1 | once per change |
 | `low_hp` | an enemy robot drops to 25% HP or below | once per robot until it recovers above 50% or dies |
 | `base` | our base HP drops | at most once per 10 s, and the map flashes our half for 3 s |
 
 The times are match elapsed seconds from the 2027 rules manual V1.0.0 (§5.6.3
-energy, §5.7.3 dart, §5.2 reinforce). Timeline points only fire within 5 s of being
-crossed, so joining mid-match or jumping the clock never replays old ones. The
-zone, fortress and reinforce fields are local simulation vocabulary until the 2027
-protocol is published.
+energy, §5.7.3 dart). Timeline points only fire within 5 s of being crossed, so
+joining mid-match or jumping the clock never replays old ones. Zones, control points
+and base HP come from `GlobalUnitStatus`, the fortress timer from
+`GlobalSpecialMechanism`.
 
 Voice: alert phrases are synthesized before the match by a second speech backend
 (`cpp/alert_voice.cpp`) and played through the reminder controller, which owns the
@@ -367,7 +412,7 @@ alert banners but stay silent.
 
 `scripts/accept_alerts.py` drives the simulator through every alert (seek, speed,
 zones, fortress, HP, structures) and asserts each fired the right number of times,
-about 1.5 minutes. It and `accept_links.py` point `speech_dir` at an empty directory
+about 1 minute. It and `accept_links.py` point `speech_dir` at an empty directory
 so a test run never talks through the speakers.
 
 ### Fault injection and acceptance
@@ -397,6 +442,46 @@ arm must stop the robot within 1 s of unplugging; a corrupt frame must be logged
 without dropping the link; all four at once must not crash the terminal. With
 `-DRM_TERMINAL_INTEGRATION_TESTS=ON` it is also the CTest case `link_faults_e2e`.
 
+## 席位与布局 (seats and role layouts)
+
+The seat is fixed for a run and decides three things: the MQTT client id (the
+protocol requires the connected robot's id: red 3 logs in as `3`, blue 3 as `103`),
+red or blue for every 己方/对方 field, and the layout. Sources, highest first:
+`--seat <id>`, `RM_SELF_ID`, an explicit `self_robot_id` in the config, then the seat
+picker page (`qml/SeatPicker.qml`), which opens before the network starts; cancelling
+it exits `0` with `seat_cancelled`. Replays use the seat stored in the recording.
+`启动.command` asks for the seat in the terminal window (the simulator needs it
+too) and exports `RM_SELF_ID`, so the picker does not open twice.
+
+`cpp/layout_profile.cpp` holds one grid per role; the shared parts (status bar with
+the seat label, top bar, alerts, popups, the video page) are the same for all three:
+
+| Role | Seat | Info page |
+| --- | --- | --- |
+| 步兵 infantry | 3, 4 | ally roster / map / enemy roster; events / battle analysis / video |
+| 重装 hero | 1 | the map spans two columns; events / battle analysis / 装配 / video |
+| 指挥手 commander | 6 (the aerial seat, rules table 3-1) | both rosters stacked left, map over two rows with the mark toolbar, 飞镖 and 哨兵 right; events / battle analysis / video |
+
+Role panes (`cpp/assembly_pane.*`, `cpp/dart_pane.*`, `cpp/sentry_pane.*`) show
+`--` and name the message they wait for when data is missing. Their buttons send
+`AssemblyCommand`, `DartCommand` and `SentryCtrlCommand` at most 10 times a second,
+are disabled while MQTT is down (clicks are dropped, never queued), and need a 1 s
+hold for 确认发射, 花金币复活 and 取消装配. Each send waits for the server's answer
+(`SentryCtrlResult`, a `DartSelectTargetStatusSync` change, Event 15) and shows
+未确认 after 2 s without one. The commander's map is clickable: open ground marks a
+position, an enemy robot marks that robot (`MapClickCmd`, 0.5 s minimum interval,
+custom letters C–L, N, O, Q–Z only). Every seat draws received `MapClickInfo` marks;
+the commander also sees the sentry's planned path (`RobotPathPlanInfo`).
+
+`RM_TERMINAL_CAPTURE_SIZE=1920x1080` sets the offscreen capture size (default
+1440x900). `bash scripts/shoot_roles.sh` renders the three roles at 1440x900 and
+1920x1080 against the simulator into `artifacts/roles/` (PNG + layout JSON with
+`role`). `.venv/bin/python scripts/accept_roles.py` runs one match per role against
+the simulator and checks, from the terminal log, the seat check, received marks,
+dart gate and launch, sentry results and assembly results (about 2 minutes). The
+offscreen terminal cannot be clicked, so the script publishes the commands the
+buttons would send; the buttons themselves are covered by `role_panes_test`.
+
 ## Running the Python simulator
 
 `sim/match_server.py` needs `protobuf` and `paho-mqtt`, which the native build
@@ -412,11 +497,20 @@ python3 -m venv .venv
 redirected to a file, so the blind-timeline lines are lost when the process is
 signalled, and the reproducibility check below has nothing to compare.
 
-The simulator publishes a deterministic blind timeline (`_BLIND_SCHEDULE`) keyed
-to match-internal elapsed time, so two runs are byte-identical:
+The simulator speaks to one seat, `RM_SELF_ID` (default `3`; the terminal must sit on
+the same seat), and publishes the official messages from that seat's point of view.
+`sim/test_protocol_2027.py` pins the seat-relative encodings and orderings; run it
+for each seat, e.g. `RM_SELF_ID=106 .venv/bin/python -m sim.test_protocol_2027`.
+`sim/State` is a simulator-only JSON snapshot in absolute red/blue terms for the
+control panel; the terminal does not read it. `bash scripts/accept_sim_control.sh`
+drives the simulator alone and checks the official messages it sends.
+
+With `RM_BLIND_AUTO=1` the simulated enemy dart hits our base at deterministic
+match seconds (`_BLIND_SCHEDULE`: 30 s and 150 s, random moving target), so two runs
+are byte-identical:
 
 ```sh
-.venv/bin/python -u sim/match_server.py > /tmp/run1.log 2>&1
+RM_BLIND_AUTO=1 .venv/bin/python -u sim/match_server.py > /tmp/run1.log 2>&1
 # after 60s, repeat into /tmp/run2.log, then:
 diff <(grep 致盲 /tmp/run1.log) <(grep 致盲 /tmp/run2.log)
 ```
@@ -478,7 +572,7 @@ macOS only.
 | Platform | Build | CTest | Dynamic run (simulator, dual mode, video) |
 | --- | --- | --- | --- |
 | macOS (arm64, Homebrew Qt6) | verified | verified, Debug and Release | verified |
-| Ubuntu 26.04 (x86_64, Qt 6.10.2, Wayland) | verified, Release | verified, 28/28 + `mode_regression_e2e` + `link_faults_e2e` | verified |
+| Ubuntu 26.04 (x86_64, Qt 6.10.2, Wayland) | verified, Release | verified, 34/34 + `mode_regression_e2e` + `link_faults_e2e` | verified |
 
 Ubuntu was verified on 2026-10-23 at commit `d1730fe`: Release build, the 25-test
 default CTest suite, `--safe-smoke`, `python -m unittest` over `sim/`,
@@ -489,6 +583,28 @@ ended both by closing the window and by Ctrl-C. On 2026-10-26 the link lights,
 self-check page and controller forwarding were verified on the same machine: the
 28-test suite, `scripts/accept_links.py` (30/30) and offscreen screenshots with all
 links up and with the video and arm cut. They have not been run on macOS yet.
+
+On 2026-10-30 the 2027 protocol migration was verified on the same machine: the
+34-test suite; the simulator's unit tests, with `test_protocol_2027` for all eight
+seats; `scripts/accept_sim_control.sh` (all pass); `scripts/verify_mode_regression.sh`
+(PASS, video entered at +33.31s, held 13.25s for the 10 s blind window plus 3 s);
+`scripts/accept_links.py` (35/35); `scripts/accept_alerts.py` (18/18);
+`scripts/accept_roles.py` (24/24); and `scripts/shoot_roles.sh` at 1440x900 and
+1920x1080. None of this has been run on macOS, and nothing has been run against an
+official server yet.
+
+On 2026-10-31 the infantry/hero self commands (performance selection, exchange, remote
+exchange, revive, energy rune) and keyboard/mouse control were added and verified on the
+same machine: the 35-test suite (new `km_control`; new cases in `role_commands`,
+`role_panes`, `intake_contract`, `dashboard_layout`); `sim/test_terminal_commands.py`
+for seats 3 and 101 and `sim/test_respawn.py`; `scripts/accept_roles.py` (46/46),
+`accept_links.py` (35/35), `accept_alerts.py` (18/18), `accept_sim_control.sh` and
+`verify_mode_regression.sh` (all pass); `shoot_roles.sh`. The real binary was also driven
+under Xvfb with `QT_QPA_PLATFORM=xcb` and XTest input: every new button clicked against
+the simulator, and F9 + held W + 600 px of mouse motion + left click + one wheel notch,
+recorded off the broker as 297 frames at 73 Hz summing to exactly +600 px, ending with an
+all-released frame after Esc. The simulator's own robot now waits for 确认复活 after its
+revive bar fills (protocol 2.2.25, item 3); other robots still revive on their own.
 
 A recording cut off mid-record (crash, `kill -9`, power loss) still replays: the
 player stops at the last complete record and the status bar says

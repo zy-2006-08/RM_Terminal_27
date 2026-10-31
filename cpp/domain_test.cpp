@@ -21,24 +21,6 @@ struct SinkGuard {
     ~SinkGuard() { set_log_sink(nullptr); }
 };
 
-// Pins every value against core/constants.py:80-86. The simulator sends mode 2,
-// which the old table rendered as "独立" while it authoritatively means
-// "底盘跟随云台" - a wrong readout, so these are asserted value by value rather
-// than eyeballed on a screenshot.
-void chassis_names_match_authoritative_constants() {
-    check(chassis_name(0) == QStringLiteral("停机"), "chassis 0 is 停机");
-    check(chassis_name(1) == QStringLiteral("手动驾驶"), "chassis 1 is 手动驾驶");
-    check(chassis_name(2) == QStringLiteral("底盘跟随云台"), "chassis 2 is 底盘跟随云台");
-    check(chassis_name(3) == QStringLiteral("小陀螺"), "chassis 3 is 小陀螺");
-    check(chassis_name(4) == QStringLiteral("自瞄模式"), "chassis 4 is 自瞄模式");
-    check(chassis_name(5) == QStringLiteral("未知"), "chassis 5 falls back to 未知");
-    check(chassis_name(9) == QStringLiteral("未知"), "chassis 9 falls back to 未知");
-    check(chassis_name(2) != QStringLiteral("独立"), "the old wrong name for mode 2 is gone");
-}
-
-// 阵容来自 RMUC 2027 规则手册表 3-1：1 重装、3/4 步兵、6 空中、7 哨兵。
-// 2 号和 5 号在 2027 阵容中不存在，必须返回空字符串让调用方退回显示编号，
-// 否则旧阵容的兵种名会贴在新编号上 —— 这是错误读数，故逐值断言。
 void robot_class_names_match_2027_lineup() {
     check(robot_class_name(1) == QStringLiteral("重装"), "1 is 重装");
     check(robot_class_name(2).isEmpty(), "2 is not in the lineup");
@@ -52,51 +34,54 @@ void robot_class_names_match_2027_lineup() {
     check(robot_class_name(104) == QStringLiteral("步兵"), "104 mirrors 4 as 步兵");
     check(robot_class_name(106) == QStringLiteral("空中"), "106 mirrors 6 as 空中");
     check(robot_class_name(107) == QStringLiteral("哨兵"), "107 mirrors 7 as 哨兵");
-
     check(display_robot_number(107) == 7, "blue 107 shows as 7");
     check(display_robot_number(101) == 1, "blue 101 shows as 1");
     check(display_robot_number(3) == 3, "red ids are shown unchanged");
-    check(robot_class_name(1) != QStringLiteral("英雄"), "the 2026 name for 1 is gone");
-    check(robot_class_name(2) != QStringLiteral("工程"), "the 2026 name for 2 is gone");
+    check(faction_of(7) == kRed && faction_of(101) == kBlue && faction_of(111) == kBlue,
+          "faction follows the 2027 id table");
 }
 
-// build_roster feeds the ally/enemy columns. Pinned against the ids match_server.py
-// actually publishes: red 1,3,4,6,7 and blue 101,103,104,106,107. A row that loses its faction
-// or its self flag lands in the wrong column on screen.
+// build_roster feeds the ally/enemy columns: four field robots per side, the aerial
+// seat never takes a row because it has no health.
 void roster_splits_the_2027_lineup_by_faction() {
     Snapshot snapshot;
-    for (std::uint32_t id : {1u, 3u, 4u, 6u, 7u}) {
-        MapRobot robot;
+    snapshot.self = RobotId{3};
+    for (std::uint32_t id : {1u, 3u, 4u, 7u, 101u, 103u, 104u, 107u}) {
+        RobotHealth robot;
         robot.id = RobotId{id};
-        robot.faction = 1;
-        robot.is_self = (id == 3);
-        snapshot.map_robots.push_back(robot);
+        robot.faction = faction_of(id);
+        robot.current_hp.value = 100;
+        robot.max_hp.value = 200;
+        snapshot.robot_health.push_back(robot);
     }
-    for (std::uint32_t id : {101u, 103u, 104u, 106u, 107u}) {
-        MapRobot robot;
-        robot.id = RobotId{id};
-        robot.faction = 2;
-        snapshot.map_robots.push_back(robot);
-    }
+    MapRobot aerial;
+    aerial.id = RobotId{6};
+    aerial.faction = kRed;
+    snapshot.map_robots.push_back(aerial);
 
-    const auto red = build_roster(snapshot, 1);
-    const auto blue = build_roster(snapshot, 2);
-    check(red.size() == 5, "the red column holds the five 2027 ids");
-    check(blue.size() == 5, "the blue column holds all five mirrored ids");
-    check(red[0].id.value == 1 && red[1].id.value == 3 && red[4].id.value == 7,
+    const auto red = build_roster(snapshot, kRed);
+    const auto blue = build_roster(snapshot, kBlue);
+    check(red.size() == 4, "the red column holds the four 2027 field robots");
+    check(blue.size() == 4, "the blue column holds the four mirrored ids");
+    check(red[0].id.value == 1 && red[1].id.value == 3 && red[3].id.value == 7,
           "the red column is sorted by id");
-    check(red[1].is_self, "self stays flagged inside the red column");
-
-    // Every published id must resolve to a 兵种; a blank here is the fallback path
-    // and would show the operator a bare number where the reference shows a class.
+    check(red[1].is_self, "the seat is flagged inside its column");
+    check(!blue[1].is_self, "the mirrored id is not us");
     for (const RosterEntry& entry : red)
         check(!robot_class_name(entry.id.value).isEmpty(), "every red id has a 兵种");
-    for (const RosterEntry& entry : blue)
-        check(!robot_class_name(entry.id.value).isEmpty(), "every blue id has a 兵种");
+
+    snapshot.self = RobotId{106};
+    const auto self = self_entry(snapshot);
+    check(self && self->id.value == 106, "the aerial seat still gets its own status entry");
+    check(self_faction(snapshot) == kBlue, "self faction comes from the seat");
 }
 
-EventRecord make_event(std::uint64_t timestamp, std::uint32_t level, const char* text) {
-    return EventRecord{timestamp, level, std::string{text}, 0};
+EventRecord make_event(MonotonicMs at, std::uint32_t level, const char* text) {
+    EventRecord record;
+    record.level = level;
+    record.text = text;
+    record.received_at = at;
+    return record;
 }
 
 // recent() must return newest first. Reversed order would put the oldest alert at
@@ -121,7 +106,7 @@ void event_history_orders_newest_first() {
 // ring must overwrite and report the loss rather than expand.
 void event_history_discards_oldest_when_full() {
     EventHistory history(3);
-    for (std::uint64_t i = 1; i <= 5; ++i) {
+    for (MonotonicMs i = 1; i <= 5; ++i) {
         history.push(make_event(i, 0, i == 1 ? "oldest" : "later"));
     }
     check(history.size() == 3, "size stops at capacity");
@@ -130,24 +115,11 @@ void event_history_discards_oldest_when_full() {
 
     const auto recent = history.recent(10);
     check(recent.size() == 3, "only capacity worth of records survive");
-    check(recent[0].timestamp_ms == 5, "newest survivor is the last pushed");
-    check(recent[2].timestamp_ms == 3, "oldest survivor is capacity back");
+    check(recent[0].received_at == 5, "newest survivor is the last pushed");
+    check(recent[2].received_at == 3, "oldest survivor is capacity back");
     for (const auto& record : recent) {
         check(record.text != "oldest", "the evicted record is really gone");
     }
-}
-
-// The domain layer must not interpret or clamp level values: an unknown severity
-// from a future protocol has to survive to the UI, not get silently rewritten.
-void event_history_preserves_unknown_levels() {
-    EventHistory history(4);
-    history.push(make_event(1, 0, "info"));
-    history.push(make_event(2, 3, "severe"));
-    history.push(make_event(3, 9, "future"));
-    const auto recent = history.recent(3);
-    check(recent[0].level == 9, "unknown level is preserved verbatim");
-    check(recent[1].level == 3, "severe level preserved");
-    check(recent[2].level == 0, "info level preserved");
 }
 
 void event_history_empty_returns_nothing() {
@@ -157,43 +129,22 @@ void event_history_empty_returns_nothing() {
     check(history.droppedCount() == 0, "empty history dropped nothing");
 }
 
-// The simulator republishes at 5Hz. Without dedup a single alert would evict the
-// entire history within seconds.
-void store_deduplicates_republished_events() {
+// 2027 的 Event 是触发式发送,没有 2026 那种 5Hz 重发:两条一样的事件就是两次事件
+// (比如同一台车两次击毁同一个对手),都得记下。
+void store_keeps_every_triggered_event() {
     Store store(10, 20);
-    inbound::Event event;
-    event.timestamp_ms = 1000;
-    event.level = 3;
-    event.text = std::string{"blinded"};
-    for (int i = 0; i < 10; ++i) {
-        check(store.apply(event, i), "republished event is accepted");
-    }
-    const auto snapshot = store.snapshot(10);
-    check(snapshot.events.size() == 1, "republished identical event is stored once");
-    check(snapshot.event.text.value == std::string{"blinded"},
-          "the existing single-event field still tracks the latest event");
-}
-
-// Regression guard for the review finding: keying dedup on timestamp alone would
-// discard the second event here, and at the start of blinding that could be the
-// severe one.
-void store_keeps_distinct_events_sharing_a_millisecond() {
-    Store store(10, 20);
-    inbound::Event first;
-    first.timestamp_ms = 500;
-    first.level = 0;
-    first.text = std::string{"match resumed"};
-    check(store.apply(first, 0), "first event accepted");
-
-    inbound::Event second;
-    second.timestamp_ms = 500;
-    second.level = 3;
-    second.text = std::string{"base blinded"};
-    check(store.apply(second, 0), "second event in the same millisecond accepted");
-
+    store.setSelf(RobotId{3});
+    inbound::Event kill;
+    kill.event_id = 1;
+    kill.param = "101,3";
+    check(store.apply(kill, 0), "first kill accepted");
+    check(store.apply(kill, 0), "the same kill again is a second kill");
     const auto snapshot = store.snapshot(0);
-    check(snapshot.events.size() == 2, "same-millisecond distinct events are both kept");
-    check(snapshot.events.recent(1)[0].level == 3, "the severe event survived");
+    check(snapshot.events.size() == 2, "both kills are in the history");
+    check(snapshot.kills.red == 2, "both kills are counted");
+    check(snapshot.events.recent(1)[0].faction == kRed, "kill banner is the killer's side");
+    check(snapshot.events.recent(1)[0].text.find("我方 3 号步兵") != std::string::npos,
+          "texts are written from the seat's point of view");
 }
 
 // Task 5 acceptance: a field aging into Stale must log once per TRANSITION, not
@@ -236,9 +187,8 @@ void stale_reporter_logs_once_per_transition() {
 
     // And: a group that goes stale later is a new transition and logs again.
     inbound::RobotDynamicStatus dynamic;
-    dynamic.robot_id = 7;
     dynamic.current_hp = 100;
-    check(store.apply(dynamic, std::nullopt, 12), "second stale probe accepted");
+    check(store.apply(dynamic, RobotId{7}, 12), "second stale probe accepted");
     reporter.inspect(store.snapshot(13));
     check(events.size() == 1, "a fresh robot group does not report as stale");
     reporter.inspect(store.snapshot(22));
@@ -247,198 +197,113 @@ void stale_reporter_logs_once_per_transition() {
     check(details.back().contains(QLatin1String("robots=1")), "stale record reports the robot count");
 }
 
-inbound::RobotPositionEntry map_entry(std::uint32_t id, std::uint32_t faction,
-                                      double x, double y, bool is_self = false) {
-    inbound::RobotPositionEntry entry;
+inbound::RadarEntry radar_entry(std::uint32_t id, std::optional<double> x, std::optional<double> y) {
+    inbound::RadarEntry entry;
     entry.robot_id = id;
-    entry.faction = faction;
     entry.x = x;
     entry.y = y;
-    entry.yaw = 0.0;
-    entry.is_self = is_self;
     return entry;
 }
 
-// Blind status is a normal field group, so it must inherit the same
-// Missing/Invalid/Stale semantics as every other group rather than a bypass.
-void store_tracks_blind_status_like_any_other_group() {
+// The radar message is a full snapshot of the eight robots, not a delta, and the
+// drawing order must not depend on delivery order.
+void store_replaces_and_sorts_radar_robots() {
     Store store(10);
-    check(store.snapshot(0).blind.self_base_blinded.quality == Quality::Missing,
-          "blind starts Missing");
-    check(store.snapshot(0).blind.self_base_blinded.freshness == Freshness::NeverReceived,
-          "blind starts NeverReceived");
-
-    inbound::BlindStatus blind;
-    blind.self_base_blinded = true;
-    blind.blind_started_ms = 1000;
-    blind.cause = 1;
-    check(store.apply(blind, 0), "blind status accepted");
-
+    store.setSelf(RobotId{3});
+    inbound::RadarSet radar;
+    radar.entries = {radar_entry(104, 1, 1), radar_entry(3, 2, 2), radar_entry(7, 3, 3)};
+    check(store.apply(radar, 0), "radar set accepted");
     auto snapshot = store.snapshot(0);
-    check(snapshot.blind.self_base_blinded.quality == Quality::Valid, "blind reports Valid");
-    check(snapshot.blind.self_base_blinded.value == true, "blind flag value preserved");
-    check(snapshot.blind.cause.value == 1, "blind cause preserved");
-    check(snapshot.blind.blind_remaining_ms.quality == Quality::Missing,
-          "an omitted blind field stays Missing rather than becoming zero");
-    check(!snapshot.blind.blind_remaining_ms.value, "omitted blind field holds no value");
-    check(store.snapshot(10).blind.self_base_blinded.freshness == Freshness::Stale,
-          "blind ages into Stale on the shared threshold");
-
-    inbound::BlindStatus bad;
-    bad.cause = 7;
-    check(!store.apply(bad, 10), "out of range blind cause rejected");
-    snapshot = store.snapshot(10);
-    check(snapshot.blind.cause.quality == Quality::Invalid, "invalid cause reported as Invalid");
-    check(snapshot.blind.cause.value == 1, "invalid cause does not erase the last valid value");
-}
-
-// The position set is a full snapshot, not a delta. Accumulating would grow
-// without bound across a match and leave dead robots on the map.
-void store_replaces_map_robots_wholesale() {
-    Store store(10);
-    inbound::RobotPositionSet three;
-    three.entries = {map_entry(1, 1, 1, 1), map_entry(2, 1, 2, 2), map_entry(3, 2, 3, 3)};
-    check(store.apply(three, 0), "three entry set accepted");
-    check(store.snapshot(0).map_robots.size() == 3, "three robots stored");
-
-    inbound::RobotPositionSet one;
-    one.entries = {map_entry(7, 2, 5, 5)};
-    check(store.apply(one, 1), "single entry set accepted");
-    auto snapshot = store.snapshot(1);
-    check(snapshot.map_robots.size() == 1, "the set replaces wholesale instead of accumulating");
-    check(snapshot.map_robots[0].id.value == 7, "the surviving robot comes from the newest set");
-
-    inbound::RobotPositionSet empty;
-    check(store.apply(empty, 2), "an empty set is legal");
-    check(store.snapshot(2).map_robots.empty(), "an empty set clears the list");
-}
-
-// Unordered delivery must not reorder the drawing sequence, or screenshot
-// evidence cannot be compared frame to frame.
-void store_sorts_map_robots_by_id() {
-    Store store(10);
-    inbound::RobotPositionSet set;
-    set.entries = {map_entry(104, 2, 1, 1), map_entry(3, 1, 2, 2), map_entry(7, 1, 3, 3)};
-    check(store.apply(set, 0), "unordered set accepted");
-    const auto snapshot = store.snapshot(0);
-    check(snapshot.map_robots.size() == 3, "all three robots kept");
+    check(snapshot.map_robots.size() == 3, "three robots stored");
     check(snapshot.map_robots[0].id.value == 3 && snapshot.map_robots[1].id.value == 7 &&
-          snapshot.map_robots[2].id.value == 104,
+              snapshot.map_robots[2].id.value == 104,
           "map robots are sorted by ascending id");
-}
 
-void store_discards_map_entries_without_identity() {
-    Store store(10);
-    inbound::RobotPositionEntry anonymous;
-    anonymous.x = 5.0;
-    anonymous.y = 5.0;
-    inbound::RobotPositionSet set;
-    set.entries = {map_entry(4, 1, 1, 1), anonymous};
-    check(!store.apply(set, 0), "a set holding an identity-less entry reports invalid");
-    const auto snapshot = store.snapshot(0);
-    check(snapshot.map_robots.size() == 1, "the identity-less entry is discarded");
-    check(snapshot.map_robots[0].id.value == 4, "the identified entry survives");
+    inbound::RadarSet one;
+    one.entries = {radar_entry(7, 5, 5)};
+    check(store.apply(one, 1), "single entry set accepted");
+    snapshot = store.snapshot(1);
+    check(snapshot.map_robots.size() == 1, "the set replaces wholesale instead of accumulating");
+
+    inbound::RadarSet anonymous;
+    anonymous.entries = {radar_entry(0, 1, 1), radar_entry(4, 1, 1)};
+    check(!store.apply(anonymous, 2), "an identity-less entry reports invalid");
+    snapshot = store.snapshot(2);
+    check(snapshot.map_robots.size() == 1 && snapshot.map_robots[0].id.value == 4,
+          "the identity-less entry is discarded");
     check(snapshot.map_invalid_entries == 1, "the discard is counted");
 }
 
-// The single-robot path is module one's verified pipeline. If a simulated set
-// could overwrite our own coordinates, a real robot would silently render from
-// fabricated data.
+// The single-robot path is the only authority for our own coordinates. If the
+// radar could overwrite them, a real robot would silently render from somebody
+// else's estimate.
 void store_keeps_authoritative_self_position() {
     Store store(10);
+    store.setSelf(RobotId{3});
+    inbound::RadarSet radar;
+    radar.entries = {radar_entry(3, 99.0, 99.0), radar_entry(4, 1.0, 1.0)};
+    check(store.apply(radar, 0), "radar carrying the seat accepted");
+    auto snapshot = store.snapshot(0);
+    check(snapshot.map_robots[0].is_self, "the seat is identified");
+    check(!snapshot.map_robots[0].position.x.value, "the radar's 99 never becomes our position");
+    check(snapshot.map_robots[0].position.x.freshness == Freshness::NeverReceived,
+          "a never received self position reports NeverReceived");
+
     inbound::RobotPosition authoritative;
     authoritative.x = 3.0;
     authoritative.y = 4.0;
     authoritative.yaw = 90.0;
-    check(store.apply(authoritative, RobotId{3}, 0), "authoritative self position accepted");
-
-    inbound::RobotPositionSet set;
-    set.entries = {map_entry(3, 1, 99.0, 99.0, true), map_entry(4, 1, 1.0, 1.0)};
-    check(store.apply(set, 0), "set carrying a self entry accepted");
-
-    const auto snapshot = store.snapshot(0);
+    check(store.apply(authoritative, RobotId{3}, 1), "authoritative self position accepted");
+    snapshot = store.snapshot(1);
     const auto& self = snapshot.map_robots[0];
-    check(self.id.value == 3 && self.is_self, "the self robot is identified from the set");
-    check(self.position.x.value == 3.0, "self x comes from the authoritative path, not the set's 99");
-    check(self.position.y.value == 4.0, "self y comes from the authoritative path");
-    check(self.position.yaw.value == 90.0, "self yaw comes from the authoritative path");
-    check(self.position.x.quality == Quality::Valid, "authoritative self position is Valid");
-    check(snapshot.map_robots[1].position.x.value == 1.0,
-          "a teammate still uses the coordinates carried by the set");
-}
-
-void store_leaves_self_position_missing_without_authoritative_source() {
-    Store store(10);
-    inbound::RobotPositionSet set;
-    set.entries = {map_entry(3, 1, 99.0, 99.0, true)};
-    check(store.apply(set, 0), "self entry accepted with no authoritative position yet");
-    const auto snapshot = store.snapshot(0);
-    check(snapshot.map_robots.size() == 1, "the self robot is still listed");
-    check(snapshot.map_robots[0].position.x.quality == Quality::Missing,
-          "self position stays Missing instead of falling back to fabricated coordinates");
-    check(!snapshot.map_robots[0].position.x.value, "the fabricated 99 never leaks through");
-    check(snapshot.map_robots[0].position.x.freshness == Freshness::NeverReceived,
-          "a never received self position reports NeverReceived");
-}
-
-void store_demotes_duplicate_self_claims() {
-    Store store(10);
-    inbound::RobotPositionSet set;
-    set.entries = {map_entry(9, 1, 1.0, 1.0, true), map_entry(2, 1, 2.0, 2.0, true)};
-    check(!store.apply(set, 0), "a set with two self claims reports invalid");
-    const auto snapshot = store.snapshot(0);
-    check(snapshot.map_robots.size() == 2, "both robots survive");
-    check(snapshot.map_robots[0].id.value == 2 && snapshot.map_robots[0].is_self,
-          "the lowest id keeps the self identity");
-    check(snapshot.map_robots[1].id.value == 9 && !snapshot.map_robots[1].is_self,
-          "the higher id is demoted to a teammate");
-    check(snapshot.map_invalid_entries == 1, "the duplicate self claim is counted");
-    check(snapshot.map_robots[1].position.x.value == 1.0,
-          "the demoted robot keeps the coordinates from the set");
-}
-
-// Faction is never inferred from robot_id: the 2027 id encoding is unknown, so
-// inferring would state a side with false confidence.
-void store_normalizes_unknown_faction() {
-    Store store(10);
-    inbound::RobotPositionEntry absent;
-    absent.robot_id = 6;
-    absent.x = 2.0;
-    absent.y = 2.0;
-    inbound::RobotPositionSet set;
-    set.entries = {map_entry(5, 7, 1.0, 1.0), absent, map_entry(8, 2, 3.0, 3.0)};
-    check(!store.apply(set, 0), "an out of range faction reports invalid");
-    const auto snapshot = store.snapshot(0);
-    check(snapshot.map_robots.size() == 3, "no entry is dropped over faction alone");
-    check(snapshot.map_robots[0].faction == 0, "faction 7 normalises to unknown");
-    check(snapshot.map_robots[1].faction == 0, "an absent faction is unknown");
-    check(snapshot.map_robots[2].faction == 2, "a legal faction is preserved verbatim");
-    check(snapshot.map_invalid_entries == 1,
-          "only the out of range faction counts as invalid; absence is not corruption");
+    check(self.id.value == 3 && self.is_self && !self.from_radar, "self is drawn from RobotPosition");
+    check(self.position.x.value == 3.0 && self.position.yaw.value == 90.0, "self pose is the authoritative one");
+    check(snapshot.map_robots[1].position.x.value == 1.0, "a teammate still uses the radar");
 }
 
 void store_carries_base_hp_through_conversion() {
     Store store(10);
     inbound::GameStatus game;
-    game.red_base_hp = 1500;
-    game.red_base_max_hp = 1500;
-    game.blue_base_hp = 1451;
-    game.blue_base_max_hp = 1500;
+    game.red_base_hp = 10000;
+    game.red_base_max_hp = 10000;
+    game.blue_base_hp = 9451;
+    game.blue_base_max_hp = 10000;
     check(store.apply(game, 0), "base hp update accepted");
 
     const auto snapshot = store.snapshot(0);
-    check(snapshot.game.red_base_hp.value == 1500, "red base hp reaches the snapshot");
-    check(snapshot.game.red_base_max_hp.value == 1500, "red base max hp reaches the snapshot");
-    check(snapshot.game.blue_base_hp.value == 1451, "blue base hp reaches the snapshot");
-    check(snapshot.game.blue_base_max_hp.value == 1500, "blue base max hp reaches the snapshot");
+    check(snapshot.game.red_base_hp.value == 10000u, "red base hp reaches the snapshot");
+    check(snapshot.game.blue_base_hp.value == 9451u, "blue base hp reaches the snapshot");
     check(snapshot.game.red_base_hp.freshness == Freshness::Fresh,
           "a received base hp is fresh, not NeverReceived");
 
     inbound::GameStatus zero_max;
     zero_max.red_base_max_hp = 0;
     check(!store.apply(zero_max, 0), "a zero base max hp reports invalid");
-    check(store.snapshot(0).game.red_base_max_hp.value == 1500,
+    check(store.snapshot(0).game.red_base_max_hp.value == 10000u,
           "the last valid base max hp survives a rejected zero");
+}
+
+// 上限血量协议不发:别的车取本局见过的最高血量(不低于兵种下限),换局清零。
+void store_estimates_max_hp_per_round() {
+    Store store(10);
+    store.setSelf(RobotId{3});
+    inbound::GameStatus game;
+    game.current_round = 1;
+    game.current_stage = 4;
+    check(store.apply(game, 0), "round one");
+    inbound::RobotHealthSet set;
+    set.entries = {{103, 250, std::nullopt}, {7, 120, std::nullopt}};
+    check(store.apply(set, 1), "health set");
+    set.entries = {{103, 90, std::nullopt}, {7, 120, std::nullopt}};
+    check(store.apply(set, 2), "damaged");
+    auto snapshot = store.snapshot(2);
+    check(snapshot.robot_health[1].id.value == 103 && snapshot.robot_health[1].max_hp.value == 250u,
+          "max hp remembers the highest hp seen");
+    check(snapshot.robot_health[0].max_hp.value == 200u, "never below the sentry floor");
+    game.current_round = 2;
+    check(store.apply(game, 3), "round two");
+    check(store.apply(set, 4), "health in round two");
+    check(store.snapshot(4).robot_health[1].max_hp.value == 150u, "the estimate resets with the round");
 }
 
 int main() {
@@ -457,16 +322,13 @@ int main() {
         game.red_score = 0;
         game.current_stage = 4;
         check(store.apply(game, 0), "valid match update");
-        check(store.snapshot(0).game.red_score.value == 0, "legitimate zero retained");
+        check(store.snapshot(0).game.red_score.value == 0u, "legitimate zero retained");
         inbound::RobotDynamicStatus dynamic;
         dynamic.current_hp = 100;
         check(!store.apply(dynamic, std::nullopt, 0), "missing robot identity rejected");
-        dynamic.robot_id = 1;
-        check(store.apply(dynamic, std::nullopt, 0), "embedded identity accepted");
-        check(!store.apply(dynamic, RobotId{2}, 0), "identity mismatch rejected");
-        dynamic.robot_id = 2;
+        check(store.apply(dynamic, RobotId{1}, 0), "identified robot accepted");
         dynamic.current_hp = 50;
-        check(store.apply(dynamic, std::nullopt, 0), "second robot accepted");
+        check(store.apply(dynamic, RobotId{2}, 0), "second robot accepted");
         inbound::RobotPosition position;
         position.x = 0.0;
         check(!store.apply(position, std::nullopt, 0), "position requires source");
@@ -480,7 +342,7 @@ int main() {
         check(snapshot.robots.at(RobotId{1}).position.y.freshness == Freshness::Fresh, "independent field freshness");
         check(snapshot.robots.at(RobotId{1}).dynamic.current_hp.freshness == Freshness::Stale, "independent group freshness");
         check(!copy.robots.at(RobotId{1}).position.y.value, "copied snapshot isolation");
-        check(snapshot.robots.at(RobotId{2}).dynamic.current_hp.value == 50, "two identities isolated");
+        check(snapshot.robots.at(RobotId{2}).dynamic.current_hp.value == 50u, "two identities isolated");
         for (double invalid : {std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity()}) {
             position.x = invalid;
             position.y.reset();
@@ -495,16 +357,9 @@ int main() {
         check(!store.apply(modules, RobotId{1}, 10), "module range rejected");
         modules.armor = 0;
         check(store.apply(modules, RobotId{1}, 10), "offline is valid zero");
-        inbound::RobotTelemetry telemetry;
-        telemetry.confidence = 1.1;
-        check(!store.apply(telemetry, RobotId{1}, 10), "confidence range rejected");
-        telemetry.confidence = 0;
-        telemetry.fire_permit = false;
-        check(store.apply(telemetry, RobotId{1}, 10), "telemetry values accepted read only");
         inbound::Event event;
-        event.level = 0;
-        event.text = std::string{};
-        check(store.apply(event, 10), "global event zero and empty text");
+        event.event_id = 11;
+        check(store.apply(event, 10), "a parameterless event is accepted");
         game.current_stage = 6;
         game.red_score.reset();
         check(!store.apply(game, 10), "stage range rejected");
@@ -514,24 +369,16 @@ int main() {
         try { store.snapshot(9); } catch (const std::invalid_argument&) { rejected = true; }
         check(rejected, "backwards snapshot time rejected");
         stale_reporter_logs_once_per_transition();
-        chassis_names_match_authoritative_constants();
         robot_class_names_match_2027_lineup();
         roster_splits_the_2027_lineup_by_faction();
         event_history_orders_newest_first();
         event_history_discards_oldest_when_full();
-        event_history_preserves_unknown_levels();
         event_history_empty_returns_nothing();
-        store_deduplicates_republished_events();
-        store_keeps_distinct_events_sharing_a_millisecond();
-        store_tracks_blind_status_like_any_other_group();
-        store_replaces_map_robots_wholesale();
-        store_sorts_map_robots_by_id();
-        store_discards_map_entries_without_identity();
+        store_keeps_every_triggered_event();
+        store_replaces_and_sorts_radar_robots();
         store_keeps_authoritative_self_position();
-        store_leaves_self_position_missing_without_authoritative_source();
-        store_demotes_duplicate_self_claims();
-        store_normalizes_unknown_faction();
         store_carries_base_hp_through_conversion();
+        store_estimates_max_hp_per_round();
         std::cout << "All domain checks passed (no assert, no sleep).\n";
         return 0;
     } catch (const std::exception& error) {

@@ -30,6 +30,9 @@ public:
 
     void start();
 
+    // 往控制器写一帧。串口没开或写不完整就丢掉、返回 false,从不排队:晚到的回传是旧姿态。
+    bool send(const QByteArray& frame);
+
     struct Stats {
         bool configured = false;
         bool open = false;
@@ -39,6 +42,7 @@ public:
         std::uint64_t frames = 0;
         std::uint64_t bad_frames = 0;
         std::optional<MonotonicMs> last_frame_at;
+        std::uint64_t sent = 0;
         // 弧度。固件的顺序:0-3 机械臂关节,4 夹爪,5 臂 yaw。
         std::array<float, 6> joints{};
     };

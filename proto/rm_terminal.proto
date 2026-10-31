@@ -1,95 +1,100 @@
 syntax = "proto3";
 
-// 参照 RoboMaster 2026 通信协议 V2.0.0 第 2 章「自定义客户端协议」的消息定义。
-// RM2027 正式协议尚未发布，此处仅用于本地模拟与终端框架验证。
-// topic 名与 message 名一致，与 2026 协议的约定相同。
+// RoboMaster 2027 机甲大师高校系列赛通信协议 V1.0.0（2026-10-29）第 2 章「自定义终端协议」。
+// 消息名、字段名、字段编号逐条照抄 2.2.1–2.2.32，topic 名与消息名相同。
+// 服务器 192.168.12.1:3333；自定义终端 192.168.12.2；MQTT 登录名（clientID）= 所连机器人的 ID。
+// 「己方/对方」都相对自机：同一时刻红蓝两方终端收到的同一条消息，内容是镜像的。
+// 唯一偏离原文的地方是 RadarInfoToClient，原文缺字段号，见该消息的注释。
 
 package rm;
 
-// ---------------------------------------------------------------
-// 服务器 -> 终端：比赛全局状态（2026 协议 2.2.3 GameStatus，5Hz）
-// ---------------------------------------------------------------
+// 2.2.1 终端 -> 图传链路 -> 机器人，75Hz。键鼠指令来源由操作手赛前在官方选手端和自定义终端中二选一。
+message KeyboardMouseControl {
+  optional int32  mouse_x           = 1;  // 负值向左
+  optional int32  mouse_y           = 2;  // 负值向下
+  optional int32  mouse_z           = 3;  // 滚轮，负值向后
+  optional bool   left_button_down  = 4;
+  optional bool   right_button_down = 5;
+  optional uint32 keyboard_value    = 6;  // bit0 W ... bit15 B
+  optional bool   mid_button_down   = 7;
+}
+
+// 2.2.2 终端 -> 图传链路 -> 机器人（0x0311），最大 60 字节，75Hz。
+message CustomControl {
+  optional bytes data = 1;
+}
+
+// 2.2.3 服务器 -> 终端，5Hz。
 message GameStatus {
-  optional uint32 current_round      = 1;   // 当前局号，从 1 开始
-  optional uint32 total_rounds       = 2;   // 总局数
-  optional uint32 red_score          = 3;   // 红方得分
-  optional uint32 blue_score         = 4;   // 蓝方得分
-  optional uint32 current_stage      = 5;   // 0未开始 1准备 2自检 3倒计时 4比赛中 5结算
-  optional int32  stage_countdown_sec = 6;  // 当前阶段剩余时间（秒）
-  optional int32  stage_elapsed_sec  = 7;   // 当前阶段已过时间（秒）
-  optional bool   is_paused          = 8;   // 是否暂停
-  optional uint32 winner             = 9;   // 0平局 1红胜 2蓝胜，非结算阶段为 255
-  optional uint32 end_reason         = 10;  // 非结算阶段为 255
-  // 基地血量，对应 2026 协议 GameRobotHP 中随全场血量下发的基地字段。
-  optional uint32 red_base_hp        = 11;
-  optional uint32 red_base_max_hp    = 12;
-  optional uint32 blue_base_hp       = 13;
-  optional uint32 blue_base_max_hp   = 14;
-  // 前哨站血量。同样来自 GameRobotHP 的前哨站字段，是赛制里的关键中立目标，
-  // 和基地一样必须走协议下发，不允许界面侧推算。
-  optional uint32 red_outpost_hp     = 15;
-  optional uint32 red_outpost_max_hp = 16;
-  optional uint32 blue_outpost_hp    = 17;
-  optional uint32 blue_outpost_max_hp = 18;
-  // 参赛队名。官方选手端顶栏显示学校/队名，此处随 GameStatus 低频下发即可。
-  optional string red_team_name      = 19;
-  optional string blue_team_name     = 20;
-  // 语义照 2026 协议既有物：经济对应 GameInfo.red_economy/blue_economy，
-  // 总伤害对应 GlobalUnitStatus.total_damage_*。必须服务器下发：终端只有自机
-  // coin，且受击不带攻击方 ID，界面侧无法把血量下降归因到输出方。
-  optional uint32 red_economy        = 21;
-  optional uint32 blue_economy       = 22;
-  optional uint32 red_total_damage   = 23;
-  optional uint32 blue_total_damage  = 24;
-  // 堡垒占领。语义照 2026 协议 GlobalSpecialMechanism：占领是「持续秒数」而非血量，
-  // 双方各自累计。占领方为 0 未占领 1 红方 2 蓝方，和血量类字段不同，必须区分
-  // 「无人占领」与「没收到这一帧」，故同样为 optional。
-  optional uint32 red_fortress_sec   = 25;
-  optional uint32 blue_fortress_sec  = 26;
-  optional uint32 fortress_holder    = 27;
-  // 击杀数与能量机关激活次数。上游选手端结算面板把这两项与伤害、血量并列展示，
-  // 但终端无法自行统计：击伤不带攻击方 ID，能量机关激活也没有面向单机的回执，
-  // 所以和经济/总伤害同样必须由服务器汇总下发。
-  optional uint32 red_kills          = 28;
-  optional uint32 blue_kills         = 29;
-  optional uint32 red_energy_activations  = 30;
-  optional uint32 blue_energy_activations = 31;
-  // 2027 规则：4 个阵地（前哨/基地 × 红/蓝）各自的控制状态。
-  // 0未控 1红方临时 2红方完全 3蓝方临时 4蓝方完全。
-  // 临时/完全是占领进度，所以不能退化成 0/1/2 的阵营编码。
-  // RM2027 正式协议未发布，字段编号为本地模拟词汇，不得视为正式合同。
-  optional uint32 red_outpost_zone   = 32;
-  optional uint32 blue_outpost_zone  = 33;
-  optional uint32 red_base_zone      = 34;
-  optional uint32 blue_base_zone     = 35;
-  // 控制度累计值。完全控制前哨 +1/秒、完全控制基地 +3/秒，服务器按秒累加。
-  optional uint32 red_control_points  = 36;
-  optional uint32 blue_control_points = 37;
-  // 加固机会，每满一分钟双方各 +1，可累积。
-  optional uint32 red_reinforce_chances  = 38;
-  optional uint32 blue_reinforce_chances = 39;
+  optional uint32 current_round       = 1;   // 从 1 开始
+  optional uint32 total_rounds        = 2;
+  optional uint32 red_score           = 3;
+  optional uint32 blue_score          = 4;
+  optional uint32 current_stage       = 5;   // 0未开始 1准备 2十五秒自检 3五秒倒计时 4比赛中 5结算中
+  optional int32  stage_countdown_sec = 6;
+  optional int32  stage_elapsed_sec   = 7;
+  optional bool   is_paused           = 8;
+  optional uint32 game_result         = 9;   // 0平局 1红胜 2蓝胜；非结算阶段为 255
+  optional uint32 end_reason          = 10;  // 1基地摧毁 2控制度 3总伤害 4总剩余血量 5平局 6异常终止 7主裁判定；非结算为 255
 }
 
-// ---------------------------------------------------------------
-// 服务器 -> 终端：机器人实时数据（对应 2026 协议 RobotDynamicStatus，10Hz）
-// ---------------------------------------------------------------
-message RobotDynamicStatus {
-  optional uint32 robot_id           = 1;   // 附录二 ID 编号
-  optional uint32 current_hp         = 2;
-  optional uint32 max_hp             = 3;
-  optional uint32 shooter_heat_17mm  = 4;
-  optional uint32 shooter_heat_limit = 5;
-  optional float  bullet_speed       = 6;   // m/s
-  optional uint32 remaining_ammo     = 7;   // 允许发弹量
-  optional uint32 coin               = 8;   // 剩余金币
-  optional float  chassis_power      = 9;   // W
-  optional float  buffer_energy      = 10;  // J
+// 2.2.4 服务器 -> 终端，1Hz。
+message GlobalUnitStatus {
+  optional uint32 base_health        = 1;   // 己方基地血量，0 = 已摧毁
+  optional uint32 base_status        = 2;   // 0有100%防御增益 1无增益且护甲未展开 2无增益且护甲展开
+  optional uint32 base_shield        = 3;   // 己方基地阵地：1己方完全控制 2对方临时控制
+  optional uint32 outpost_R_health   = 4;   // R（红方）前哨站血量
+  optional uint32 outpost_R_status   = 5;   // R 前哨阵地：1己方完全 2己方临时 3对方临时 4对方完全
+  optional uint32 enemy_base_health  = 6;
+  optional uint32 enemy_base_status  = 7;
+  optional uint32 enemy_base_shield  = 8;   // 对方基地阵地：1对方完全控制 2己方临时控制
+  optional uint32 outpost_B_health   = 9;   // B（蓝方）前哨站血量
+  optional uint32 outpost_B_status   = 10;  // 同 outpost_R_status
+  repeated uint32 robot_health       = 11;  // 己方 1,3,4,7，对方 1,3,4,7
+  repeated int32  robot_bullets      = 12;  // 己方剩余累计发弹量（协议未写顺序，按 1,3,4,7 读）
+  optional uint32 total_damage_ally  = 13;
+  optional uint32 total_damage_enemy = 14;
+  optional uint32 total_CP_ally      = 15;  // 控制度
+  optional uint32 total_CP_enemy     = 16;
 }
 
-// ---------------------------------------------------------------
-// 服务器 -> 终端：本机复活状态（2026 协议 RobotRespawnStatus，1Hz）
-// 2027 规则允许免费读条复活与金币兑换立即复活，字段沿用 2026 定义。
-// ---------------------------------------------------------------
+// 2.2.5 服务器 -> 终端，1Hz。只有己方。
+message GlobalLogisticsStatus {
+  optional uint32 remaining_economy      = 1;
+  optional uint64 total_economy_obtained = 2;
+  optional uint32 tech_level             = 3;  // 重装已成功装配的最高难度
+  optional uint32 encryption_level       = 4;  // 雷达解析信息波机制
+}
+
+// 2.2.6 服务器 -> 终端，1Hz。只列正在生效的机制。
+// 1己方堡垒被对方激活计时 2对方堡垒被己方激活计时 3R前哨阵地 4B前哨阵地 5R基地阵地 6B基地阵地；
+// 3–6 的符号表示方向：>0 己方在推进激活进度，<0 对方在推进，0 无变化。
+message GlobalSpecialMechanism {
+  repeated uint32 mechanism_id       = 1;
+  repeated int32  mechanism_time_sec = 2;
+}
+
+// 2.2.7 服务器 -> 终端，触发式。param 的含义随 event_id 变化，见 cpp/match_event.cpp。
+message Event {
+  optional int32  event_id = 1;
+  optional string param    = 2;
+}
+
+// 2.2.8 服务器 -> 终端，1Hz。自机一次存活期间累计受伤。
+message RobotInjuryStat {
+  optional uint32 total_damage            = 1;
+  optional uint32 collision_damage        = 2;
+  optional uint32 small_projectile_damage = 3;
+  optional uint32 large_projectile_damage = 4;
+  optional uint32 dart_splash_damage      = 5;
+  optional uint32 module_offline_damage   = 6;
+  optional uint32 offline_damage          = 7;
+  optional uint32 penalty_damage          = 8;
+  optional uint32 server_kill_damage      = 9;
+  optional uint32 killer_id               = 10;  // 0 = 未检测到击杀者
+}
+
+// 2.2.9 服务器 -> 终端，1Hz。
 message RobotRespawnStatus {
   optional bool   is_pending_respawn       = 1;
   optional uint32 total_respawn_progress   = 2;
@@ -99,143 +104,215 @@ message RobotRespawnStatus {
   optional bool   can_pay_for_respawn      = 6;
 }
 
-// ---------------------------------------------------------------
-// 服务器 -> 终端：机器人各模块在线状态
-// （2026 协议 2.2.12 RobotModuleStatus：0离线 1在线 2安装不规范视为离线）
-// ---------------------------------------------------------------
+// 2.2.10 服务器 -> 终端，1Hz。
+message RobotStaticStatus {
+  optional uint32 connection_state           = 1;   // 0未连接 1已连接
+  optional uint32 field_state                = 2;   // 0已上场 1未上场
+  optional uint32 alive_state                = 3;   // 0未知 1存活 2战亡
+  optional uint32 robot_id                   = 4;
+  optional uint32 robot_type                 = 5;
+  optional uint32 performance_system_shooter = 6;   // 1冷却优先 2爆发优先
+  optional uint32 performance_system_chassis = 7;   // 1血量优先 2功率优先
+  optional uint32 level                      = 8;
+  optional uint32 max_health                 = 9;
+  optional uint32 max_heat                   = 10;
+  optional float  heat_cooldown_rate         = 11;  // 每秒
+  optional uint32 max_power                  = 12;
+  optional uint32 max_buffer_energy          = 13;
+  optional uint32 max_chassis_energy         = 14;
+}
+
+// 2.2.11 服务器 -> 终端，10Hz。没有 robot_id：只发自机。
+message RobotDynamicStatus {
+  optional uint32 current_health            = 1;
+  optional float  current_heat              = 2;
+  optional float  last_projectile_fire_rate = 3;   // 上一发弹丸射速
+  optional uint32 reserved                  = 4;
+  optional uint32 current_buffer_energy     = 5;
+  optional uint32 current_experience        = 6;
+  optional uint32 experience_for_upgrade    = 7;
+  optional uint32 total_projectiles_fired   = 8;
+  optional uint32 remaining_ammo            = 9;   // 剩余允许发弹量
+  optional bool   is_out_of_combat          = 10;
+  optional uint32 out_of_combat_countdown   = 11;
+  optional bool   can_remote_heal           = 12;
+  optional bool   can_remote_ammo           = 13;
+}
+
+// 2.2.12 服务器 -> 终端，1Hz。1–10：0离线 1在线 2因安装不规范视为离线。
 message RobotModuleStatus {
-  optional uint32 power_manager       = 1;
-  optional uint32 rfid                = 2;
-  optional uint32 light_strip         = 3;
-  optional uint32 small_shooter       = 4;
-  optional uint32 big_shooter         = 5;
-  optional uint32 uwb                 = 6;
-  optional uint32 armor               = 7;
-  optional uint32 video_transmission  = 8;
-  optional uint32 capacitor           = 9;
-  optional uint32 main_controller     = 10;
-  optional uint32 laser_detection_module = 11;
+  optional uint32 power_manager      = 1;
+  optional uint32 rfid               = 2;
+  optional uint32 light_strip        = 3;
+  optional uint32 small_shooter      = 4;
+  optional uint32 big_shooter        = 5;
+  optional uint32 uwb                = 6;
+  optional uint32 armor              = 7;
+  optional uint32 video_transmission = 8;
+  optional uint32 capacitor          = 9;
+  optional uint32 main_controller    = 10;
+  optional uint32 modular_42mm       = 11;  // 仅重装：是否有模块化 42mm 发射机构安装权限，0无 1有
 }
 
-// ---------------------------------------------------------------
-// 服务器 -> 终端：机器人坐标与朝向（2026 协议 2.2.13 RobotPosition，1Hz）
-// ---------------------------------------------------------------
+// 2.2.13 服务器 -> 终端，1Hz。
 message RobotPosition {
-  optional float x   = 1;
-  optional float y   = 2;
-  optional float yaw = 3;
+  optional float  x        = 1;
+  optional float  y        = 2;
+  optional float  z        = 3;
+  optional float  yaw      = 4;  // 测速模块朝向，度，正北为 0
+  optional uint32 robot_id = 5;  // 坐标归属；7/107 为哨兵（仅指挥手客户端生效）
 }
 
-// ---------------------------------------------------------------
-// 服务器 -> 终端：全局事件通知（2026 协议 Event，触发式）
-// ---------------------------------------------------------------
-message Event {
-  optional uint64 timestamp_ms = 1;
-  optional uint32 level        = 2;   // 0信息 1提示 2警告 3严重
-  optional string text         = 3;
-  // 事件主体所属阵营，决定横幅配色。与血量类字段同理必须区分「中立/无阵营」
-  // 和「没收到」，故为 optional：0未知 1红方 2蓝方。
-  optional uint32 faction      = 4;
+// 2.2.14 服务器 -> 终端。获得增益时触发，之后 1Hz 直到失去增益。
+message Buff {
+  optional uint32 robot_id       = 1;
+  optional uint32 buff_type      = 2;  // 1攻击 2防御/易伤 3热量冷却 4底盘功率 5回血 6可兑换发弹量 7地形跨越（预备）
+  optional int32  buff_level     = 3;
+  optional uint32 buff_max_time  = 4;
+  optional uint32 buff_left_time = 5;
 }
 
-// ---------------------------------------------------------------
-// 终端 -> 机器人：最大 30 字节自定义数据
-// （2026 协议 2.2.2 CustomControl，经图传链路以 0x0311 下发，75Hz）
-// ---------------------------------------------------------------
-message CustomControl {
+// 2.2.15 服务器 -> 终端，触发式。
+message PenaltyInfo {
+  optional uint32 penalty_type       = 1;  // 1黄牌 2双方黄牌 3红牌 4超功率 5超热量 6超射速
+  optional uint32 penalty_effect_sec = 2;
+  optional uint32 total_penalty_num  = 3;
+}
+
+// 2.2.16 服务器 -> 终端，触发式。哨兵轨迹规划。
+message RobotPathPlanInfo {
+  optional uint32 intention   = 1;                  // 1攻击 2防守 3移动
+  optional uint32 start_pos_x = 2;                  // 分米
+  optional uint32 start_pos_y = 3;                  // 分米
+  repeated int32  offset_x    = 4 [packed = true];  // 相对起点增量，-128~+127，长度 49
+  repeated int32  offset_y    = 5 [packed = true];
+  optional uint32 sender_id   = 6;
+}
+
+// 2.2.17 服务器 -> 终端，触发式。字段和 MapClickCmd 相同。
+// 注意：mode 是「标记类型」（1攻击 2防御 3警戒 4自定义），type 是「标记模式」（1地图 2对方机器人）。
+message MapClickInfo {
+  optional uint32 is_send_all = 1;  // 0指定客户端 1除哨兵 2包含哨兵
+  optional bytes  robot_id    = 2;  // 固定 7 字节，例：红方发给重装和哨兵填 1,7，其余填 0
+  optional uint32 mode        = 3;
+  optional uint32 enemy_id    = 4;
+  optional uint32 ascii       = 5;  // 仅 mode=4：只允许 C–L、N、O、Q–Z
+  optional uint32 type        = 6;
+  optional float  map_x       = 7;  // m
+  optional float  map_y       = 8;  // m
+}
+
+// 2.2.18 终端 -> 服务器，触发式。两次标记间隔不低于 0.5 秒（1.3.1）。
+message MapClickCmd {
+  optional uint32 is_send_all = 1;
+  optional bytes  robot_id    = 2;
+  optional uint32 mode        = 3;
+  optional uint32 enemy_id    = 4;
+  optional uint32 ascii       = 5;
+  optional uint32 type        = 6;
+  optional float  map_x       = 7;
+  optional float  map_y       = 8;
+}
+
+// 2.2.19 服务器 -> 终端，触发式。每次都按对方 1,3,4,7、己方 1,3,4,7 的顺序发 8 份，坐标单位 cm。
+// 原文写成 `repeated uint32 RadarSingleRobotInfo;`（没有字段号），表格写字段 1 为 repeated uint32，
+// 又单独定义了 RadarSingleRobotInfo。这里按「字段 1 是 repeated RadarSingleRobotInfo」理解；
+// 终端解码时两种编码都认（另一种是字段 1 按 x,y,标识 三个一组的扁平 uint32），见 cpp/decoder.cpp。
+message RadarInfoToClient {
+  repeated RadarSingleRobotInfo robots = 1;
+}
+message RadarSingleRobotInfo {
+  optional uint32 target_pos_x  = 1;  // cm
+  optional uint32 target_pos_y  = 2;  // cm
+  optional uint32 is_high_light = 3;  // 0否 1是 2是但目标定位模块离线
+}
+
+// 2.2.20 机器人（0x0310）-> 图传链路 -> 终端，最大 2.4 kbit（300 字节），50Hz。
+// 重装的前 25 字节是机械臂回传，终端按 0x0309 转给控制器。
+message CustomByteBlock {
   optional bytes data = 1;
 }
 
-// ---------------------------------------------------------------
-// 终端 -> 服务器：常用赛事指令（2026 协议 CommonCommand，最高 10Hz）
-// ---------------------------------------------------------------
+// 2.2.21 终端 -> 服务器，触发式，最高 10Hz。
+message AssemblyCommand {
+  optional uint32 operation  = 1;  // 0开始兑换 1确认装配 2取消装配
+  optional uint32 difficulty = 2;
+}
+
+// 2.2.22 服务器 -> 终端，1Hz。
+message TechCoreMotionStateSync {
+  optional uint32 maximum_difficulty_level = 1;
+  optional uint32 basic_state              = 2;  // 1初始位置 2运动中 3已到达对应位姿
+  optional uint32 putin_state              = 3;  // 0未放入 1已放入
+  optional uint32 move_state               = 4;  // 0未平移 1已平移
+  optional uint32 rotate_state             = 5;  // 0未旋转 1已旋转
+  optional uint32 enemy_core_status        = 6;  // 仅己方四级可用时有效：0无 1对方装配非四级 2对方装配四级
+  optional uint32 remain_time_all          = 7;  // 仅己方正在四级装配时有效
+  optional uint32 remain_time_step         = 8;  // 四级装配中或战亡临时激活缓冲期有效
+}
+
+// 2.2.23 终端 -> 服务器，触发式，最高 10Hz。
+message RobotPerformanceSelectionCommand {
+  optional uint32 shooter        = 1;
+  optional uint32 chassis        = 2;
+  optional uint32 sentry_control = 3;  // 0自动 1半自动
+}
+
+// 2.2.24 服务器 -> 终端，1Hz。
+message RobotPerformanceSelectionSync {
+  optional uint32 shooter        = 1;
+  optional uint32 chassis        = 2;
+  optional uint32 sentry_control = 3;
+}
+
+// 2.2.25 终端 -> 服务器，触发式，最高 10Hz。
+// 1兑换17mm发弹量(参数为10的倍数) 2兑换42mm发弹量 3确认复活 4兑换立即复活 5远程兑换发弹量 6远程兑换血量
 message CommonCommand {
+  optional uint32 cmd_type = 1;
+  optional uint32 param    = 2;
+}
+
+// 2.2.26 终端 -> 服务器，触发式，最高 10Hz。
+message RuneActivateCommand {
+  optional uint32 activate = 1;  // 1 = 开启
+}
+
+// 2.2.27 服务器 -> 终端，1Hz。
+message RuneStatusSync {
+  optional uint32 rune_status    = 1;  // 1未激活 2正在激活 3已激活
+  optional uint32 activated_arms = 2;
+  optional float  average_rings  = 3;  // 仅大能量机关正在激活时有效
+}
+
+// 2.2.28 服务器 -> 终端，1Hz。
+message SentryStatusSync {
+  optional uint32 posture_id  = 1;  // 1进攻 2防御 3移动
+  optional bool   is_weakened = 2;
+  optional bool   is_powered  = 3;  // 是否强化
+}
+
+// 2.2.29 终端 -> 服务器，触发式，最高 10Hz。
+message DartCommand {
+  optional uint32 target_id      = 1;  // 1前哨站 2基地固定 3基地随机固定 4基地随机移动 5基地末端移动
+  optional bool   open           = 2;  // 闸门开关
+  optional bool   launch_confirm = 3;  // 确认发射
+}
+
+// 2.2.30 服务器 -> 终端，1Hz。
+message DartSelectTargetStatusSync {
+  optional uint32 target_id = 1;
+  optional uint32 open      = 2;  // 0关闭 1开启中 2已开启
+}
+
+// 2.2.31 终端 -> 服务器，触发式，最高 10Hz。
+// 1补血点补弹 3远程补弹 4远程回血 5确认复活 6确认花费金币复活
+// 7进攻姿态 8防御姿态 9移动姿态 10强化进攻 11强化防御 12强化移动；0 无效
+message SentryCtrlCommand {
   optional uint32 command_id = 1;
-  optional uint32 param      = 2;
 }
 
-// ---------------------------------------------------------------
-// 机器人 -> 终端：机器人自定义上传数据流
-// （2026 协议 CustomByteBlock，机器人端对应 0x0310，最大 300 字节，50Hz）
-// 这里用结构化字段承载电控/视觉状态，实际比赛需按正式协议打包。
-// ---------------------------------------------------------------
-message RobotTelemetry {
-  optional uint32 sequence        = 1;
-  optional uint64 timestamp_us    = 2;
-  optional float  gimbal_yaw      = 3;   // deg
-  optional float  gimbal_pitch    = 4;   // deg
-  optional uint32 chassis_mode    = 5;   // 见 core/constants.py CHASSIS_MODES
-  optional bool   vision_online   = 6;   // 机器人端视觉进程心跳
-  optional bool   autoaim_enabled = 7;   // 自瞄是否启用
-  optional bool   target_locked   = 8;   // 是否锁定目标
-  optional uint32 target_id       = 9;   // 目标机器人 ID
-  optional float  target_distance = 10;  // m
-  optional float  target_yaw_err  = 11;  // deg
-  optional float  target_pitch_err = 12; // deg
-  optional float  confidence      = 13;  // 0~1
-  optional float  friction_rpm    = 14;  // 摩擦轮转速
-  optional bool   fire_permit     = 15;  // 允许发射
-  // 工业相机像素坐标系下的目标框（1920x1080），仅用于终端叠加显示
-  optional float  bbox_cx         = 16;
-  optional float  bbox_cy         = 17;
-  optional float  bbox_w          = 18;
-  optional float  bbox_h          = 19;
-}
-
-// ---------------------------------------------------------------
-// 服务器 -> 终端：我方基地致盲状态
-// RM2027 正式协议尚未发布；以下字段为本地模拟词汇，不得视为正式合同。
-// 之所以用结构化字段而非塞进 Event.text：文本解析不可测且脆弱。
-// ---------------------------------------------------------------
-message BlindStatus {
-  optional bool   self_base_blinded = 1;  // 我方基地当前是否处于致盲（等价于 affected_faction == 1）
-  optional uint64 blind_started_ms  = 2;  // 致盲开始时刻（ms）
-  optional int32  blind_remaining_ms = 3; // 预计剩余致盲时长（ms）
-  optional uint32 cause             = 4;  // 0未致盲 1对方飞镖命中我方基地 2其他
-  // 被遮挡的是哪一方、中的是哪类飞镖目标。协议只有自机视角，模拟器要手动触发
-  // 红/蓝任一方中镖，这两项是本地模拟词汇，终端可忽略。
-  optional uint32 affected_faction  = 5;  // 0未致盲 1红方 2蓝方
-  optional uint32 target_type       = 6;  // 1前哨站 2基地固定 3基地随机固定 4基地随机移动 5基地末端移动
-}
-
-// ---------------------------------------------------------------
-// 服务器 -> 终端：多机器人位置集合（战术地图用）
-// RM2027 正式协议尚未发布；以下字段为本地模拟词汇，不得视为正式合同。
-// 既有 RobotPosition（见上）是模块一既有链路，保持原样不改不删。
-// ---------------------------------------------------------------
-message RobotPositionSet {
-  repeated RobotPositionEntry entries = 1;
-}
-
-// ---------------------------------------------------------------
-// 服务器 -> 终端：单个机器人位置条目
-// RM2027 正式协议尚未发布；以下字段为本地模拟词汇，不得视为正式合同。
-// 全部字段为 optional：缺失（has_x()==false）必须与真实的 0 坐标区分开。
-// ---------------------------------------------------------------
-message RobotPositionEntry {
-  optional uint32 robot_id = 1;  // 附录二 ID 编号
-  optional uint32 faction  = 2;  // 0未知 1红方 2蓝方
-  optional float  x        = 3;  // m，场地坐标
-  optional float  y        = 4;  // m，场地坐标
-  optional float  yaw      = 5;  // deg
-  optional bool   is_self  = 6;  // 是否为本终端所属机器人
-}
-
-// ---------------------------------------------------------------
-// 服务器 -> 终端：全场机器人血量集合（顶部栏双方阵容用）
-// 对应 2026 协议 2.2.4 GameRobotHP：一帧给出全场所有机器人血量，而单机
-// RobotDynamicStatus 只覆盖自机。缺此消息时终端无法知道队友与敌方血量。
-// RM2027 正式协议尚未发布；以下字段为本地模拟词汇，不得视为正式合同。
-// ---------------------------------------------------------------
-message RobotHealthSet {
-  repeated RobotHealthEntry entries = 1;
-}
-
-// 全部字段为 optional：缺失（has_current_hp()==false）必须与真实的 0 血区分，
-// 0 血是「阵亡」，缺失是「没有这台机器人的数据」，顶部栏对两者画法不同。
-message RobotHealthEntry {
-  optional uint32 robot_id   = 1;  // 附录二 ID 编号
-  optional uint32 faction    = 2;  // 0未知 1红方 2蓝方
-  optional uint32 current_hp = 3;
-  optional uint32 max_hp     = 4;
+// 2.2.32 服务器 -> 终端，触发式。result_code 0 成功，其他失败。
+message SentryCtrlResult {
+  optional uint32 command_id  = 1;
+  optional uint32 result_code = 2;
 }

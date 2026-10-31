@@ -37,6 +37,7 @@ QVariantList roster_entry_models(const std::vector<RosterEntry>& entries) {
         map[QStringLiteral("cls")] = robot_class_name(entry.id.value);
         map[QStringLiteral("hasPosition")] = entry.has_position;
         map[QStringLiteral("positionStale")] = entry.position_stale;
+        map[QStringLiteral("bullets")] = entry.bullets ? *entry.bullets : -1;
         out.append(map);
     }
     return out;

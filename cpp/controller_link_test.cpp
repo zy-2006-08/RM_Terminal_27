@@ -11,6 +11,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <functional>
+#include <poll.h>
 #include <unistd.h>
 
 namespace {
@@ -128,6 +129,37 @@ void frames_flow_unplug_closes_and_replug_recovers(const QString& path) {
 
 }  // namespace
 
+void send_reaches_the_controller_and_stops_when_unplugged(const QString& path) {
+    FakeCable cable;
+    check(cable.plug(path), "fake cable plugged");
+    rm_terminal::ControllerLink link(path, 115200);
+    link.start();
+    check(link.stats().open, "the link opens before sending");
+
+    const QByteArray frame = rm_terminal::encode_referee_frame(
+        rm_terminal::kArmFeedbackCmd, QByteArray(rm_terminal::kCustomControllerDataBytes, '\x11'), 3);
+    check(link.send(frame), "a frame is written while the port is open");
+    check(link.stats().sent == 1, "sent frames are counted");
+
+    QByteArray received;
+    check(wait_until([&] {
+              pollfd ready{cable.master, POLLIN, 0};
+              if (::poll(&ready, 1, 0) > 0) {
+                  char buffer[128];
+                  const ssize_t got = ::read(cable.master, buffer, sizeof(buffer));
+                  if (got > 0) received.append(buffer, static_cast<int>(got));
+              }
+              return received.size() >= frame.size();
+          }, 1000),
+          "the controller side receives the bytes");
+    check(received == frame, "the frame arrives byte for byte");
+
+    cable.unplug();
+    check(wait_until([&] { return !link.stats().open; }, 1000), "unplugging closes the link");
+    check(!link.send(frame), "nothing is sent while unplugged");
+    check(link.stats().sent == 1, "a failed send is not counted");
+}
+
 int main(int argc, char* argv[]) {
     QCoreApplication app(argc, argv);
     QTemporaryDir dir;
@@ -137,6 +169,7 @@ int main(int argc, char* argv[]) {
     }
     an_unconfigured_link_stays_off();
     frames_flow_unplug_closes_and_replug_recovers(dir.filePath(QStringLiteral("arm")));
+    send_reaches_the_controller_and_stops_when_unplugged(dir.filePath(QStringLiteral("arm2")));
     if (failures != 0) {
         std::fprintf(stderr, "controller_link_test: %d check(s) failed\n", failures);
         return 1;

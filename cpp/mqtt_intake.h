@@ -29,6 +29,9 @@ public:
         std::uint64_t messages = 0;
         std::optional<MonotonicMs> last_message_at;
         std::optional<MonotonicMs> connected_at;
+        // 车经 0x0310 发来的 CustomByteBlock:2027 协议里车端唯一的上行数据,车端灯看它。
+        std::uint64_t custom_bytes = 0;
+        std::optional<MonotonicMs> last_custom_bytes_at;
     };
     LinkStats linkStats() const;
 
@@ -48,6 +51,8 @@ Q_SIGNALS:
     // 连接状态变化。从网络线程发出,Qt 的自动连接会把它排到接收者所在的线程,
     // 因此槽函数里可以安全地碰界面。
     void connectionChanged(bool connected);
+    // 车经 0x0310 发来的 CustomByteBlock 数据段。同样从网络线程发出、排到接收者线程。
+    void customBytes(QByteArray data);
 public:
     struct Impl;
     Impl* impl_;

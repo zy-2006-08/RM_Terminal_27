@@ -28,6 +28,7 @@ Field<T> present(T value) {
 // 结算快照:阶段 5 + 可信链路 + 具体 winner,这三者齐了 resolve_game_result 才出结果。
 Snapshot settlement(std::uint32_t winner) {
     Snapshot snapshot;
+    snapshot.self = RobotId{3};
     snapshot.game.current_stage = present<std::uint32_t>(5);
     snapshot.game.stage_countdown_sec = present<std::int32_t>(12);
     snapshot.game.winner = present<std::uint32_t>(winner);
@@ -43,7 +44,7 @@ Snapshot settlement(std::uint32_t winner) {
 
     RobotState state;
     state.dynamic.current_hp = present<std::uint32_t>(412);
-    state.dynamic.max_hp = present<std::uint32_t>(600);
+    state.statics.max_hp = present<std::uint32_t>(600);
     snapshot.robots.emplace(RobotId{3}, state);
     return snapshot;
 }

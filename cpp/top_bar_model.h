@@ -9,9 +9,9 @@
 
 namespace rm_terminal {
 
-constexpr std::size_t kTopBarSlotsPerSide = 5;
+constexpr std::size_t kTopBarSlotsPerSide = 4;
 
-// 一侧固定 5 个槽位,保持左右对称。缺席的槽位是**占位**:online 为假、hp 为空。
+// 一侧固定 4 个槽位(1、3、4、7),保持左右对称。缺席的槽位是**占位**:online 为假、hp 为空。
 // 绝不把「协议没报这台」补成在线或满血 —— 那会让界面谎报一台不存在的机器人。
 struct TopBarSlot {
     std::uint32_t id = 0;
@@ -30,6 +30,9 @@ struct TopBarSide {
     std::optional<std::uint32_t> outpost_hp;
     std::optional<std::uint32_t> outpost_max_hp;
     bool outpost_controlled_by_blue = false;
+    // 基地防御状态:0 有 100% 防御增益,1 无增益且护甲未展开,2 无增益且护甲展开。
+    std::optional<std::uint32_t> base_status;
+    std::optional<std::uint32_t> control_points;
     QString team_name;
     QString score;
     std::array<TopBarSlot, kTopBarSlotsPerSide> cards{};
