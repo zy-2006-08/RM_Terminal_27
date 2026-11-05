@@ -4,6 +4,8 @@
 
 #include <QQuickWidget>
 #include <QVariantList>
+#include <QVariantMap>
+#include <optional>
 #include <vector>
 
 namespace rm_terminal {
@@ -22,6 +24,14 @@ public:
     // `known` 为假时标题退回「红方/蓝方」:没有自机就无法断定哪边是我方。
     void setFactionKnown(bool known, bool is_blue);
     void setEntries(const std::vector<RosterEntry>& entries);
+    // 敌方残血那圈闪烁,操作手嫌晃眼可以关。血量数字和血条照常变色。
+    void setLowHealthPulse(bool enabled);
+    // 切角镜像跟着所在的列走(右侧那一列镜像),不设时敌方镜像。
+    void setMirrored(bool mirrored);
+    // 界面设置页开着时,标题栏右边的「存活」往左让出这么多像素。
+    void setToolInset(int pixels);
+    // 「下一步」给某几台车标的编号,键是机器人 id 的字符串。
+    void setRanks(const QVariantMap& ranks);
 
     std::size_t rowCount() const { return count_; }
 
@@ -31,6 +41,8 @@ private:
     bool is_ally_;
     bool is_blue_ = false;
     bool faction_known_ = false;
+    bool low_health_pulse_ = true;
+    std::optional<bool> mirrored_;
     std::size_t count_ = 0;
 };
 

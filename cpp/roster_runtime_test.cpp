@@ -93,10 +93,10 @@ void updates_and_rendering() {
     wait(30);
     QPointer<QQuickItem> first = row(panel.rootObject());
     check(first && first->property("lowHealthAlert").toBool(), "enemy panel forwards allegiance");
-    auto* ring = first->findChild<QQuickItem*>("lowHealthRing");
-    check(ring != nullptr, "one observable alert border exists");
-    check(first->findChildren<QQuickItem*>("lowHealthRing").size() == 1,
-          "exactly one alert border exists");
+    auto* ring = first->findChild<QQuickItem*>("lowHealthGlow");
+    check(ring != nullptr, "one observable low-health glow exists");
+    check(first->findChildren<QQuickItem*>("lowHealthGlow").size() == 1,
+          "exactly one low-health glow exists");
     const QString directory = qEnvironmentVariable("RM_UI_EVIDENCE_DIR");
     const auto capture = [&](const QString& name) {
         const QImage shot = panel.grabFramebuffer();
@@ -118,10 +118,11 @@ void updates_and_rendering() {
         low = std::min(low, opacity);
         high = std::max(high, opacity);
         std::cout << "pulse tick=" << tick << " opacity=" << opacity << '\n';
-        if (tick == 1) check(initial != capture("roster-bright"), "border animation changes rendered pixels");
+        if (tick == 1) check(initial != capture("roster-bright"), "the breathing glow changes rendered pixels");
         if (tick == 4) capture("roster-dim");
     }
-    check(high > 0.8 && low < 0.4, "pulse reaches both halves despite repeated updates");
+    // 效果图的呼吸是 1.0 ↔ 0.55,半周期 650ms。
+    check(high > 0.9 && low < 0.7, "pulse reaches both halves despite repeated updates");
     panel.setFactionKnown(false, true);
     check(!first->property("lowHealthAlert").toBool() && !ring->isVisible(), "unknown panel immediately hides alert");
     capture("roster-unknown");

@@ -1,18 +1,20 @@
 import QtQuick
+import RmTerminal.Glass 1.0
 import "."
 
-// 花名册单行。视觉主体直接复用顶栏的 RobotCard(立体底板 + 兵种渲染图素材),
-// 而不是另画一套图标:同一个「3 号步兵」在顶栏和花名册必须长得一样,
-// 否则操作手要在两套视觉语言之间做翻译。
-//
+// 花名册单行(效果图 v5):头像 + 编号兵种 + 标签 + 弹丸 + 血量,下面一条斜切的发光血条。
 // 三态(Alive/Kia/NoData)必须视觉可分:「阵亡」是可利用的战机,「无数据」是情报缺失,
 // 画成同一种灰会让操作手做出相反决策。
+//
+// 掉血:数字和血条主体在受击那一帧就更新,掉的那段留白色残影 0.35 秒,再用 0.45 秒缩回,
+// 数字闪红 0.3 秒。回血:血条 0.3 秒长到位,新增那段绿色提示 0.6 秒淡出。
 Item {
     id: root
 
     property int robotId: 0
     property bool isBlue: false
     property bool isAlly: true
+    property bool isSelf: false
     property bool factionKnown: false
     property int liveState: 0        // 0=NoData 1=Alive 2=Kia
     property bool hasHp: false
@@ -23,299 +25,390 @@ Item {
     property bool positionStale: false
     // 只有己方有:剩余累计发弹量(GlobalUnitStatus.robot_bullets),-1 = 没有数据。
     property int bullets: -1
+    // 「下一步」给这台车标的编号,空串不画。
+    property string rank: ""
+    // 操作手可以在界面设置里关掉残血呼吸;标签、红色数字和红条照常显示。
+    property bool pulseEnabled: true
 
     readonly property bool kia: liveState === 2
     readonly property bool noData: liveState === 0
     readonly property bool online: liveState !== 0
-    readonly property bool lowHealthAlert: factionKnown && !isAlly && liveState === 1
+    readonly property bool lowHealth: factionKnown && !isAlly && liveState === 1
         && hasHp && maxHp > 0 && currentHp > 0 && currentHp / maxHp <= 0.25
+    readonly property bool lowHealthAlert: pulseEnabled && lowHealth
     readonly property int shownId: robotId > 100 ? robotId - 100 : robotId
     readonly property real ratio: (hasHp && maxHp > 0)
         ? Math.max(0, Math.min(1, currentHp / maxHp)) : 0
     readonly property color faction: Theme.factionColor(isBlue)
+    readonly property color barColor: Theme.healthFill(ratio, isBlue)
 
-    // 字号随行高缩放,但夹在 [0.85, 1.35]:行高由面板均分决定,不夹住会在
-    // 大窗口下把编号顶成巨字、小窗口下缩到不可读。
-    readonly property real k: Math.max(0.85, Math.min(1.35, height / 78))
-    // 行高放不下「编号行 + 血量行 + 血条」时(指挥手布局里两列花名册上下叠放,1440x900
-    // 下每行不到 50px),血量挪到编号那一行、不画百分比:否则血量数字会被血条压住。
-    readonly property bool compact: height < 62
+    // 按 62 像素高设计。行高变了,上下位置跟着高度缩放;头像、文字的大小还要看宽度够不够
+    // (一行要约 290 像素宽才放得下 1 倍的字),行变高、宽度不变时字不会挤到一起。
+    readonly property real k: height / 62
+    readonly property real kx: Math.min(k, Math.max(0.85, (width - 12) / 290))
+    readonly property real fk: Math.max(0.85, Math.min(1.25, kx))
+    // 文字和血条按 kx 排成一块(62 高时从 12 到 48),在行里上下居中:行变高时上下多出来的空一样多。
+    readonly property real blockTop: (height - 36 * kx) / 2
 
-    Rectangle {
-        id: card
-        anchors.fill: parent
-        radius: 4
-        // 边框照搬参考端 RobotStatsRow.qml:中性灰 #333333 细线 + 半透明近黑卡面,
-        // 不按阵营染色、也不给自机单独一种颜色 —— 参考端花名册对每台车一视同仁,
-        // 阵营已由血条颜色交代,再给边框上色就是同一条信息编码两次。
-        border.color: root.online ? "#333333" : Qt.rgba(1, 1, 1, 0.07)
-        border.width: 1
-        color: Qt.rgba(0.1, 0.1, 0.15, 0.6)
+    property real shownRatio: 0
+    property real trailHi: 0
+    property real healLo: 0
+    property real healHi: 0
+    property real healOpacity: 0
+    property real hpFlash: 0
+    property real lastRatio: -1
+
+    function resetBar() {
+        trailAnim.stop()
+        growAnim.stop()
+        healFade.stop()
+        flashAnim.stop()
+        shownRatio = ratio
+        trailHi = ratio
+        healOpacity = 0
+        hpFlash = 0
+        lastRatio = (hasHp && !noData) ? ratio : -1
     }
 
-    Rectangle {
-        id: lowHealthRing
-        objectName: "lowHealthRing"
-        anchors.fill: card
-        anchors.margins: 1
-        radius: card.radius
-        color: "transparent"
-        border.color: Theme.danger
-        border.width: 2
-        opacity: root.lowHealthAlert ? pulseOpacity : 0
-        visible: opacity > 0
+    function onValue() {
+        if (!hasHp || noData || lastRatio < 0) {
+            resetBar()
+            return
+        }
+        if (ratio < lastRatio - 0.0001) {
+            growAnim.stop()
+            healFade.stop()
+            healOpacity = 0
+            shownRatio = ratio
+            trailHi = Math.max(trailHi, lastRatio)
+            trailAnim.restart()
+            flashAnim.restart()
+        } else if (ratio > lastRatio + 0.0001) {
+            trailAnim.stop()
+            trailHi = ratio
+            healLo = shownRatio
+            healHi = ratio
+            healOpacity = 0.6
+            growAnim.from = shownRatio
+            growAnim.to = ratio
+            growAnim.restart()
+            healFade.restart()
+        }
+        lastRatio = ratio
+    }
 
-        property real pulseOpacity: 0.25
-        SequentialAnimation on pulseOpacity {
+    onRatioChanged: onValue()
+    onHasHpChanged: resetBar()
+    onRobotIdChanged: resetBar()
+    Component.onCompleted: resetBar()
+
+    SequentialAnimation {
+        id: trailAnim
+        PauseAnimation { duration: 350 }
+        NumberAnimation { target: root; property: "trailHi"; to: root.ratio; duration: 450; easing.type: Easing.OutCubic }
+    }
+    NumberAnimation { id: growAnim; target: root; property: "shownRatio"; duration: 300; easing.type: Easing.OutCubic }
+    SequentialAnimation {
+        id: healFade
+        PauseAnimation { duration: 300 }
+        NumberAnimation { target: root; property: "healOpacity"; to: 0; duration: 600 }
+    }
+    NumberAnimation { id: flashAnim; target: root; property: "hpFlash"; from: 1; to: 0; duration: 300 }
+
+    component Tag: Item {
+        id: tag
+        property string label: ""
+        property color ink: Theme.accentText
+        property color fill: Theme.accentBg
+        property bool rankStyle: false
+        property real zoom: 1
+        implicitWidth: tagText.implicitWidth + Math.round((rankStyle ? 14 : 12) * zoom)
+        implicitHeight: Math.round(19 * zoom)
+        GlassShape { anchors.fill: parent; cut: 4; fillColor: tag.fill }
+        Text {
+            id: tagText
+            anchors.centerIn: parent
+            anchors.verticalCenterOffset: 0.5
+            text: tag.label
+            color: tag.ink
+            font.family: tag.rankStyle ? Theme.numericFamily : Theme.labelFamily
+            font.pixelSize: Math.round((tag.rankStyle ? 13 : 12) * tag.zoom)
+            font.weight: Font.Bold
+            font.italic: tag.rankStyle
+            font.letterSpacing: tag.rankStyle ? 0 : 1
+        }
+    }
+
+    GlassShape {
+        anchors.fill: parent
+        cut: 6
+        fillColor: root.isSelf ? Theme.rowSelf : Theme.row
+    }
+
+    // 敌方残血:左侧红竖条 + 淡红底色,一起慢慢呼吸(1.0 ↔ 0.55,半周期 650ms)。
+    Item {
+        id: lowGlow
+        objectName: "lowHealthGlow"
+        anchors.fill: parent
+        visible: root.lowHealth
+        opacity: root.lowHealthAlert ? pulse : 1
+        property real pulse: 1
+        SequentialAnimation on pulse {
             running: root.lowHealthAlert
             loops: Animation.Infinite
-            NumberAnimation { to: 0.9; duration: 650; easing.type: Easing.InOutSine }
-            NumberAnimation { to: 0.25; duration: 650; easing.type: Easing.InOutSine }
+            NumberAnimation { to: 0.55; duration: 650; easing.type: Easing.InOutSine }
+            NumberAnimation { to: 1.0; duration: 650; easing.type: Easing.InOutSine }
         }
-    }
-
-    // 顶栏同款机器人卡。关掉卡内窄血条,本行下方另画一条宽条。
-    // 头像收到行高七成:原来贴到 card.height-8,几乎占满整行,把编号和血条挤到
-    // 右半边,视觉重心全压在图上。头像是辅助识别,数据才是主角。
-    RobotCard {
-        id: portrait
-        height: card.height * 0.7
-        width: height * 82 / 72
-        anchors.left: card.left
-        anchors.leftMargin: 8
-        anchors.verticalCenter: card.verticalCenter
-
-        robotId: root.robotId
-        isBlue: root.isBlue
-        robotClass: root.robotClass
-        currentHP: root.currentHp
-        maxHP: root.maxHp
-        hasHp: root.hasHp
-        online: root.online
-        showBar: false
-        showId: false
-    }
-
-    // 字号层级:编号 13 / 兵种 11 / 血量 13 / 百分比 12。血量原本给到 15 且加粗,
-    // 比编号还大,一行里出现两个「主标题」就会显得乱。编号是身份、血量是数值,
-    // 同级即可,靠颜色区分而不是靠字号压过对方。
-    Text {
-        id: title
-        // 只写编号数字,不带「号」:参考端 RobotStatsRow 的编号就是裸数字,
-        // 「号」在一列全是机器人的面板里每行重复一次,是纯噪声。
-        text: root.shownId
-        color: root.online ? Theme.textPrimary : Theme.textMuted
-        font.family: Theme.labelFamily
-        font.pixelSize: Math.round(15 * root.k)
-        font.bold: true
-        font.letterSpacing: 0.8
-        anchors.left: portrait.right
-        anchors.leftMargin: 10
-        anchors.top: card.top
-        anchors.topMargin: Math.round((root.compact ? 6 : 9) * root.k)
-    }
-
-    // 兵种名。顶栏受宽度限制只能给出编号,这里有空间就写全,
-    // 让「头像是什么兵种」不必靠认图。
-    Text {
-        id: className
-        text: root.robotClass
-        color: root.online ? Theme.textSecondary : Theme.textMuted
-        font.family: Theme.labelFamily
-        font.pixelSize: Math.round(11 * root.k)
-        font.letterSpacing: 0.5
-        anchors.left: title.right
-        anchors.leftMargin: 7
-        anchors.baseline: title.baseline
-    }
-
-    // 己方的剩余发弹量写在编号这一行的右端,和下面的百分比右对齐。
-    Text {
-        objectName: "bulletsText"
-        // 紧凑行里「阵亡 KIA」也在这一行右端,两个只留一个。
-        visible: root.bullets >= 0 && !root.noData && !(root.compact && root.kia)
-        text: "弹 " + root.bullets
-        color: root.bullets === 0 ? Theme.warn : Theme.textSecondary
-        font.family: Theme.numericFamily
-        font.pixelSize: Math.round(11 * root.k)
-        font.bold: true
-        anchors.right: card.right
-        anchors.rightMargin: 10
-        anchors.baseline: title.baseline
-    }
-
-    // 当前血量单独一段:它是全行变化最快的数字,给足字重。上限值用次级色小一号,
-    // 「578 / 600」里 600 是常量,不该和 578 一样抢眼。
-    Row {
-        id: hpText
-        visible: root.hasHp && !root.noData
-        spacing: 3
-        anchors.left: title.left
-        anchors.top: title.bottom
-        anchors.topMargin: Math.round(4 * root.k)
-        // Row 自己没有基线,紧凑行按基线对齐时要借第一个数字的基线,否则整行挂在基线下面。
-        baselineOffset: hpCurrent.y + hpCurrent.baselineOffset
-
-        // 数字统一白色。参考端 RobotStatsRow 的 HP 文本就是 #FFFFFF,只有血条本身
-        // 带颜色 —— 绿/黄数字配绿/黄血条等于同一条信息上两次色彩编码,
-        // 面板里十行同时闪绿闪黄反而盖掉了真正该抢眼的告警。
-        Text {
-            id: hpCurrent
-            text: root.currentHp
-            color: root.kia ? Theme.textMuted : "#FFFFFF"
-            font.family: Theme.numericFamily
-            font.pixelSize: Math.round(14 * root.k)
-            font.bold: true
-        }
-        Text {
-            text: "/"
-            color: Theme.textMuted
-            font.family: Theme.numericFamily
-            font.pixelSize: Math.round(11 * root.k)
-            anchors.baseline: parent.children[0].baseline
-        }
-        Text {
-            text: root.maxHp
-            color: Theme.textMuted
-            font.family: Theme.numericFamily
-            font.pixelSize: Math.round(11 * root.k)
-            anchors.baseline: parent.children[0].baseline
-        }
-    }
-
-    Text {
-        id: kiaText
-        visible: root.kia
-        text: "阵亡  KIA"
-        color: Theme.danger
-        font.family: Theme.labelFamily
-        font.pixelSize: Math.round(12 * root.k)
-        font.bold: true
-        anchors.right: card.right
-        anchors.rightMargin: 10
-        anchors.verticalCenter: hpText.verticalCenter
-    }
-
-    Text {
-        visible: !root.kia && root.hasHp && !root.compact
-        text: Math.round(root.ratio * 100) + "%"
-        color: Theme.textSecondary
-        font.family: Theme.numericFamily
-        font.pixelSize: Math.round(11 * root.k)
-        font.bold: true
-        anchors.right: card.right
-        anchors.rightMargin: 10
-        anchors.verticalCenter: hpText.verticalCenter
-    }
-
-    // 无数据:状态点 + 文字,绝不画空血条 —— 空条会被读成血量 0 即阵亡。
-    Row {
-        id: noDataRow
-        visible: root.noData
-        anchors.left: title.left
-        anchors.top: title.bottom
-        anchors.topMargin: Math.round(5 * root.k)
-        spacing: 5
-
-        Rectangle {
-            width: 7; height: 7; radius: 4
-            anchors.verticalCenter: parent.verticalCenter
-            color: root.hasPosition ? (root.positionStale ? Theme.warn : Theme.ok) : Theme.offline
-        }
-        Text {
-            text: root.hasPosition
-                ? (root.positionStale ? "仅位置 · 已过期" : "仅位置 · 无血量")
-                : "无数据"
-            color: Theme.textMuted
-            font.family: Theme.labelFamily
-            font.pixelSize: Math.round(11 * root.k)
-        }
-    }
-
-    // 血条。高光用渐变现画,不能贴顶栏的 tab_bar.png:那张素材中间是一条
-    // 完全不透明的亮红实心条(#F77563, alpha 255),顶栏之所以看不出来,是因为
-    // 顶栏填充色本身就是阵营红、和纹理同色。这里填充是血量色(绿/黄),
-    // 红纹理盖上去就会在绿条正中透出一条红线。高光必须由填充色自己派生。
-    Item {
-        id: bar
-        visible: !root.noData
-        anchors.left: title.left
-        anchors.right: card.right
-        anchors.rightMargin: 10
-        anchors.bottom: card.bottom
-        anchors.bottomMargin: Math.round(9 * root.k)
-        height: Math.max(7, Math.round(9 * root.k))
-
-        // 血条走阵营色,不走血量色 —— 照搬参考端 RobotStatsRow 的 hpColor:
-        // 半血以上用队伍色,只在真正危险时(<=50% 橙 / <=25% 红)才改色。
-        // 满血十台全绿会让「绿」失去含义;阵营色则同时交代了这是红方还是蓝方。
-        readonly property color fill: {
-            if (root.kia) return Theme.redDim;
-            if (root.ratio >= 0.5) return root.faction;
-            if (root.ratio > 0.25) return Theme.warn;
-            return Theme.danger;
-        }
-
-        // 底槽:内凹感靠上深下浅,和顶栏的凹槽一致。
-        Rectangle {
+        GlassShape {
             anchors.fill: parent
-            radius: 2
-            color: "#0F1218"
-            border.color: Qt.rgba(1, 1, 1, 0.06)
-            border.width: 1
+            cut: 6
+            fillColor: Qt.rgba(1, 100 / 255, 100 / 255, 0.26)
+            fillEnd: Qt.rgba(1, 100 / 255, 100 / 255, 0)
+            fillEndAt: 0.8
         }
-
         Rectangle {
-            id: fillRect
-            anchors.left: parent.left
-            anchors.top: parent.top
-            anchors.bottom: parent.bottom
-            anchors.margins: 1
-            width: Math.max(0, Math.min(parent.width - 2, (parent.width - 2) * root.ratio))
-            radius: 1
-            clip: true
+            x: -2; y: 9 * root.k - 2
+            width: 7; height: parent.height - 18 * root.k + 4
+            color: Qt.rgba(1, 100 / 255, 100 / 255, 0.28)
+            radius: 3
+        }
+        Rectangle {
+            y: 9 * root.k
+            width: 3
+            height: parent.height - 18 * root.k
+            color: Theme.danger
+        }
+    }
 
-            // 顶亮底暗的竖向渐变 = 圆柱高光。同色系派生,所以任何血量色都成立。
-            // 高光只到 1.08:1.28 会把压暗后的血量色重新提亮成荧光绿,
-            // 等于在渲染层撤销 Theme 里的降饱和。
-            gradient: Gradient {
-                GradientStop { position: 0.0; color: Qt.lighter(bar.fill, 1.08) }
-                GradientStop { position: 0.45; color: bar.fill }
-                GradientStop { position: 1.0; color: Qt.darker(bar.fill, 1.35) }
+    Rectangle {
+        visible: root.isSelf && !root.lowHealth
+        y: 9 * root.k
+        width: 3
+        height: parent.height - 18 * root.k
+        color: Theme.cyan
+    }
+
+    Item {
+        id: portrait
+        x: 8 * root.kx
+        y: (root.height - height) / 2
+        width: 56 * root.kx
+        height: 48 * root.kx
+        opacity: root.kia ? 0.5 : (root.noData ? 0.4 : 1)
+
+        SoftGlow {
+            x: 2
+            width: parent.width - 4
+            height: 18 * root.kx
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 1
+            color: Theme.alpha(Theme.factionFill(root.isBlue), 0.42)
+        }
+        GlassImage {
+            anchors.fill: parent
+            source: Theme.avatarFor(root.robotClass, root.isBlue)
+            gray: root.kia
+        }
+    }
+
+    Item {
+        id: textArea
+        x: 74 * root.kx
+        width: parent.width - x - 12
+        height: parent.height
+
+        Row {
+            id: lineA
+            y: root.blockTop
+            height: 22 * root.kx
+            spacing: 7
+            opacity: root.kia ? 0.55 : 1
+
+            Text {
+                id: idText
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.shownId
+                color: root.online ? Theme.textPrimary : Theme.textMuted
+                font.family: Theme.numericFamily
+                font.pixelSize: Math.round(21 * root.fk)
+                font.weight: Font.Bold
+                font.features: Theme.tabular
+            }
+            Text {
+                anchors.baseline: idText.baseline
+                text: root.robotClass
+                color: root.online ? Theme.textSecondary : Theme.textMuted
+                font.family: Theme.labelFamily
+                font.pixelSize: Math.round(13 * root.fk)
+                font.weight: Font.Medium
+            }
+            Tag {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: root.isSelf
+                label: "本机"
+                zoom: root.fk
+            }
+            Tag {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: root.lowHealth
+                label: "残血"
+                ink: "#FFD6D6"
+                fill: Qt.rgba(1, 100 / 255, 100 / 255, 0.32)
+                zoom: root.fk
+            }
+            Tag {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: root.rank !== ""
+                label: root.rank
+                ink: "#FFFFFF"
+                fill: Qt.rgba(64 / 255, 170 / 255, 230 / 255, 0.55)
+                rankStyle: true
+                zoom: root.fk
+            }
+            Row {
+                objectName: "bulletsText"
+                anchors.baseline: idText.baseline
+                baselineOffset: ammoValue.y + ammoValue.baselineOffset
+                visible: root.bullets >= 0 && !root.noData
+                leftPadding: 3
+                spacing: 4
+                Text {
+                    anchors.baseline: ammoValue.baseline
+                    text: "弹丸"
+                    color: Theme.textMuted
+                    font.family: Theme.labelFamily
+                    font.pixelSize: Math.round(12 * root.fk)
+                    font.weight: Font.Medium
+                }
+                Text {
+                    id: ammoValue
+                    text: root.bullets
+                    color: root.bullets === 0 ? Theme.warn : Theme.textBright
+                    font.family: Theme.numericFamily
+                    font.pixelSize: Math.round(14 * root.fk)
+                    font.weight: Font.DemiBold
+                    font.features: Theme.tabular
+                }
             }
         }
 
-        // 血条前端亮边:让当前血量的位置有一个明确的读数点。
-        Rectangle {
-            visible: root.ratio > 0.01
-            width: 1
-            anchors.top: fillRect.top
-            anchors.bottom: fillRect.bottom
-            anchors.right: fillRect.right
-            color: Qt.lighter(bar.fill, 1.25)
-            opacity: 0.75
+        Row {
+            id: hpRow
+            anchors.right: parent.right
+            y: lineA.y + idText.y + idText.baselineOffset - hpValue.baselineOffset
+            visible: root.hasHp && !root.noData && !root.kia
+            spacing: 1
+            Text {
+                id: hpValue
+                text: root.currentHp
+                readonly property color base: root.lowHealth ? Theme.dangerText : Theme.textPrimary
+                color: root.hpFlash > 0 ? Qt.tint(base, Qt.rgba(1, 196 / 255, 196 / 255, root.hpFlash)) : base
+                font.family: Theme.numericFamily
+                font.pixelSize: Math.round(21 * root.fk)
+                font.weight: Font.Bold
+                font.features: Theme.tabular
+            }
+            Text {
+                anchors.baseline: hpValue.baseline
+                text: "/" + root.maxHp
+                color: Theme.textMuted
+                font.family: Theme.numericFamily
+                font.pixelSize: Math.round(12.5 * root.fk)
+                font.weight: Font.Medium
+                font.features: Theme.tabular
+            }
+        }
+
+        Tag {
+            anchors.right: parent.right
+            y: lineA.y + (lineA.height - height) / 2
+            visible: root.kia
+            label: "阵亡"
+            ink: Theme.textBright
+            fill: Qt.rgba(1, 1, 1, 0.09)
+            zoom: root.fk
+        }
+
+        // 无数据:状态点 + 文字,绝不画空血条 —— 空条会被读成血量 0 即阵亡。
+        Row {
+            visible: root.noData
+            y: root.blockTop + 26 * root.kx
+            spacing: 6
+            Rectangle {
+                width: 7; height: 7; radius: 3.5
+                anchors.verticalCenter: parent.verticalCenter
+                color: root.hasPosition ? (root.positionStale ? Theme.warn : Theme.ok) : Theme.offline
+            }
+            Text {
+                text: root.hasPosition
+                    ? (root.positionStale ? "仅位置 · 已过期" : "仅位置 · 无血量")
+                    : "无数据"
+                color: Theme.textMuted
+                font.family: Theme.labelFamily
+                font.pixelSize: Math.round(12 * root.fk)
+            }
         }
     }
 
-    // 锚点切换必须走 AnchorChanges:直接在绑定里切 top/baseline,中间会有一刻两个锚点
-    // 同时存在,Qt 报「Baseline anchor cannot be used in conjunction with top」。
-    states: State {
-        name: "compact"
-        when: root.compact
-        AnchorChanges {
-            target: hpText
-            anchors.top: undefined
-            anchors.left: className.right
-            anchors.baseline: title.baseline
+    // 血条:CSS skewX(-24deg) 的平行四边形,半透明渐变 + 一圈同色光晕,右端一道白色读数线。
+    Item {
+        id: bar
+        visible: !root.noData
+        x: textArea.x + 3
+        y: root.blockTop + 30 * root.kx
+        width: textArea.width - 6
+        height: Math.max(4, Math.round(6 * root.kx))
+        transform: Matrix4x4 {
+            readonly property real s: Math.tan(-24 * Math.PI / 180)
+            matrix: Qt.matrix4x4(1, s, 0, -s * bar.height / 2, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
         }
-        PropertyChanges { target: hpText; anchors.leftMargin: 10 }
-        AnchorChanges {
-            target: noDataRow
-            anchors.top: undefined
-            anchors.left: className.right
-            anchors.verticalCenter: title.verticalCenter
+
+        Rectangle { anchors.fill: parent; color: Qt.rgba(1, 1, 1, 0.07); antialiasing: true }
+        Rectangle {
+            visible: root.healOpacity > 0 && root.healHi > root.healLo
+            x: root.healLo * bar.width
+            width: (root.healHi - root.healLo) * bar.width
+            height: parent.height
+            color: Qt.rgba(110 / 255, 224 / 255, 164 / 255, root.healOpacity)
+            antialiasing: true
         }
-        PropertyChanges { target: noDataRow; anchors.leftMargin: 10 }
-        AnchorChanges { target: kiaText; anchors.verticalCenter: title.verticalCenter }
+        Rectangle {
+            visible: root.trailHi > root.ratio + 0.002
+            x: root.ratio * bar.width
+            width: (root.trailHi - root.ratio) * bar.width
+            height: parent.height
+            color: Qt.rgba(1, 1, 1, 0.5)
+            antialiasing: true
+        }
+        Item {
+            id: fill
+            visible: root.shownRatio > 0.001
+            width: root.shownRatio * bar.width
+            height: parent.height
+            // 光晕:同色半透明,四周各宽 2 像素。
+            Rectangle {
+                x: -2; y: -2
+                width: parent.width + 4
+                height: parent.height + 4
+                radius: 2
+                color: Theme.alpha(root.barColor, 0.2)
+                antialiasing: true
+            }
+            Rectangle {
+                anchors.fill: parent
+                antialiasing: true
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0.0; color: Theme.alpha(root.barColor, 0.45) }
+                    GradientStop { position: 1.0; color: Theme.alpha(root.barColor, 0.88) }
+                }
+            }
+            Rectangle {
+                anchors.right: parent.right
+                width: 2
+                height: parent.height
+                color: Qt.rgba(1, 1, 1, 0.75)
+            }
+        }
     }
 }

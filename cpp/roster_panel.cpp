@@ -1,6 +1,8 @@
 #include "roster_panel.h"
 
+#include "glass_items.h"
 #include "presentation.h"
+#include "theme.h"
 
 #include <QColor>
 #include <QQmlContext>
@@ -38,6 +40,7 @@ QVariantList roster_entry_models(const std::vector<RosterEntry>& entries) {
         map[QStringLiteral("hasPosition")] = entry.has_position;
         map[QStringLiteral("positionStale")] = entry.position_stale;
         map[QStringLiteral("bullets")] = entry.bullets ? *entry.bullets : -1;
+        map[QStringLiteral("self")] = entry.is_self;
         out.append(map);
     }
     return out;
@@ -46,8 +49,9 @@ QVariantList roster_entry_models(const std::vector<RosterEntry>& entries) {
 RosterPanel::RosterPanel(bool is_ally, QWidget* parent)
     : QQuickWidget(parent), is_ally_(is_ally) {
     setResizeMode(QQuickWidget::SizeRootObjectToView);
-    // Quick 场景默认白底,深色 HUD 下会在圆角外沿露出白边。
-    setClearColor(QColor(7, 9, 13));
+    // 清屏色只在背景切片还没到的第一帧露出来,取窗口背景的顶色。
+    setClearColor(theme::kVoid);
+    prepare_quick_widget(this);
     setSource(QUrl(QStringLiteral("qrc:/qml/RosterPanel.qml")));
     applyFaction();
 }
@@ -64,6 +68,26 @@ void RosterPanel::applyFaction() {
     root->setProperty("isBlue", is_blue_);
     root->setProperty("isAlly", is_ally_);
     root->setProperty("factionKnown", faction_known_);
+    root->setProperty("lowHealthPulse", low_health_pulse_);
+    if (mirrored_) root->setProperty("mirrored", *mirrored_);
+}
+
+void RosterPanel::setMirrored(bool mirrored) {
+    mirrored_ = mirrored;
+    applyFaction();
+}
+
+void RosterPanel::setToolInset(int pixels) {
+    if (QQuickItem* root = rootObject()) root->setProperty("toolInset", pixels);
+}
+
+void RosterPanel::setRanks(const QVariantMap& ranks) {
+    if (QQuickItem* root = rootObject()) root->setProperty("ranks", ranks);
+}
+
+void RosterPanel::setLowHealthPulse(bool enabled) {
+    low_health_pulse_ = enabled;
+    applyFaction();
 }
 
 void RosterPanel::setEntries(const std::vector<RosterEntry>& entries) {
