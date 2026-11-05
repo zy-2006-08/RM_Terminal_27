@@ -84,5 +84,11 @@
     <file alias="qml/RobotCard.qml">qml/RobotCard.qml</file>
     <file alias="qml/OutpostBadge.qml">qml/OutpostBadge.qml</file>
     <file alias="qml/SeatPicker.qml">qml/SeatPicker.qml</file>
+    <file alias="fonts/BarlowSemiCondensed-Regular.ttf">resources/fonts/BarlowSemiCondensed-Regular.ttf</file>
+    <file alias="fonts/BarlowSemiCondensed-Medium.ttf">resources/fonts/BarlowSemiCondensed-Medium.ttf</file>
+    <file alias="fonts/BarlowSemiCondensed-SemiBold.ttf">resources/fonts/BarlowSemiCondensed-SemiBold.ttf</file>
+    <file alias="fonts/BarlowSemiCondensed-Bold.ttf">resources/fonts/BarlowSemiCondensed-Bold.ttf</file>
+    <file alias="images/ui/check.png">resources/images/ui/check.png</file>
+    <file alias="images/ui/check@2x.png">resources/images/ui/check@2x.png</file>
   </qresource>
 </RCC>

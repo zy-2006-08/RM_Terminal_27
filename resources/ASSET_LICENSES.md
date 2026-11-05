@@ -31,6 +31,8 @@
 | `resources/sounds/**` | 可发布 | 已按素材台账中的固定快照批准公开。 |
 | `resources/sundry_icon.png` | 可发布 | 已按素材台账中的固定快照批准公开。 |
 | `sim/server/static/minimap_bg.png` | 可发布 | 已按素材台账中的固定快照批准公开。 |
+| `resources/fonts/**` | 待确认 | Barlow Semi Condensed 四个字重（Regular / Medium / SemiBold / Bold），作者 The Barlow Project Authors（https://github.com/jpt/barlow），SIL Open Font License 1.1，许可证原文 `resources/fonts/OFL.txt` 随程序分发，未改字形。来源和许可证已记录，更新素材快照后改为可发布。 |
+| `resources/images/ui/check*.png` | 待确认 | 本项目用脚本画的勾选标记（白色折线），没有第三方来源。更新素材快照后改为可发布。 |
 | `resources/images-2-*`、`tmp_*.png` | 排除公开发行 | 重复资源、抽取结果或临时对比图，不属于正式发行内容。 |
 | `resources/videos/**` | 排除公开发行 | 该目录按仓库规则忽略；发布演示视频应另行脱敏，并取得画面、声音和参与者授权。 |
 | `docs/communications/assets/2026-rm26-custom-client/diagrams/**` | 可发布 | 3 张 SVG 技术图按源码重绘，已按固定快照批准公开。 |
@@ -41,7 +43,7 @@
 | 项目自行编写的协议兼容性说明 | 可发布 | 保留独立表达的实现说明和必要事实，不复制官方文档版式、长段文字或图片。 |
 | 未登记的采访文字、照片和视频 | 待确认 | 优先链接官方已发布采访；摘录或转载前单独确认发布方和出镜者授权。 |
 
-客户端从系统字体列表选择可用字体，仓库不捆绑来源不明的字体文件。公开发布预检会检查素材台账
+数字和英文用随程序带的 Barlow Semi Condensed（OFL 1.1，见上表），中文从系统字体列表选（如 Noto Sans CJK SC）；仓库不捆绑来源不明的字体文件。公开发布预检会检查素材台账
 覆盖、裸 LFS 指针、伪造图片或字体文件头以及临时下载后缀；PNG 还会校验块结构、CRC 和压缩数据。
 
 文件完整性检查和再分发授权是两项独立要求。新增 MOV、M4A 或音频时，应人工复核 `title`、
