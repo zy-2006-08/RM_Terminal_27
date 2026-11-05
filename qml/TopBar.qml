@@ -1,18 +1,18 @@
 import QtQuick
 import "."
 
-// 顶部栏。几何数值取自 ClearWei/RM26_Client 的 TopInfoBar.qml(MIT):中央面板
-// 414x106、基地血条 332x30。视觉由切图承担而不是代码描边 ——
-// 自绘渐变做不出官方那种斜切/内发光质感。
+// 顶部栏(效果图 v5)。中间的计时器切图、轮次、比分和两侧的前哨站切图保持官方原样;
+// 基地血条换成 B 款扁平实色,和 R 标、防御增益一起比原来上移 17 像素,和计时器同高。
+// 控制度挪进了「战场数据分析」面板,顶栏不再画。
 Item {
     id: root
     width: parent ? parent.width : 1280
-    // 血条下移到 y56 后,R 标(直径 57、以血条中心 y71 为心)底边到 y100;
-    // 中央面板素材高 106,仍是最高元素,故整栏取 106。
     height: 106
 
-    // 由 C++ 侧 setContextProperty 注入。has*Hp 为假时一律不画填充,
-    // 避免把「没有数据」画成满血 —— 前哨站和基地同理。
+    // 窗口背景里这一块(见 glass_items.h),顶栏底下透出的是同一张背景。
+    property string backdropSource: ""
+
+    // 由 C++ 侧注入。has*Hp 为假时一律不画填充,避免把「没有数据」画成满血。
     property int redHp: 0
     property int redMaxHp: 0
     property bool redHasHp: false
@@ -27,7 +27,7 @@ Item {
     property int blueOutpostMaxHp: 0
     property bool blueOutpostHasHp: false
     property bool blueOutpostBlue: true
-    // 队名缺失时回落到「红方/蓝方」,不编造校名。
+    // 队名缺失时整行不显示,不编造校名。
     property string redTeamName: ""
     property string blueTeamName: ""
     property string redScore: "--"
@@ -42,9 +42,11 @@ Item {
     property int blueBaseStatus: -1
     property int redControl: -1
     property int blueControl: -1
+    property var redRobots: []
+    property var blueRobots: []
 
-    function defenseText(status) {
-        if (status === 0) return "防御增益 100%"
+    function defenseLabel(status) {
+        if (status === 0) return "防御增益"
         if (status === 1) return "无防御增益 · 护甲未展开"
         if (status === 2) return "无防御增益 · 护甲已展开"
         return ""
@@ -54,17 +56,17 @@ Item {
         if (status === 1) return Theme.warn
         return Theme.danger
     }
-    // 机器人明细由左右花名册面板承担,顶栏只留基地/前哨站/比分/时钟。
-    property var redRobots: []
-    property var blueRobots: []
 
-    Rectangle { anchors.fill: parent; color: "#08090C" }
+    Image {
+        anchors.fill: parent
+        source: root.backdropSource
+        cache: false
+        smooth: false
+        visible: root.backdropSource !== ""
+    }
 
-    // 前哨站牌放血条外侧、与血条同垂直中心 —— 参考端 TopInfoBar.qml 的
-    // OutpostStatusBadge 就是 92x52 + anchors.right: redBar.left + verticalCenter。
-    // 之前挪到血条上方是为了躲窗口边缘,结果和队名抢同一段空间;正确解法是收窄血条。
+    // 前哨站牌放血条外侧,照参考端 OutpostStatusBadge:92x52,离血条 10 像素。
     OutpostBadge {
-        id: redOutpost
         isBlue: root.redOutpostBlue
         mirrored: false
         currentHp: root.redOutpostHp
@@ -72,11 +74,10 @@ Item {
         hasData: root.redOutpostHasHp
         anchors.right: redBar.left
         anchors.rightMargin: 10
-        anchors.verticalCenter: redBar.verticalCenter
+        y: 22
     }
 
     OutpostBadge {
-        id: blueOutpost
         isBlue: root.blueOutpostBlue
         mirrored: true
         currentHp: root.blueOutpostHp
@@ -84,29 +85,35 @@ Item {
         hasData: root.blueOutpostHasHp
         anchors.left: blueBar.right
         anchors.leftMargin: 10
-        anchors.verticalCenter: blueBar.verticalCenter
+        y: 22
     }
 
     BaseHealthBar {
         id: redBar
         width: 280
-        height: 30
+        height: 24
+        y: 42
         isBlue: false
         currentHealth: root.redHp
         maxHealth: root.redMaxHp
         hasData: root.redHasHp
         anchors.right: centerPanel.left
         anchors.rightMargin: 32
-        // 血条(连同锚在它上面的 R 标)整体下移到 y56,让上方那行校名有独立空间 ——
-        // R 标直径大于血条高度,会向上溢出,贴太高就会压住校名。
-        anchors.top: parent.top
-        anchors.topMargin: 56
     }
 
-    // 队名居中压在血条上方。参考图里这一行是校名+队名,是顶栏的主标题。
-    // 协议没下发队名时整行不显示 —— 「红方」三个字血条本身的配色已经说明了阵营,
-    // 再写一遍是冗余。
-    // 队名在血条上方居中。前哨站已回到血条外侧,上方这段空间只归队名。
+    BaseHealthBar {
+        id: blueBar
+        width: 280
+        height: 24
+        y: 42
+        isBlue: true
+        currentHealth: root.blueHp
+        maxHealth: root.blueMaxHp
+        hasData: root.blueHasHp
+        anchors.left: centerPanel.right
+        anchors.leftMargin: 32
+    }
+
     Text {
         visible: root.redTeamName !== ""
         anchors.horizontalCenter: redBar.horizontalCenter
@@ -120,35 +127,6 @@ Item {
         font.letterSpacing: 0.8
         style: Text.Outline
         styleColor: "#3A0C0C"
-    }
-
-    // 阵营 R 标。参考图里这是一枚直径约血条高两倍的大圆章,骑在血条内侧端头上、
-    // 半个身位探出条外,是整条血条的视觉锚点 —— 做小了塞进条内就变成像误贴的水印。
-    // 尺寸绑血条高度,血条改高时不会脱开。素材是 500x500,放大不会糊。
-    Image {
-        source: "qrc:/images/top_mid/red_team_logo.png"
-        width: redBar.height * 1.9
-        height: width
-        fillMode: Image.PreserveAspectFit
-        smooth: true
-        // 圆心压在血条端头上:一半盖条、一半探出。
-        anchors.horizontalCenter: redBar.right
-        anchors.verticalCenter: redBar.verticalCenter
-        z: 3
-    }
-
-    BaseHealthBar {
-        id: blueBar
-        width: 280
-        height: 30
-        isBlue: true
-        currentHealth: root.blueHp
-        maxHealth: root.blueMaxHp
-        hasData: root.blueHasHp
-        anchors.left: centerPanel.right
-        anchors.leftMargin: 32
-        anchors.top: parent.top
-        anchors.topMargin: 56
     }
 
     Text {
@@ -166,109 +144,87 @@ Item {
         styleColor: "#0A2647"
     }
 
+    // 阵营 R 标:直径 57 的圆章,圆心压在血条内侧端头上,一半盖条、一半探出。
     Image {
-        source: "qrc:/images/top_mid/blue_team_logo.png"
-        width: blueBar.height * 1.9
-        height: width
+        source: "qrc:/images/top_mid/red_team_logo.png"
+        width: 57
+        height: 57
         fillMode: Image.PreserveAspectFit
         smooth: true
-        anchors.horizontalCenter: blueBar.left
-        anchors.verticalCenter: blueBar.verticalCenter
+        mipmap: true
+        x: redBar.x + redBar.width - width / 2
+        y: redBar.y + redBar.height / 2 - height / 2
         z: 3
     }
 
-    // 防御状态写在血条外侧端的下方:内侧端被 R 标盖住,上方是校名。
-    Text {
+    Image {
+        source: "qrc:/images/top_mid/blue_team_logo.png"
+        width: 57
+        height: 57
+        fillMode: Image.PreserveAspectFit
+        smooth: true
+        mipmap: true
+        x: blueBar.x - width / 2
+        y: blueBar.y + blueBar.height / 2 - height / 2
+        z: 3
+    }
+
+    // 防御状态居中写在血量数字正下方:数字躲开了 R 标,这一行跟着一起躲。
+    Row {
         visible: root.redBaseStatus >= 0
-        anchors.left: redBar.left
-        anchors.top: redBar.bottom
-        anchors.topMargin: 4
-        text: root.defenseText(root.redBaseStatus)
-        color: root.defenseColor(root.redBaseStatus)
-        font.family: Theme.labelFamily
-        font.pixelSize: 11
-        font.bold: true
+        y: 72
+        x: redBar.x + (redBar.width - redBar.logoInset - width) / 2
+        spacing: 3
+        Text {
+            text: root.defenseLabel(root.redBaseStatus)
+            color: root.defenseColor(root.redBaseStatus)
+            font.family: Theme.labelFamily
+            font.pixelSize: 12
+            font.weight: Font.Medium
+        }
+        Text {
+            visible: root.redBaseStatus === 0
+            anchors.baseline: parent.children[0].baseline
+            text: "100%"
+            color: Theme.textBright
+            font.family: Theme.numericFamily
+            font.pixelSize: 13
+            font.weight: Font.DemiBold
+            font.features: Theme.tabular
+        }
     }
 
-    Text {
+    Row {
         visible: root.blueBaseStatus >= 0
-        anchors.right: blueBar.right
-        anchors.top: blueBar.bottom
-        anchors.topMargin: 4
-        text: root.defenseText(root.blueBaseStatus)
-        color: root.defenseColor(root.blueBaseStatus)
-        font.family: Theme.labelFamily
-        font.pixelSize: 11
-        font.bold: true
-    }
-
-    // 控制度对比条,放在中央面板下方那条空带(控件 128 高,面板只占到 106)。
-    // 双方都是 0 时两边各占一半,只画中线。
-    Item {
-        id: controlBar
-        visible: root.redControl >= 0 && root.blueControl >= 0
-        width: 300
-        height: 16
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.top: centerPanel.bottom
-        anchors.topMargin: 3
-        readonly property real total: root.redControl + root.blueControl
-        readonly property real redShare: total > 0 ? root.redControl / total : 0.5
-
+        y: 72
+        x: blueBar.x + blueBar.logoInset + (blueBar.width - blueBar.logoInset - width) / 2
+        spacing: 3
         Text {
-            id: controlLabel
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.left: parent.left
-            text: "控制度 " + root.redControl
-            color: Theme.red
+            text: root.defenseLabel(root.blueBaseStatus)
+            color: root.defenseColor(root.blueBaseStatus)
             font.family: Theme.labelFamily
-            font.pixelSize: 11
-            font.bold: true
+            font.pixelSize: 12
+            font.weight: Font.Medium
         }
         Text {
-            id: controlRight
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.right: parent.right
-            text: root.blueControl
-            color: Theme.blue
-            font.family: Theme.labelFamily
-            font.pixelSize: 11
-            font.bold: true
-        }
-        Rectangle {
-            id: controlTrack
-            anchors.left: controlLabel.right
-            anchors.leftMargin: 6
-            anchors.right: controlRight.left
-            anchors.rightMargin: 6
-            anchors.verticalCenter: parent.verticalCenter
-            height: 6
-            color: Theme.blue
-            Rectangle {
-                anchors.left: parent.left
-                anchors.top: parent.top
-                anchors.bottom: parent.bottom
-                width: parent.width * controlBar.redShare
-                color: Theme.red
-            }
-            Rectangle {
-                width: 2
-                height: parent.height + 4
-                anchors.centerIn: parent
-                color: Theme.textPrimary
-            }
+            visible: root.blueBaseStatus === 0
+            anchors.baseline: parent.children[0].baseline
+            text: "100%"
+            color: Theme.textBright
+            font.family: Theme.numericFamily
+            font.pixelSize: 13
+            font.weight: Font.DemiBold
+            font.features: Theme.tabular
         }
     }
 
-    // 面板尺寸取素材原始比例 414x106。之前用参考项目的 340x86 配
-    // PreserveAspectFit,实际渲染尺寸和素材区域对不上,文字全部错位。
+    // 中央面板取素材原始比例 414x106,轮次、计时器、比分的坐标按素材实测区域定位。
     Item {
         id: centerPanel
         width: 414
         height: 106
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.top: parent.top
-        anchors.topMargin: 0
 
         Image {
             anchors.fill: parent
@@ -277,46 +233,55 @@ Item {
             smooth: true
         }
 
-        // 素材是深色 HUD 面板,文字必须用亮色。坐标按素材实测区域定位:
-        // 顶部窄带 y2-22、两侧梯形凹槽中心 x65/x349 y30-78、中央下沉区 y40-95。
-        Text {
+        Row {
             anchors.horizontalCenter: parent.horizontalCenter
-            anchors.top: parent.top
-            anchors.topMargin: 26
-            text: "Round " + root.roundText + " · " + root.stageText
-            color: "#9FB4C0"
-            font.pixelSize: 11
-            font.bold: true
+            y: 25
+            Text {
+                text: "ROUND " + root.roundText + " · "
+                color: "#9FB4C0"
+                font.family: Theme.numericFamily
+                font.pixelSize: 12
+                font.weight: Font.DemiBold
+                font.letterSpacing: 1.4
+                font.features: Theme.tabular
+            }
+            Text {
+                anchors.baseline: parent.children[0].baseline
+                text: root.stageText
+                color: "#9FB4C0"
+                font.family: Theme.labelFamily
+                font.pixelSize: 12
+                font.weight: Font.Medium
+                font.letterSpacing: 1
+            }
         }
 
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
-            anchors.top: parent.top
-            anchors.topMargin: 38
+            y: 38
             text: root.clockText
             color: root.clockCritical ? "#FF5C5C" : "#EAF4FA"
-            font.pixelSize: 30
-            font.bold: true
-            font.family: "Menlo"
+            font.family: Theme.numericFamily
+            font.pixelSize: 36
+            font.weight: Font.Bold
+            font.letterSpacing: 0.7
+            font.features: Theme.tabular
+            style: Text.Raised
+            styleColor: Qt.rgba(0, 0, 0, 0.45)
         }
 
-        // 比分槽心由素材的 alpha 通道实测,而不是靠亮度找槽壁 —— 之前几次都偏,
-        // 是因为亮段里混着中央时钟面板的边和数字自己的描边,分不出哪条是槽壁。
-        // 关键事实:槽内部是全透明(alpha=0),槽壁才有 alpha。于是逐行取
-        // 「宽度约 40px 的透明区间」就是槽本身,不可能被别的元素污染。
-        // 槽是斜的,每行中心右移约 0.6px,所以在数字墨迹覆盖的 y=44..60 上取均值:
-        //   左槽心 81.5   右槽心 329.5   (镜像校验 414-329.5=84.5,与 81.5 相差 3px,
-        //   源于素材本身左右不完全对称 —— 右槽整体略窄)
-        // 用 horizontalCenterOffset 而不是锚边距:两位数比分时字面变宽,
-        // 锚边会把数字推出槽心,锚中心则始终居中。
+        // 比分槽心由素材的 alpha 通道实测:左槽心 81.5,右槽心 329.5。锚中心而不是锚边距,
+        // 两位数比分时字面变宽也始终居中。
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.horizontalCenterOffset: 81.5 - 207
-            anchors.verticalCenter: parent.verticalCenter
+            y: 37
             text: root.redScore
             color: "#FFFFFF"
-            font.pixelSize: 24
-            font.bold: true
+            font.family: Theme.numericFamily
+            font.pixelSize: 28
+            font.weight: Font.Bold
+            font.features: Theme.tabular
             style: Text.Outline
             styleColor: "#8E1B1B"
         }
@@ -324,14 +289,15 @@ Item {
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.horizontalCenterOffset: 329.5 - 207
-            anchors.verticalCenter: parent.verticalCenter
+            y: 37
             text: root.blueScore
             color: "#FFFFFF"
-            font.pixelSize: 24
-            font.bold: true
+            font.family: Theme.numericFamily
+            font.pixelSize: 28
+            font.weight: Font.Bold
+            font.features: Theme.tabular
             style: Text.Outline
             styleColor: "#14508E"
         }
     }
-
 }

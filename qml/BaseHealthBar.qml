@@ -1,9 +1,10 @@
 import QtQuick
+import RmTerminal.Glass 1.0
 import "."
 
-// 基地血条。分层结构照 ClearWei/RM26_Client 的 BaseHealthBar.qml(MIT):
-// bottom(空槽) → middle(深层) → top(浅层) → border(边框) → light(高光)。
-// 官方把血量分深浅两层,所以掉血时先掉浅层再掉深层,而不是一条单色缩短。
+// 基地血条(效果图 B 款):扁平实色,颜色取自 R 标,和 R 标是同一种红、蓝;一半以下变橙黄,
+// 四分之一以下变红。两端按 CSS skewX(±24deg) 斜切。血量数字用斜体金属字,躲开 R 标盖住的
+// 那一头居中。掉血时掉的那段留白色残影 0.35 秒,再 0.45 秒缩回。
 Item {
     id: root
     property int currentHealth: 0
@@ -12,88 +13,97 @@ Item {
     // GameStatus 的基地血量字段缺失时整条不画填充,只留空槽 + 说明文字,避免把
     // 「没有数据」画成满血或空血。
     property bool hasData: false
+    // R 标盖住的那一头留出的宽度:红方在右,蓝方在左。
+    property real logoInset: 29
 
-    readonly property string prefix: isBlue ? "qrc:/images/blue_base_blood/blue_base_blood_"
-                                            : "qrc:/images/red_base_blood/red_base_blood_"
     readonly property int safeMax: Math.max(1, maxHealth)
     readonly property int clamped: Math.max(0, Math.min(safeMax, currentHealth))
-    readonly property real healthRatio: hasData ? clamped / safeMax : 0
+    readonly property real ratio: hasData ? clamped / safeMax : 0
+    readonly property color barColor: ratio >= 0.5 ? (isBlue ? Theme.logoBlue : Theme.logoRed)
+                                    : (ratio > 0.25 ? Theme.baseWarn : Theme.baseDanger)
 
-    // 深层容量取上限的 60%:官方深/浅两层的分界。
-    // 空槽底图相对边框图的尺寸比。红方两张同尺寸(比例 1),蓝方 880x104 对 837x72,
-    // 所以需要外扩 880/837、104/72 才能让可视内容和边框对齐。
-    readonly property real slotOverscanX: isBlue ? 880 / 837 : 1
-    readonly property real slotOverscanY: isBlue ? 104 / 72 : 1
+    property real trailHi: 0
+    property real lastRatio: -1
+    onRatioChanged: {
+        if (!hasData || lastRatio < 0) {
+            trailAnim.stop()
+            trailHi = ratio
+        } else if (ratio < lastRatio - 0.0001) {
+            trailHi = Math.max(trailHi, lastRatio)
+            trailAnim.restart()
+        } else if (ratio > lastRatio) {
+            trailAnim.stop()
+            trailHi = ratio
+        }
+        lastRatio = hasData ? ratio : -1
+    }
+    onHasDataChanged: { trailAnim.stop(); trailHi = ratio; lastRatio = hasData ? ratio : -1 }
 
-    readonly property real deepCapacity: safeMax * 0.6
-    readonly property real deepRatio: Math.min(clamped, deepCapacity) / deepCapacity
-    readonly property real lightRatio: safeMax > deepCapacity
-        ? Math.max(0, clamped - deepCapacity) / (safeMax - deepCapacity) : 0
-
-    // 空槽底图。蓝方的 bottom.png 是 880x104,比 border.png(837x72)四周多出一圈
-    // 透明发光边;红方那张就是 837x72。直接 Stretch 铺满会把蓝方那圈边压进可视区,
-    // 于是蓝方血条外沿多一圈黑影、红蓝不对称。这里按两张图的比例把绘制区外扩,
-    // 让多余的边溢出到可视范围之外,两侧就一致了。
-    Image {
-        id: slot
-        source: root.prefix + "bottom.png"
-        fillMode: Image.Stretch
-        anchors.centerIn: parent
-        width: parent.width * (root.slotOverscanX)
-        height: parent.height * (root.slotOverscanY)
+    SequentialAnimation {
+        id: trailAnim
+        PauseAnimation { duration: 350 }
+        NumberAnimation { target: root; property: "trailHi"; to: root.ratio; duration: 450; easing.type: Easing.OutCubic }
     }
 
     Item {
-        width: root.width * root.deepRatio * (root.hasData ? 1 : 0)
-        height: root.height
-        clip: true
-        anchors.left: root.isBlue ? parent.left : undefined
-        anchors.right: root.isBlue ? undefined : parent.right
-        Image {
-            width: root.width
-            height: root.height
-            source: root.prefix + "middle.png"
-            fillMode: Image.Stretch
-            anchors.left: root.isBlue ? parent.left : undefined
-            anchors.right: root.isBlue ? undefined : parent.right
-        }
-    }
-
-    Item {
-        width: root.width * root.lightRatio * (root.hasData ? 1 : 0)
-        height: root.height
-        clip: true
-        anchors.left: root.isBlue ? parent.left : undefined
-        anchors.right: root.isBlue ? undefined : parent.right
-        Image {
-            width: root.width
-            height: root.height
-            source: root.prefix + "top.png"
-            fillMode: Image.Stretch
-            anchors.left: root.isBlue ? parent.left : undefined
-            anchors.right: root.isBlue ? undefined : parent.right
-        }
-    }
-
-    Image {
+        id: track
         anchors.fill: parent
-        source: root.prefix + "border.png"
-        fillMode: Image.Stretch
+        transform: Matrix4x4 {
+            readonly property real s: Math.tan((root.isBlue ? -24 : 24) * Math.PI / 180)
+            matrix: Qt.matrix4x4(1, s, 0, -s * track.height / 2, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
+        }
+        Rectangle {
+            anchors.fill: parent
+            color: Qt.rgba(0, 0, 0, 0.36)
+            border.color: Qt.rgba(1, 1, 1, 0.06)
+            border.width: 1
+            antialiasing: true
+        }
+        Rectangle {
+            visible: root.trailHi > root.ratio + 0.002
+            width: (root.trailHi - root.ratio) * parent.width
+            height: parent.height
+            x: root.isBlue ? root.ratio * parent.width : parent.width * (1 - root.trailHi)
+            color: Qt.rgba(1, 1, 1, 0.6)
+            antialiasing: true
+        }
+        Rectangle {
+            visible: root.hasData && root.ratio > 0
+            width: root.ratio * parent.width
+            height: parent.height
+            x: root.isBlue ? 0 : parent.width - width
+            color: Theme.alpha(root.barColor, 0.9)
+            antialiasing: true
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                height: 1
+                color: Qt.rgba(1, 1, 1, 0.2)
+            }
+        }
     }
 
-    // 血量数字居中。只显示当前值:上限是常量(5000),每帧重复它没有信息量,
-    // 而且「581 / 5000」在这个宽度里挤成一团。描边足以让白字在亮红/亮蓝填充上读清,
-    // 不需要再垫深色底板 —— 那块半透明方框在条上是个突兀的补丁。
+    MetalText {
+        anchors.fill: parent
+        anchors.leftMargin: root.isBlue ? root.logoInset : 0
+        anchors.rightMargin: root.isBlue ? 0 : root.logoInset
+        visible: root.hasData
+        text: root.clamped
+        pixelSize: 22
+        italic: true
+    }
+
     Text {
-        id: healthText
-        anchors.centerIn: parent
-        text: root.hasData ? root.clamped : "无基地血量"
-        color: root.hasData ? "#FFFFFF" : "#8A929C"
-        font.pixelSize: root.hasData ? 19 : 10
-        font.bold: root.hasData
-        font.family: root.hasData ? Theme.numericFamily : Theme.labelFamily
-        font.letterSpacing: root.hasData ? 0.6 : 0
-        style: root.hasData ? Text.Outline : Text.Normal
-        styleColor: "#0B1013"
+        anchors.fill: parent
+        anchors.leftMargin: root.isBlue ? root.logoInset : 0
+        anchors.rightMargin: root.isBlue ? 0 : root.logoInset
+        visible: !root.hasData
+        horizontalAlignment: Text.AlignHCenter
+        verticalAlignment: Text.AlignVCenter
+        text: "无基地血量"
+        color: Theme.textMuted
+        font.family: Theme.labelFamily
+        font.pixelSize: 12
     }
 }

@@ -1,5 +1,8 @@
 #include "top_bar.h"
 
+#include "glass_items.h"
+#include "theme.h"
+
 #include <QQmlContext>
 #include <QQuickItem>
 #include <QUrl>
@@ -9,9 +12,8 @@ namespace rm_terminal {
 
 namespace {
 
-// 必须与 TopBar.qml 的 root.height 一致。两处一旦不同,较大的那个会在卡片下面空出
-// 纯黑,叠进顶栏与面板区之间的缝。128 = 血条 y22 + 高30 + 间距4 + 卡片高72。
-constexpr int kTopBarHeight = 128;
+// 必须与 TopBar.qml 的 root.height 一致:中央计时器切图高 106,是顶栏里最高的元素。
+constexpr int kTopBarHeight = 106;
 
 QVariantMap card_of(const TopBarSlot& slot) {
     QVariantMap map;
@@ -37,8 +39,9 @@ QVariantList top_bar_cards(const TopBarSide& side) {
 TopBar::TopBar(QWidget* parent) : QQuickWidget(parent) {
     setResizeMode(QQuickWidget::SizeRootObjectToView);
     setFixedHeight(kTopBarHeight);
-    // 素材是深色 HUD,背景必须同色,否则 Quick 场景默认白底会在边缘露出白框。
-    setClearColor(QColor(8, 9, 12));
+    // 底下垫窗口背景的切片(glass_items.h);清屏色只在切片到之前的第一帧露出来。
+    setClearColor(theme::kVoid);
+    prepare_quick_widget(this);
     setSource(QUrl(QStringLiteral("qrc:/qml/TopBar.qml")));
 }
 
