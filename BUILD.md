@@ -462,6 +462,36 @@ the seat label, top bar, alerts, popups, the video page) are the same for all th
 | 重装 hero | 1 | the map spans two columns; events / battle analysis / 装配 / video |
 | 指挥手 commander | 6 (the aerial seat, rules table 3-1) | both rosters stacked left, map over two rows with the mark toolbar, 飞镖 and 哨兵 right; events / battle analysis / video |
 
+Operators can personalise the info page (`界面设置` in the status bar opens the one-page
+editor, `cpp/layout_editor.*`, with the per-pane details popover in `cpp/pane_details.*`).
+The model is `cpp/ui_profile.*`: operator → role → scheme (built-ins standard, novice,
+minimal, video — the commander gets standard, minimal — plus custom copies),
+each scheme holding its cells on the 16 × 9 grid, the panes it hides and per-pane options
+(map background opacity, enemy markers, marks, enemy low-HP pulse, analysis control-only,
+alert voice, extra muted alert kinds on top of `alerts_disabled`, next-step options).
+Every pane can be removed; at least one stays. `cpp/layout_ops.*` holds the edits (insert at
+an edge, swap, replace, move a seam, remove), each keeping the grid fully tiled and every pane
+at or above `pane_min_units`; the editor tries insert, then swap (a moved pane) or replace (a
+library pane, the replaced one goes back to the library), and a pane dragged onto the library
+is removed; an edge insert first gives the moved pane's old cells to a neighbour, so two adjacent
+panes can trade places; `apply_hidden`/`close_hole` give a removed pane's cells to the
+neighbours that exactly cover one of its sides. `dashboard_layout` re-lays out every
+combination of the optional panes on one live window per role and size; `layout_editor`
+drives the page with mouse events (remove, undo, seam, insert, swap, library, gear, scheme,
+lock). Files from older builds that still name the removed `big_control` pane load with that
+pane dropped and its cells given to a neighbour; an old built-in `quiet` scheme is dropped when
+untouched (its users go back to standard) and kept as a custom scheme when edited. Infantry and
+hero used to show the video inside 本车; a saved layout without a video cell whose 本车 is at
+least 5 rows tall gets its bottom 2 rows as the video pane, unless the scheme lists `video` in
+`hidden` (the editor records it there when the video pane is removed). `cpp/ui_profile_store.*` saves to `AppConfigLocation/ui_profiles.json`
+with `QSaveFile` after every change; an unreadable file is left untouched, the
+terminal runs on defaults, and the first save renames it to `ui_profiles.bad-N.json`.
+Unknown pane names, alert kinds and roles are dropped on load, missing built-ins are
+added back. The seat picker lists the saved operators (default: the last one); the
+settings lock while a fresh stage reads 比赛中 and unlock on the next fresh non-match
+stage. Export/import moves one operator between computers. `ui_profile` log records
+carry `state=loaded|missing|invalid|set_aside|save_failed|operator|imported`.
+
 Role panes (`cpp/assembly_pane.*`, `cpp/dart_pane.*`, `cpp/sentry_pane.*`) show
 `--` and name the message they wait for when data is missing. Their buttons send
 `AssemblyCommand`, `DartCommand` and `SentryCtrlCommand` at most 10 times a second,
