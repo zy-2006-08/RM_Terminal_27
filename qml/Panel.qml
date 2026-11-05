@@ -1,104 +1,98 @@
 import QtQuick
+import RmTerminal.Glass 1.0
 import "."
 
-// 面板外壳:渐变卡面 + 斜切标题 + 细边框。五个面板共用同一个壳,视觉节奏才一致。
-// 顶栏用的是 PNG 素材,这里用渐变+边框在纯 QML 里取得同一种深色 HUD 质感,
-// 不引入新素材(协议面板尺寸随窗口变,拉伸位图会糊)。
-Rectangle {
+// 玻璃面板外壳,和 C++ 的 GlassCard 是同一种画法:切角底、标题栏(斜竖条 + 标题 +
+// 右侧小字)、标题下一道渐隐线。右侧那一列的面板镜像切角。
+Item {
     id: root
 
     property string title: ""
     property bool mirrored: false
-    // 标题右侧的计数徽标(如存活「5/6」)。空串则不显示。
-    property string badge: ""
-    // 标题竖条/文字/分隔线的强调色。默认青,阵营面板传入红或蓝。
     property color accent: Theme.cyan
+    // 标题栏右侧:一段说明文字和一个数字,例如「存活」「3/4」。两个都空就不显示。
+    property string badgeLabel: ""
+    property string badge: ""
+    // 右侧小字往左让出多少(界面设置页里给齿轮和叉留地方)。
+    property real badgeInset: 0
     default property alias content: body.data
 
-    color: Theme.surface
-    border.color: Theme.border
-    border.width: 1
-    radius: 3
-
-    gradient: Gradient {
-        GradientStop { position: 0.0; color: Theme.surfaceRaised }
-        GradientStop { position: 1.0; color: Theme.surface }
+    GlassShape {
+        anchors.fill: parent
+        cut: 10
+        mirrored: root.mirrored
+        fillColor: Theme.surface
+        strokeColor: Theme.border
+        highlight: true
     }
 
-    // 标题栏。标题要明确压过正文一档:字号 15、字距 2.4、专用字族,
-    // 左侧再加一条阵营/强调色竖条 —— 竖条是让标题「有分量」的关键,
-    // 单纯加粗只会显得脏。
-    Row {
-        id: heading
-        anchors.left: root.mirrored ? undefined : parent.left
-        anchors.right: root.mirrored ? parent.right : undefined
-        anchors.leftMargin: 10
-        anchors.rightMargin: 10
-        anchors.top: parent.top
-        anchors.topMargin: 8
-        spacing: 7
-        layoutDirection: root.mirrored ? Qt.RightToLeft : Qt.LeftToRight
-
-        Rectangle {
-            width: 3
-            height: titleText.font.pixelSize + 2
-            radius: 1
-            color: root.accent
-            anchors.verticalCenter: parent.verticalCenter
-        }
-
-        Text {
-            id: titleText
-            text: root.title
-            color: root.accent
-            font.family: Theme.titleFamily
-            font.pixelSize: 15
-            font.bold: true
-            font.letterSpacing: Theme.titleSpacing
-        }
-
-        // 存活计数。数字用等宽体,数值跳动时标题不会左右抖。
-        Text {
-            visible: root.badge !== ""
-            text: root.badge
-            color: Theme.textSecondary
-            font.family: Theme.numericFamily
-            font.pixelSize: 13
-            font.bold: true
-            anchors.verticalCenter: parent.verticalCenter
-        }
-    }
-
-    // 标题下的分隔线,和顶栏中央面板的窄带呼应。
     Rectangle {
-        id: rule
-        anchors.left: parent.left
+        x: 14
+        y: 12.5
+        width: 3
+        height: 15
+        color: root.accent
+        antialiasing: true
+        // CSS skewX(-14deg),绕竖条中心斜切:上端往右、下端往左。
+        transform: Matrix4x4 {
+            readonly property real k: Math.tan(-14 * Math.PI / 180)
+            matrix: Qt.matrix4x4(1, k, 0, -7.5 * k, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
+        }
+    }
+
+    Text {
+        x: 26
+        height: 40
+        verticalAlignment: Text.AlignVCenter
+        text: root.title
+        color: Theme.textPrimary
+        font.family: Theme.titleFamily
+        font.pixelSize: 15
+        font.weight: Font.Bold
+        font.letterSpacing: Theme.titleSpacing
+    }
+
+    Row {
         anchors.right: parent.right
-        anchors.leftMargin: 10
-        anchors.rightMargin: 10
-        anchors.top: heading.bottom
-        anchors.topMargin: 6
+        anchors.rightMargin: 14 + root.badgeInset
+        height: 40
+        spacing: 6
+        visible: root.badge !== "" || root.badgeLabel !== ""
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.badgeLabel
+            color: Theme.textSecondary
+            font.family: Theme.labelFamily
+            font.pixelSize: 13
+            font.weight: Font.Medium
+        }
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.badge
+            color: Theme.textBright
+            font.family: Theme.numericFamily
+            font.pixelSize: 14
+            font.weight: Font.DemiBold
+            font.features: Theme.tabular
+        }
+    }
+
+    Rectangle {
+        x: 12
+        y: 39
+        width: parent.width - 24
         height: 1
         gradient: Gradient {
             orientation: Gradient.Horizontal
-            GradientStop {
-                position: 0.0
-                color: root.mirrored ? "transparent" : Qt.darker(root.accent, 2.2)
-            }
-            GradientStop {
-                position: 1.0
-                color: root.mirrored ? Qt.darker(root.accent, 2.2) : "transparent"
-            }
+            GradientStop { position: 0.0; color: Theme.borderBright }
+            GradientStop { position: 0.85; color: Theme.alpha(Theme.borderBright, 0) }
         }
     }
 
     Item {
         id: body
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.top: rule.bottom
-        anchors.bottom: parent.bottom
-        anchors.margins: 6
-        anchors.topMargin: 6
+        anchors.fill: parent
+        anchors.margins: 8
+        anchors.topMargin: 48
     }
 }
