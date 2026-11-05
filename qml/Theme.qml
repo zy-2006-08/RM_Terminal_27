@@ -1,66 +1,74 @@
 pragma Singleton
 import QtQuick
 
-// QML 侧的唯一配色/字号来源,数值与 cpp/theme.h 逐一对应。
-//
-// 迁移前顶栏 QML 和 C++ 自绘面板各有一套颜色(顶栏红 #FF5555、C++ 红 rgb(228,62,74)),
-// 同一个「红方」在两处不同色,这是上下割裂感的根源。任何在两个面板里出现过的视觉常量
-// 都必须放这里,不要就地内联。
+// QML 侧的唯一配色/字号来源,数值与 cpp/theme.h 逐一对应。「深空玻璃」:面板、行、按钮都是
+// 半透明的,底下透出窗口背景的光晕。任何在两个面板里出现过的视觉常量都放这里,不要就地内联。
 QtObject {
-    // 表面色,由深到浅。
-    readonly property color void_: "#07090D"
-    readonly property color surface: "#0E121A"
-    readonly property color surfaceRaised: "#141A25"
-    readonly property color border: "#263042"
-    readonly property color borderBright: "#3A4E6C"
+    readonly property color void_: "#070B14"
+    readonly property color voidDeep: "#04060B"
 
-    // 阵营色。刻意与告警红蓝区分:「我是红方」和「这个值危险」不能看起来一样。
+    readonly property color surface: Qt.rgba(16 / 255, 26 / 255, 44 / 255, 0.60)
+    readonly property color surfaceRaised: Qt.rgba(40 / 255, 58 / 255, 90 / 255, 0.38)
+    readonly property color chip: Qt.rgba(12 / 255, 20 / 255, 34 / 255, 0.66)
+    readonly property color row: Qt.rgba(30 / 255, 44 / 255, 70 / 255, 0.40)
+    readonly property color rowSelf: Qt.rgba(44 / 255, 66 / 255, 104 / 255, 0.52)
+    readonly property color tile: Qt.rgba(1, 1, 1, 0.035)
+    readonly property color border: Qt.rgba(150 / 255, 180 / 255, 230 / 255, 0.16)
+    readonly property color rowBorder: Qt.rgba(150 / 255, 180 / 255, 230 / 255, 0.10)
+    readonly property color borderBright: Qt.rgba(160 / 255, 196 / 255, 1, 0.32)
+    readonly property color highlight: Qt.rgba(1, 1, 1, 0.10)
+    readonly property color overlay: Qt.rgba(10 / 255, 17 / 255, 30 / 255, 0.96)
+
+    // 阵营色。刻意与告警红区分:「我是红方」和「这个值危险」不能看起来一样。
     readonly property color red: "#E43E4A"
     readonly property color redDim: "#601E26"
     readonly property color blue: "#2E86DE"
     readonly property color blueDim: "#183E68"
+    readonly property color redText: "#FF8F96"
+    readonly property color blueText: "#84C2FF"
+    // 血条填充的 RGB(不含 alpha,用的地方各自给透明度)。
+    readonly property color fillRed: "#F05260"
+    readonly property color fillBlue: "#4098EE"
+    readonly property color fillWarn: "#ECAA46"
+    readonly property color fillDanger: "#FF5848"
+    // 基地血条照 R 标取色,和 R 标是同一种红、蓝。
+    readonly property color logoRed: "#D65352"
+    readonly property color logoBlue: "#2377C0"
+    readonly property color baseWarn: "#E29E36"
+    readonly property color baseDanger: "#E8463A"
 
-    // 强调色,用于标题、激活边框。
-    readonly property color cyan: "#40D0E8"
-    readonly property color cyanDim: "#164E5C"
+    readonly property color cyan: "#8ED2F2"
+    readonly property color cyanDim: Qt.rgba(84 / 255, 156 / 255, 204 / 255, 0.32)
+    readonly property color accentText: "#C4E9FB"
+    readonly property color accentBg: Qt.rgba(18 / 255, 44 / 255, 66 / 255, 0.86)
 
-    // 文字,由亮到暗。
-    readonly property color textPrimary: "#E2E8F0"
-    readonly property color textSecondary: "#94A3B8"
-    readonly property color textMuted: "#586476"
+    readonly property color textPrimary: "#E6EDF6"
+    readonly property color textBright: "#C3CEDD"
+    readonly property color textSecondary: "#93A3BA"
+    readonly property color textMuted: "#6F7F98"
 
-    // 状态语义。刻意压暗、降饱和:HUD 主体是深色,亮绿(#40D68A)/亮黄(#F0BA4A)那种
-    // 高饱和荧光色铺在五行血条上会盖过真正需要抢注意的告警,整屏显得吵。
-    // 现在的取值仍能拉开绿/黄/红三档语义,但亮度退到背景层级之上一档即止。
-    readonly property color ok: "#2E9E68"
-    readonly property color warn: "#B8893A"
-    readonly property color danger: "#C84A4A"
-    readonly property color offline: "#3C4350"
+    readonly property color ok: "#3ECF8E"
+    readonly property color okText: "#5FD39A"
+    readonly property color warn: "#ECAA46"
+    readonly property color danger: "#FF6464"
+    readonly property color dangerText: "#FF9A9A"
+    readonly property color offline: "#5B6474"
 
-    // 字体分三层,各有明确职责:
-    //
-    // numericFamily —— 仪表数字。原本用 Menlo,那是终端等宽体、字形棱角极硬,
-    //   和中文黑体混排时锋利得格格不入。DIN Alternate 是工程仪表标准字,
-    //   字宽仍然齐整(数值跳动不会导致整行重排),但字形圆润,和中文能协调。
-    // labelFamily —— 中文正文/数据标签。
-    // titleFamily —— 面板标题。标题要跳出正文,靠「字族 + 字距 + 字号」三者拉开,
-    //   不是单纯调大字号;Avenir Next 的几何感配 PingFang 的中文标题很稳。
-    readonly property string numericFamily: "DIN Alternate"
-    readonly property string labelFamily: "PingFang SC"
-    // 单个字族名 —— QML 的 font.family 不接受逗号分隔的回退列表,
-    // 写 "A, B" 会被当成一个不存在的字族名并触发全表别名扫描。
-    // PingFang SC 同时覆盖中英文,标题的区分交给字号和字距。
-    readonly property string titleFamily: "PingFang SC"
-
-    // 标题字距。中文标题拉开字距会显著提升「这是标题」的识别度,
-    // 这是各家比赛 UI 里标题最通用的处理。
-    readonly property real titleSpacing: 2.4
+    // 数字用随程序打包的 Barlow Semi Condensed,配 font.features tnum 等宽;中文用系统黑体。
+    // QML 的 font.family 只接受一个字族名,不能写逗号分隔的回退列表。
+    readonly property string numericFamily: "Barlow Semi Condensed"
+    readonly property string labelFamily: Qt.platform.os === "osx" ? "PingFang SC" : "Noto Sans CJK SC"
+    readonly property string titleFamily: labelFamily
+    readonly property var tabular: ({ "tnum": 1 })
+    readonly property real titleSpacing: 2
 
     function factionColor(isBlue) { return isBlue ? blue : red }
     function factionDim(isBlue) { return isBlue ? blueDim : redDim }
+    function factionText(isBlue) { return isBlue ? blueText : redText }
+    function factionFill(isBlue) { return isBlue ? fillBlue : fillRed }
+    function alpha(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
 
-    // 兵种 → 头像素材。顶栏卡片和花名册行共用同一套 PNG,映射只能有一份:
-    // 两处各写一份,以后改了类别名就会一边有图、一边空白。
+    // 兵种 → 头像素材。顶栏卡片和花名册行共用同一套 PNG,映射只能有一份。
     // 未知兵种返回空串 —— 猜错兵种比留空更糟。
     function avatarFor(robotClass, isBlue) {
         var base = "qrc:/images/top_robots/" + (isBlue ? "blue" : "red")
@@ -77,17 +85,19 @@ QtObject {
         return "qrc:/images/top_robots/" + (isBlue ? "blue" : "red") + "_teammate_bg.png"
     }
 
-
-
-    // 血量决定色相:60% 以上绿、25% 以上琥珀、以下红。操作手先读颜色再读数字,
-    // 所以颜色必须承载同样的警示等级。与 theme.cpp 的 healthColor 保持一致。
+    // 血量决定颜色:一半以上用阵营色,一半以下橙黄,四分之一及以下红。与 theme.cpp 一致。
+    function healthFill(ratio, isBlue) {
+        if (ratio >= 0.5) return factionFill(isBlue)
+        if (ratio > 0.25) return fillWarn
+        return fillDanger
+    }
     function healthColor(ratio) {
-        if (ratio > 0.6) return ok
+        if (ratio >= 0.5) return ok
         if (ratio > 0.25) return warn
         return danger
     }
 
-    // level: 0 信息 1 提示 2 警告 3 严重。官方选手端语义:中立白、有利绿、不利红。
+    // level: 0 信息 1 提示 2 警告 3 严重。
     function eventColor(level) {
         if (level >= 3) return danger
         if (level === 2) return warn

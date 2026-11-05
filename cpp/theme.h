@@ -2,73 +2,131 @@
 
 #include <QColor>
 #include <QFont>
+#include <QImage>
 #include <QPainterPath>
 #include <QRectF>
+#include <QSize>
 #include <QString>
 #include <cstdint>
 
+class QPainter;
+
 namespace rm_terminal::theme {
 
-// One place for every colour and font in the UI.
+// One place for every colour and font in the UI, mirrored value for value in
+// qml/Theme.qml.
 //
-// Previously each panel inlined its own setStyleSheet string, so "the heading
-// blue" existed in six copies and drifted. Anything visual that appears twice
-// belongs here.
+// 「深空玻璃」:数值取自用户认可的效果图 v5(~/图片/rm-ui-v5/1-深空玻璃.png 的 CSS)。
+// 面板、行、按钮都是半透明的,底下透出窗口背景的三团光晕,所以这些颜色大多带 alpha。
+// 写进样式表时要用 css(),QColor::name() 会丢掉 alpha。
 
-// Surfaces, darkest to lightest.
-inline const QColor kVoid(7, 9, 13);          // window behind everything
-inline const QColor kSurface(14, 18, 26);     // card body
-inline const QColor kSurfaceRaised(20, 26, 37);
-inline const QColor kBorder(38, 48, 66);
-inline const QColor kBorderBright(58, 78, 108);
+// Window backdrop: vertical gradient top -> bottom, glows drawn by backdrop().
+inline const QColor kVoid(7, 11, 20);
+inline const QColor kVoidDeep(4, 6, 11);
 
-// Faction identity. Deliberately not the same red/blue as the alert palette:
-// "my armour is red" and "this value is dangerous" must never look alike.
+// Glass layers, translucent on purpose.
+inline const QColor kSurface(16, 26, 44, 153);       // panel
+inline const QColor kSurfaceRaised(40, 58, 90, 97);  // button
+inline const QColor kChip(12, 20, 34, 168);          // status chip
+inline const QColor kRow(30, 44, 70, 102);           // roster row
+inline const QColor kTile(255, 255, 255, 9);         // tile inside a panel
+inline const QColor kBorder(150, 180, 230, 41);
+inline const QColor kRowBorder(150, 180, 230, 26);
+inline const QColor kBorderBright(160, 196, 255, 82);
+inline const QColor kHighlight(255, 255, 255, 26);   // top edge of a panel
+// 设置页、自检页、弹窗盖在面板上,不能透出底下的字。
+inline const QColor kOverlay(10, 17, 30, 255);
+inline const QColor kMapBackground(4, 8, 14, 140);
+inline const QColor kVideoBackground(7, 11, 18);
+
+// Faction identity. Deliberately not the same red as the alert palette: "my armour
+// is red" and "this value is dangerous" must never look alike.
 inline const QColor kRed(228, 62, 74);
 inline const QColor kRedDim(96, 30, 38);
 inline const QColor kBlue(46, 134, 222);
 inline const QColor kBlueDim(24, 62, 104);
+inline const QColor kRedText(255, 143, 150);
+inline const QColor kBlueText(132, 194, 255);
+// 血条、控制度条的发光填充色。
+inline const QColor kFillRed(240, 82, 96);
+inline const QColor kFillBlue(64, 152, 238);
+inline const QColor kFillWarn(236, 170, 70);
+inline const QColor kFillDanger(255, 88, 72);
 
-// Accent used for headings, active borders, and the scanline.
-inline const QColor kCyan(64, 208, 232);
-inline const QColor kCyanDim(22, 78, 92);
+// Accent: active borders, the newest event, the selected thing.
+inline const QColor kCyan(142, 210, 242);
+inline const QColor kCyanDim(84, 156, 204, 82);
+inline const QColor kAccentText(196, 233, 251);
+inline const QColor kAccentBg(18, 44, 66, 219);
 
 // Text, brightest to dimmest.
-inline const QColor kTextPrimary(226, 232, 240);
-inline const QColor kTextSecondary(148, 163, 184);
-inline const QColor kTextMuted(88, 100, 118);
+inline const QColor kTextPrimary(230, 237, 246);
+inline const QColor kTextBright(195, 206, 221);
+inline const QColor kTextSecondary(147, 163, 186);
+inline const QColor kTextMuted(111, 127, 152);
 
-// Status semantics. Deliberately desaturated: on a dark HUD, high-saturation
-// neon green/amber on every health bar drowns out the alerts that actually need
-// attention. Must stay in step with Theme.qml.
-inline const QColor kOk(46, 158, 104);
-inline const QColor kWarn(184, 137, 58);
-inline const QColor kDanger(200, 74, 74);
-inline const QColor kOffline(60, 67, 80);
+// Status semantics.
+inline const QColor kOk(62, 207, 142);
+inline const QColor kOkText(95, 211, 154);
+inline const QColor kWarn(236, 170, 70);
+inline const QColor kDanger(255, 100, 100);
+inline const QColor kDangerText(255, 154, 154);
+inline const QColor kOffline(91, 100, 116);
 
-// Numbers use a monospaced face so a changing value does not reflow the row it
-// sits in; labels use the UI face because monospaced prose is harder to scan.
+// rgba() for style sheets. QColor::name() drops the alpha channel.
+QString css(const QColor& colour);
+
+// 数字用随程序打包的 Barlow Semi Condensed(OFL),开 tnum 等宽数字,跳动的数值不会让
+// 整行左右晃。中文用系统黑体:macOS 是苹方,其他平台是思源黑体(Noto Sans CJK SC)。
+QString numericFamily();
+QString labelFamily();
+// 注册打包的字体。重复调用无副作用;字体资源没链进来时什么都不做,回落到系统字体。
+void ensureFonts();
+// 按像素指定字号,效果图里的尺寸都是像素。weight 用 QFont::Weight 的数值(500、600…)。
+QFont numericPx(int pixel_size, int weight = QFont::DemiBold);
+QFont labelPx(int pixel_size, int weight = QFont::Medium);
+// 旧接口:按点数指定。保留给还没改到的面板。
 QFont numericFont(int point_size, bool bold = false);
 QFont labelFont(int point_size, bool bold = false);
 
-// 官方选手端的飘字配色（UI 手册第 08 页）：系统中立信息白、有利信息绿、
-// 不利信息红。此前本地实现用蓝/黄/红,与官方语义不符。
+// 官方选手端的飘字配色:系统中立信息白、有利信息绿、不利信息红。
 // level: 0 信息 1 提示 2 警告 3 严重。
 QColor eventColor(std::uint32_t level);
 
-// 斜切平行四边形 —— 官方界面的核心形状语言。cut 为斜切的水平投影像素数,
-// 正值切左上/右下,负值反向。用 QPainterPath 而非 QRect 是因为整套官方面板
-// (计分板、状态卡、模块灯条) 都靠这个斜角取得一致的视觉节奏。
-QPainterPath skewPath(const QRectF& box, qreal cut);
+// 45 度切角,整套界面唯一的形状语言:面板切 10、卡片和行切 6、按钮和标签切 4。
+// 不镜像时切左上和右下;镜像(右侧那一列)切右上和左下。
+QPainterPath chamferPath(const QRectF& box, qreal cut, bool mirrored = false);
+// 一块玻璃:切角底、1 像素描边,可选顶边一道高光。描边落在半像素上,线才是实的。
+void paintGlass(QPainter& painter, const QRectF& box, qreal cut, bool mirrored, const QColor& fill,
+                const QColor& stroke, bool highlight = false);
+// 斜着的条(血条、控制度条、标题前的小竖条)。degrees 是 CSS skewX 的角度,绕中心斜切。
+QPainterPath skewBar(const QRectF& box, qreal degrees);
 
-// 单侧斜切：只切一端,用于紧贴屏幕边缘的面板,避免两头都缺角。
+// 斜切平行四边形。cut 为斜切的水平投影像素数,正值切左上/右下,负值反向。
+QPainterPath skewPath(const QRectF& box, qreal cut);
+// 单侧斜切:只切一端,用于紧贴屏幕边缘的面板,避免两头都缺角。
 QPainterPath skewPathLeading(const QRectF& box, qreal cut, bool mirrored);
 
-// Health drives hue: green above 60%, amber above 25%, red below. An operator
-// reads colour before digits, so the colour has to carry the same warning.
+// 文字里的数字换成数字字体画:「兑换 50发 · 50金」里 50 用 Barlow,其余用黑体,
+// 数字两边各留 3 像素,字形不同的两种字挨着时不挤。返回画出的宽度。
+qreal paintMixedText(QPainter& painter, const QRectF& box, Qt::Alignment alignment, const QString& text,
+                     const QFont& label, const QFont& number, const QColor& colour);
+qreal mixedTextWidth(const QString& text, const QFont& label, const QFont& number);
+
+// 官方「前哨站」字样那种斜体金属字:上白下灰的竖向渐变(按 box 的高度铺),下面一道投影。
+// Barlow 没有斜体字形,斜体是切出来的。基地血量和「下一步」的排名数字用它。
+void paintMetalText(QPainter& painter, const QRectF& box, const QString& text, int pixel_size,
+                    Qt::Alignment alignment = Qt::AlignCenter, bool italic = true);
+
+// 窗口背景:竖向渐变 + 三团径向光(上方正中最亮)+ 暗角,加一点抖动避免色带。
+// 按尺寸缓存。Dashboard 画整张,QML 面板画自己那一块(见 glass_items.h)。
+QImage backdrop(const QSize& size, qreal device_pixel_ratio);
+
+// Health drives hue with the roster's thresholds: green from half up, amber above a
+// quarter, red below.
 QColor healthColor(double ratio);
 
-// Whole-application stylesheet: window, cards, scrollbars, tooltips.
+// Whole-application stylesheet: labels, scrollbars, tooltips.
 QString styleSheet();
 
 }  // namespace rm_terminal::theme
