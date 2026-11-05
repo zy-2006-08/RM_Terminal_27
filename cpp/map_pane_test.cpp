@@ -20,7 +20,7 @@ void check(bool condition, const char* name) {
 
 constexpr int kWidth = 800;
 constexpr int kHeight = 600;
-const QColor kBackground(12, 12, 14);
+const QColor kBackground(8, 13, 23);
 
 Field<double> valid(double value, Freshness freshness = Freshness::Fresh) {
     Field<double> field;
@@ -172,8 +172,9 @@ void markers_render_at_a_legible_size() {
                        120);
 
     // 底图本身有地形纹理,is_background() 判不出「这里没有标记」。所以尺寸靠
-    // 有标记/无标记两帧的差分求得:只有标记覆盖过的像素才会变化。
-    const QImage bare = render({});
+    // 有标记/无标记两帧的差分求得:只有标记覆盖过的像素才会变化。对照帧里放一台角落的车:
+    // 一台车都没有时场地正中会写「无位置数据」,差分量到的就是那行字而不是标记。
+    const QImage bare = render({robot(4, 1, 1.0, 1.0)});
     for (const Case& entry : cases) {
         const QImage image = render(entry.roster);
         int min_x = around.right(), max_x = around.left();
@@ -188,10 +189,10 @@ void markers_render_at_a_legible_size() {
             }
         }
         const int drawn_width = max_x - min_x + 1;
-        // 宽度含箭头沿朝向外推的位移,所以比底座直径大;高度是去掉光晕后的实心
-        // 底座本身。区间下限挡「缩成小点」,上限挡「119px 巨块」,两者都发生过。
-        check(drawn_width >= 40 && drawn_width <= 68, entry.what);
-        check(max_y - min_y + 1 >= 34, "the marker is as tall as it is wide, not a sliver");
+        // 效果图 v5 的标记是直径 22(本机 26)的圆点加一圈暗影,朝向箭头在圆点外侧。
+        // 区间下限挡「缩成小点」,上限挡「119px 巨块」,两者都发生过。
+        check(drawn_width >= 22 && drawn_width <= 40, entry.what);
+        check(max_y - min_y + 1 >= 22, "the marker is as tall as it is wide, not a sliver");
     }
 }
 

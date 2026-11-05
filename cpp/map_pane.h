@@ -79,7 +79,14 @@ public:
 
     // 地图标记(收到的和自己发的)与哨兵规划路径,每个 tick 由调用方整体替换。
     void setMarks(const std::vector<DrawnMark>& marks);
+    // 残血敌人(机器人 id),标记外面套一圈红光,和花名册的残血提示对上。
+    void setLowHealth(const std::vector<std::uint32_t>& ids);
     void setSentryPath(const std::vector<std::pair<double, double>>& points);
+
+    // 操作手的界面设置:场地底图不透明度(0.2–1.0),画不画敌方机器人和地图标记。
+    // 藏起来的敌方只是不画,地图下方的「位置缺失」文字照常,点选敌方标记照常。
+    void setDisplayOptions(double background_opacity, bool show_enemies, bool show_marks,
+                           std::uint32_t own_faction);
 
     // 指挥手:点地图下标记。点到敌方机器人(22 像素内)时 enemy_id 有值,否则是点位标记。
     // 没设回调时地图不响应点击。
@@ -99,6 +106,7 @@ protected:
 private:
     std::vector<MapMarker> markers_;
     std::vector<DrawnMark> marks_;
+    std::vector<std::uint32_t> low_health_;
     std::vector<std::pair<double, double>> sentry_path_;
     ClickHandler click_handler_;
     std::uint32_t own_faction_ = 1;
@@ -106,6 +114,10 @@ private:
     bool base_alert_ = false;
     bool base_alert_left_ = true;
     bool base_alert_bright_ = true;
+    double background_opacity_;
+    bool show_enemies_ = true;
+    bool show_marks_ = true;
+    std::uint32_t display_faction_ = 1;
 };
 
 }  // namespace rm_terminal

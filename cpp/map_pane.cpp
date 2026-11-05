@@ -10,6 +10,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPixmap>
+#include <QRadialGradient>
 #include <algorithm>
 #include <cmath>
 
@@ -28,9 +29,11 @@ namespace rm_terminal {
 
 namespace {
 
-const QColor kBackground(12, 12, 14);
-const QColor kFieldLine(70, 74, 82);
-const QColor kStatusText(170, 172, 178);
+// 地图底色:效果图里是 rgba(4,8,14,.55) 压在玻璃面板上,这里直接取合成后的颜色画成不透明的,
+// 场地图的透明处和信箱边都是这个颜色。
+const QColor kBackground(8, 13, 23);
+const QColor kFieldLine(150, 180, 230, 41);
+const QColor kStatusText(170, 180, 196);
 const QColor kAlertText(255, 138, 138);
 
 // Drawn at 40% alpha so a stale marker reads as degraded at a glance while its
@@ -47,36 +50,13 @@ bool usable(const Field<double>& field) {
            field.freshness != Freshness::NeverReceived;
 }
 
-// 开源底图是 0.7 不透明度铺在深色面板上,直接画满会盖掉自绘的越界/过期提示对比度。
-constexpr double kBackgroundOpacity = 0.7;
+// 场地图按 0.9 不透明度铺在深色底上(效果图是 0.92)。操作手可以在界面设置里调暗。
+constexpr double kBackgroundOpacity = 0.9;
 
-// 底座在屏幕上的目标直径。开源公式含 root.width/270 比例项,在它 270px 的控件上
-// 底座约 37px;照抄到我们 880px 的地图会得到 119px 巨块,整条删掉又会缩成小点。
-// 所以这里直接声明目标像素:标记是给操作手辨认的图元,尺寸恒定,不随面板膨胀。
-constexpr double kMarkerDiameter = 44.0;
-
-// 素材画布尺寸不一(普通底座 48px,自机与 lockbg 96px)。按各自宽度归一到同一目标
-// 直径,自机才不会大出一倍 —— 自机靠专属配色区分,不靠体积。
-double scale_for(const QPixmap& pixmap, double diameter = kMarkerDiameter) {
-    if (pixmap.isNull() || pixmap.width() <= 0) return 1.0;
-    return diameter / pixmap.width();
-}
-
-// 箭头沿朝向外推的距离,必须大于底座半径,否则箭头落在底座内部并压住编号。
-// 开源在 270px 空间里推 10px、底座 37px —— 但它的底座带发光外圈,视觉半径比实心
-// 部分大;我们裁掉了光晕,所以按实心半径 + 半个箭头高来定,箭尖正好贴在边缘外。
-constexpr double kArrowOffset = kMarkerDiameter * 0.5 + 5.0;
-
-// 箭头素材是 20x22,开源按 1/3 系数画;这里按底座直径折算成同等观感的宽度。
-constexpr double kArrowWidth = kMarkerDiameter * 0.42;
-
-// 兵种图标(空中/哨兵)沿用 PNG,按底座直径折算。编号不走 PNG:见 draw_number()。
-constexpr double kOverlayWidth = kMarkerDiameter * 0.5;
-
-// 编号字号。map_robot_id_*.png 只有 11x23~16x24,放大到底座尺寸会插值发虚,边缘
-// 泛白看着像在发光 —— 那是位图拉伸的产物,不是设计。改用矢量字形绘制:任意尺寸
-// 都清晰,且 1 号和 3 号自动等宽。
-constexpr double kNumberPointSize = 13.0;
+// 机器人标记(效果图):直径 22 的圆点,本机 26,白色细边加一圈暗影,中间写编号。
+// 标记是给操作手辨认的图元,尺寸恒定,不随面板膨胀。
+constexpr double kMarkerDiameter = 22.0;
+constexpr double kSelfDiameter = 26.0;
 
 // QPixmap 的构造要求 QGuiApplication 已就位,所以不能是文件级静态对象;函数内
 // 静态表在首次绘制时才建,同时保证整个进程只解码一次 PNG。
@@ -90,63 +70,93 @@ const QPixmap& asset(const QString& name) {
     return *it;
 }
 
-void draw_centered(QPainter& painter, const QPixmap& pixmap, QPointF centre, double scale,
-                   double rotation_deg = 0.0, QPointF offset = QPointF()) {
-    if (pixmap.isNull()) return;
-    const double w = pixmap.width() * scale;
-    const double h = pixmap.height() * scale;
-    painter.save();
-    painter.translate(centre);
-    if (rotation_deg != 0.0) painter.rotate(rotation_deg);
-    painter.translate(offset);
-    painter.drawPixmap(QRectF(-w / 2.0, -h / 2.0, w, h), pixmap, QRectF(pixmap.rect()));
-    painter.restore();
+QColor marker_fill(const MapMarker& marker) {
+    if (marker.is_self) return QColor(18, 183, 106);
+    switch (marker.faction) {
+    case 1: return QColor(214, 74, 74);
+    case 2: return QColor(47, 127, 216);
+    default: return QColor(142, 142, 148);
+    }
 }
 
-// *_robot.png 是常态底座;*_robot_lockbg.png 是开源专门给「被锁定目标」用的版本,
-// 带一圈外发光。之前误用了 lockbg,于是每台车都在发光 —— 那本该是锁定提示。
-// *_flat.png 是从开源素材裁掉外发光环后的版本。开源那圈渐隐光晕(实心圆止于
-// r=15,外圈还有 alpha 56→1 一直铺到 r=24)在 QML 的小地图里是装饰,但在这里
-// 每台车都糊着一团光,既显脏又让相邻单位的光晕叠在一起。原素材保留可回退。
-QString base_asset(const MapMarker& marker) {
-    if (marker.is_self) return QStringLiteral("self_map_robot_flat.png");
-    return marker.faction == 1 ? QStringLiteral("red_map_robot_flat.png")
-                               : QStringLiteral("blue_map_robot_flat.png");
+QColor arrow_fill(const MapMarker& marker) {
+    if (marker.is_self) return QColor(46, 227, 138);
+    return marker.faction == 2 ? QColor(132, 194, 255) : QColor(255, 143, 150);
 }
 
-QString arrow_asset(const MapMarker& marker) {
-    if (marker.is_self) return QStringLiteral("self_map_arrow.png");
-    return marker.faction == 1 ? QStringLiteral("red_map_arrow.png")
-                               : QStringLiteral("blue_map_arrow.png");
-}
-
-// 兵种图标沿用我们自己的 robot_class_name(),而不是照抄开源的 key 1..14 分支:
-// 两边的编号语义不同(我们敌方是 101..105),照抄会把兵种认错。
+// 空中/哨兵用官方小图标,其余画编号圆点。
 QString overlay_asset(const MapMarker& marker) {
     const QString robot_class = robot_class_name(marker.id.value);
     const bool red = marker.faction == 1;
     if (robot_class == QStringLiteral("空中"))
-        return red ? QStringLiteral("red_map_airplane.png")
-                   : QStringLiteral("blue_map_airplane.png");
+        return red ? QStringLiteral("red_map_airplane.png") : QStringLiteral("blue_map_airplane.png");
     if (robot_class == QStringLiteral("哨兵"))
         return red ? QStringLiteral("red_map_guard.png") : QStringLiteral("blue_map_guard.png");
     return QString();
 }
 
-// 编号画在底座正中。白字压深色底座已有足够对比,不描边:描边在 44px 上会糊成一团。
-void draw_number(QPainter& painter, const MapMarker& marker, QPointF centre) {
-    const std::uint32_t number = display_robot_number(marker.id.value);
-    if (number < 1 || number > 5) return;
+double marker_diameter(const MapMarker& marker) { return marker.is_self ? kSelfDiameter : kMarkerDiameter; }
 
-    QFont font = painter.font();
-    font.setPointSizeF(kNumberPointSize);
-    font.setBold(true);
+void draw_marker(QPainter& painter, const MapMarker& marker, QPointF centre, bool low_health) {
+    const double d = marker_diameter(marker);
     painter.save();
-    painter.setFont(font);
-    painter.setPen(QColor(245, 246, 250));
-    const QRectF box(centre.x() - kMarkerDiameter / 2.0, centre.y() - kMarkerDiameter / 2.0,
-                     kMarkerDiameter, kMarkerDiameter);
-    painter.drawText(box, Qt::AlignCenter, QString::number(number));
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    if (low_health) {
+        QRadialGradient glow(centre, d * 1.1);
+        glow.setColorAt(0, QColor(255, 100, 100, 160));
+        glow.setColorAt(1, QColor(255, 100, 100, 0));
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(glow);
+        painter.drawEllipse(centre, d * 1.1, d * 1.1);
+    }
+    const QString overlay = overlay_asset(marker);
+    if (!overlay.isEmpty() && !marker.is_self) {
+        const QPixmap& icon = asset(overlay);
+        if (!icon.isNull()) {
+            const QSizeF size = QSizeF(icon.size()).scaled(24, 22, Qt::KeepAspectRatio);
+            painter.drawPixmap(QRectF(centre.x() - size.width() / 2, centre.y() - size.height() / 2, size.width(),
+                                      size.height()),
+                               icon, QRectF(icon.rect()));
+            painter.restore();
+            return;
+        }
+    }
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(0, 0, 0, 64));
+    painter.drawEllipse(centre + QPointF(0, 2), d / 2 + 2, d / 2 + 2);
+    painter.setBrush(QColor(0, 0, 0, 89));
+    painter.drawEllipse(centre, d / 2 + 2, d / 2 + 2);
+    painter.setBrush(marker_fill(marker));
+    painter.setPen(QPen(marker.is_self ? QColor(234, 255, 243) : QColor(255, 255, 255, 235), 1.5));
+    painter.drawEllipse(centre, d / 2, d / 2);
+    const std::uint32_t number = display_robot_number(marker.id.value);
+    if (number >= 1 && number <= 9) {
+        painter.setFont(theme::numericPx(marker.is_self ? 14 : 13, QFont::Bold));
+        painter.setPen(Qt::white);
+        painter.drawText(QRectF(centre.x() - d / 2, centre.y() - d / 2, d, d), Qt::AlignCenter,
+                         QString::number(number));
+    }
+    painter.restore();
+}
+
+// 朝向:圆点外侧一个小三角,尖朝车头方向。
+void draw_heading(QPainter& painter, const MapMarker& marker, QPointF centre) {
+    const double d = marker_diameter(marker);
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.translate(centre);
+    painter.rotate(project_yaw_deg(marker.yaw_deg));
+    QPainterPath arrow;
+    const double tip = d / 2 + 11;
+    arrow.moveTo(0, -tip);
+    arrow.lineTo(5, -tip + 9);
+    arrow.lineTo(-5, -tip + 9);
+    arrow.closeSubpath();
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(0, 0, 0, 110));
+    painter.drawPath(arrow.translated(0, 1));
+    painter.setBrush(arrow_fill(marker));
+    painter.drawPath(arrow);
     painter.restore();
 }
 
@@ -233,8 +243,8 @@ MapStatus map_status(const std::vector<MapMarker>& markers, const FieldExtent& f
     return status;
 }
 
-MapPane::MapPane(QWidget* parent) : QWidget(parent) {
-    setMinimumSize(360, 260);
+MapPane::MapPane(QWidget* parent) : QWidget(parent), background_opacity_(kBackgroundOpacity) {
+    setMinimumSize(160, 86);
     setAutoFillBackground(false);
 }
 
@@ -245,10 +255,12 @@ void MapPane::setRobots(const std::vector<MapRobot>& robots) {
 
 void MapPane::paintEvent(QPaintEvent*) {
     QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    // 地图框切 6 的角,和别的卡片、行是同一种形状。
+    painter.setClipPath(theme::chamferPath(QRectF(rect()), 6));
     painter.fillRect(rect(), kBackground);
 
-    QFont label_font = painter.font();
-    label_font.setPointSize(9);
+    QFont label_font = theme::labelPx(12);
     painter.setFont(label_font);
 
     const MapViewport view = map_viewport(field_, width(), height());
@@ -264,11 +276,9 @@ void MapPane::paintEvent(QPaintEvent*) {
             painter.drawLine(middle, view.y, middle, view.y + view.height - 1);
         } else {
             painter.save();
-            painter.setOpacity(kBackgroundOpacity);
+            painter.setOpacity(background_opacity_);
             painter.drawPixmap(field_rect, background);
             painter.restore();
-            painter.setPen(kFieldLine);
-            painter.drawRect(view.x, view.y, view.width - 1, view.height - 1);
         }
     }
 
@@ -298,6 +308,7 @@ void MapPane::paintEvent(QPaintEvent*) {
 
     for (const MapMarker& marker : markers_) {
         if (!marker.has_position) continue;
+        if (!show_enemies_ && !marker.is_self && marker.faction != 0 && marker.faction != display_faction_) continue;
         const Projected projected = project(field_, view, marker.x_m, marker.y_m);
         // An off-field coordinate is reported in the status band instead: drawing
         // the clamped point would render it as a robot resting on the boundary,
@@ -305,37 +316,13 @@ void MapPane::paintEvent(QPaintEvent*) {
         if (!projected.in_bounds) continue;
 
         const QPointF centre(projected.point.x, projected.point.y);
-        const QPixmap& base = asset(base_asset(marker));
-
         painter.save();
-        // 过期标记整体半透明,和图标一起淡出,避免只有底座变淡而箭头仍然实心。
+        // 过期标记整体半透明,和箭头一起淡出,避免只有圆点变淡而箭头仍然实心。
         if (marker.stale) painter.setOpacity(kStaleAlpha / 255.0);
-
-        if (base.isNull()) {
-            QColor color = faction_color(marker.faction);
-            const double radius = marker.is_self ? 13.0 : 9.0;
-            painter.setBrush(color);
-            painter.setPen(QPen(color.darker(160), 1.0));
-            painter.drawEllipse(centre, radius, radius);
-        } else {
-            draw_centered(painter, base, centre, scale_for(base));
-            if (marker.has_yaw) {
-                // 开源把箭头沿朝向外推 10px 再旋转,所以箭头贴在底座边缘而不是压在
-                // 正中心。位移必须发生在旋转之后的坐标系里,否则方向会错。
-                const QPixmap& arrow = asset(arrow_asset(marker));
-                const double yaw = project_yaw_deg(marker.yaw_deg);
-                draw_centered(painter, arrow, centre, scale_for(arrow, kArrowWidth), yaw,
-                              QPointF(0.0, -kArrowOffset));
-            }
-            // 空中/哨兵有专属图形,画图标;其余画编号。两者互斥:同时画会互相压住。
-            const QString overlay = overlay_asset(marker);
-            if (overlay.isEmpty()) {
-                draw_number(painter, marker, centre);
-            } else {
-                const QPixmap& icon = asset(overlay);
-                draw_centered(painter, icon, centre, scale_for(icon, kOverlayWidth));
-            }
-        }
+        const bool low = !marker.is_self && marker.faction != display_faction_ &&
+                         std::find(low_health_.begin(), low_health_.end(), marker.id.value) != low_health_.end();
+        if (marker.has_yaw && overlay_asset(marker).isEmpty()) draw_heading(painter, marker, centre);
+        draw_marker(painter, marker, centre, low);
         painter.restore();
 
         // 雷达特殊标识:外面套一圈;定位模块离线(2)用虚线。
@@ -344,12 +331,12 @@ void MapPane::paintEvent(QPaintEvent*) {
             painter.setRenderHint(QPainter::Antialiasing, true);
             painter.setPen(QPen(theme::kWarn, 2.0, marker.highlight == 2 ? Qt::DashLine : Qt::SolidLine));
             painter.setBrush(Qt::NoBrush);
-            painter.drawEllipse(centre, kMarkerDiameter * 0.62, kMarkerDiameter * 0.62);
+            painter.drawEllipse(centre, kMarkerDiameter * 0.85, kMarkerDiameter * 0.85);
             painter.restore();
         }
 
         if (marker.stale) {
-            const double radius = marker.is_self ? 13.0 : 9.0;
+            const double radius = marker_diameter(marker) / 2;
             painter.setPen(kAlertText);
             painter.drawText(QPointF(projected.point.x + radius + 4.0,
                                      projected.point.y - radius - 2.0),
@@ -358,7 +345,7 @@ void MapPane::paintEvent(QPaintEvent*) {
     }
 
     // 地图标记压在机器人上面:标记是指挥手要队友看的东西。点到敌方车的标记画在那台车上。
-    for (const DrawnMark& mark : marks_) {
+    for (const DrawnMark& mark : show_marks_ ? marks_ : std::vector<DrawnMark>{}) {
         double x = mark.x_m;
         double y = mark.y_m;
         if (mark.target == MarkTarget::EnemyRobot) {
@@ -376,7 +363,7 @@ void MapPane::paintEvent(QPaintEvent*) {
         if (mark.kind == MarkKind::Attack) ink = theme::kDanger;
         if (mark.kind == MarkKind::Defend) ink = theme::kOk;
         if (mark.kind == MarkKind::Alert) ink = theme::kWarn;
-        const QPointF centre(projected.point.x, projected.point.y - kMarkerDiameter * 0.75);
+        const QPointF centre(projected.point.x, projected.point.y - kMarkerDiameter * 1.4);
         painter.save();
         painter.setRenderHint(QPainter::Antialiasing, true);
         painter.setOpacity(mark.opacity);
@@ -399,8 +386,8 @@ void MapPane::paintEvent(QPaintEvent*) {
         if (mark.target == MarkTarget::EnemyRobot) {
             painter.setPen(QPen(ink, 2.0));
             painter.setBrush(Qt::NoBrush);
-            painter.drawEllipse(QPointF(projected.point.x, projected.point.y), kMarkerDiameter * 0.7,
-                                kMarkerDiameter * 0.7);
+            painter.drawEllipse(QPointF(projected.point.x, projected.point.y), kMarkerDiameter * 0.9,
+                                kMarkerDiameter * 0.9);
         }
         painter.restore();
     }
@@ -411,7 +398,7 @@ void MapPane::paintEvent(QPaintEvent*) {
     int line_y = height() - 9;
     const auto line = [&](const QColor& ink, const QString& text) {
         const QRect box = painter.fontMetrics().boundingRect(text).adjusted(-4, -2, 4, 2);
-        painter.fillRect(box.translated(8, line_y), QColor(12, 12, 14, 190));
+        painter.fillRect(box.translated(8, line_y), QColor(6, 10, 18, 200));
         painter.setPen(ink);
         painter.drawText(QPoint(8, line_y), text);
         line_y -= kStatusLineHeight;
@@ -429,23 +416,35 @@ void MapPane::paintEvent(QPaintEvent*) {
     if (base_alert_) {
         // 场地图还是 2026 的,画不准 2027 基地的确切位置,所以闪我方那一半的边框并标在
         // 我方一侧;换成 2027 场地图后再改成在基地处闪。
-        const QColor red(255, 80, 80, base_alert_bright_ ? 255 : 110);
-        painter.setPen(QPen(red, 4));
-        painter.setBrush(Qt::NoBrush);
+        const QColor red(255, 100, 100, base_alert_bright_ ? 235 : 100);
+        painter.setPen(QPen(red, 3));
+        painter.setBrush(QColor(255, 100, 100, base_alert_bright_ ? 28 : 10));
         const int half = view.width / 2;
         const QRect side(base_alert_left_ ? view.x : view.x + half, view.y, half, view.height);
-        painter.drawRoundedRect(side.adjusted(2, 2, -2, -2), 6, 6);
-        QFont font = painter.font();
-        font.setPointSize(14);
-        font.setBold(true);
-        painter.setFont(font);
+        painter.drawPath(theme::chamferPath(QRectF(side.adjusted(3, 3, -3, -3)), 6));
+        painter.setFont(theme::labelPx(18, QFont::Bold));
         const QString text = QStringLiteral("基地被攻击");
-        const QRect box = painter.fontMetrics().boundingRect(text).adjusted(-10, -5, 10, 5);
+        const QRect box = painter.fontMetrics().boundingRect(text).adjusted(-12, -6, 12, 6);
         const QRect tag = box.translated(side.center() - box.center());
-        painter.fillRect(tag, QColor(58, 13, 18, 220));
-        painter.setPen(QColor(255, 154, 162));
+        theme::paintGlass(painter, QRectF(tag), 4, false, QColor(70, 14, 22, 230), QColor(255, 100, 100, 150));
+        painter.setPen(theme::kDangerText);
         painter.drawText(tag, Qt::AlignCenter, text);
     }
+}
+
+void MapPane::setDisplayOptions(double background_opacity, bool show_enemies, bool show_marks,
+                                std::uint32_t own_faction) {
+    background_opacity_ = std::clamp(background_opacity, 0.2, 1.0);
+    show_enemies_ = show_enemies;
+    show_marks_ = show_marks;
+    display_faction_ = own_faction;
+    update();
+}
+
+void MapPane::setLowHealth(const std::vector<std::uint32_t>& ids) {
+    if (ids == low_health_) return;
+    low_health_ = ids;
+    update();
 }
 
 void MapPane::setMarks(const std::vector<DrawnMark>& marks) {
