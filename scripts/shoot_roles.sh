@@ -19,6 +19,9 @@ VENV_PY="${RM_TERMINAL_PYTHON:-$REPO_ROOT/.venv/bin/python}"
 OUT="$REPO_ROOT/artifacts/roles"
 RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/rm-shoot-roles.XXXXXX")"
 mkdir -p "$OUT"
+# 截的是自带的标准画面:不读这台电脑上操作手自己的界面设置(~/.config/rm_terminal/ui_profiles.json)。
+export XDG_CONFIG_HOME="$RUN_DIR/config" XDG_DATA_HOME="$RUN_DIR/data"
+mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
 
 STARTED_PIDS=()
 cleanup() {
