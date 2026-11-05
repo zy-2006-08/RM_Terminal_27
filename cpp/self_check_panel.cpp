@@ -5,6 +5,7 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QPainter>
 #include <QPushButton>
 #include <QVBoxLayout>
 
@@ -22,24 +23,27 @@ QString chip_text(CheckLevel level) {
 }
 
 QString chip_style(CheckLevel level) {
-    QColor background = theme::kOffline;
-    if (level == CheckLevel::Ok) background = theme::kOk;
-    if (level == CheckLevel::Warn) background = theme::kWarn;
-    if (level == CheckLevel::Fail) background = theme::kDanger;
-    return QStringLiteral("background:%1; color:#f4f6fa; font-weight:bold; padding:2px 8px;"
-                          " border-radius:3px;")
-        .arg(background.name());
+    QColor tone = theme::kOffline;
+    QColor ink = theme::kTextBright;
+    if (level == CheckLevel::Ok) { tone = theme::kOk; ink = theme::kOkText; }
+    if (level == CheckLevel::Warn) { tone = theme::kWarn; ink = theme::kWarn; }
+    if (level == CheckLevel::Fail) { tone = theme::kDanger; ink = theme::kDangerText; }
+    tone.setAlpha(64);
+    return QStringLiteral("background:%1; color:%2; font-weight:bold; padding:2px 8px;")
+        .arg(theme::css(tone), theme::css(ink));
 }
 
 }  // namespace
 
 SelfCheckPanel::SelfCheckPanel(QWidget* parent) : QFrame(parent) {
     setObjectName(QStringLiteral("selfCheckPanel"));
-    setStyleSheet(QStringLiteral(
-        "QFrame#selfCheckPanel{background:#0e121a; border:1px solid #3a4e6c; border-radius:6px;}"
-        "QFrame#selfCheckPanel QLabel{background:transparent; border:none;}"
-        "QFrame#selfCheckPanel QPushButton{background:#1b2230; color:#e8e8ee;"
-        " border:1px solid #2c3648; border-radius:3px; padding:4px 14px; font-weight:bold;}"));
+    // 底和边框由 paintEvent 画成切角玻璃,样式表只管里面的字和按钮。
+    setStyleSheet(QStringLiteral("QFrame#selfCheckPanel{background:transparent; border:none;}"
+                                 "QFrame#selfCheckPanel QLabel{background:transparent; border:none;}"
+                                 "QFrame#selfCheckPanel QPushButton{background:%1; color:%2;"
+                                 " border:1px solid %3; padding:4px 14px; font-weight:bold;}")
+                      .arg(theme::css(theme::kSurfaceRaised), theme::css(theme::kTextPrimary),
+                           theme::css(theme::kBorder)));
 
     auto* column = new QVBoxLayout(this);
     column->setContentsMargins(18, 14, 18, 14);
@@ -48,7 +52,7 @@ SelfCheckPanel::SelfCheckPanel(QWidget* parent) : QFrame(parent) {
     auto* header = new QHBoxLayout();
     auto* title = new QLabel(QStringLiteral("上场前自检"), this);
     title->setFont(theme::labelFont(15, true));
-    title->setStyleSheet(QStringLiteral("color:#e2e8f0;"));
+    title->setStyleSheet(QStringLiteral("color:%1;").arg(theme::css(theme::kTextPrimary)));
     verdict_ = new QLabel(this);
     verdict_->setObjectName(QStringLiteral("selfCheckVerdict"));
     verdict_->setFont(theme::labelFont(15, true));
@@ -71,9 +75,8 @@ SelfCheckPanel::SelfCheckPanel(QWidget* parent) : QFrame(parent) {
 
 void SelfCheckPanel::setCheck(const SelfCheck& check) {
     verdict_->setText(check.verdict);
-    verdict_->setStyleSheet(QStringLiteral("color:%1;")
-                                .arg(check.failures == 0 ? QStringLiteral("#3ecf8e")
-                                                         : QStringLiteral("#ff7b7b")));
+    verdict_->setStyleSheet(QStringLiteral("color:%1;").arg(
+        theme::css(check.failures == 0 ? theme::kOkText : theme::kDangerText)));
 
     while (rows_.size() < check.rows.size()) {
         const int row = static_cast<int>(rows_.size());
@@ -81,7 +84,7 @@ void SelfCheckPanel::setCheck(const SelfCheck& check) {
         labels[0]->setAlignment(Qt::AlignCenter);
         labels[0]->setMinimumWidth(56);
         labels[1]->setFont(theme::labelFont(12, true));
-        labels[1]->setStyleSheet(QStringLiteral("color:#e2e8f0;"));
+        labels[1]->setStyleSheet(QStringLiteral("color:%1;").arg(theme::css(theme::kTextPrimary)));
         labels[2]->setWordWrap(true);
         labels[2]->setTextFormat(Qt::RichText);
         labels[2]->setFont(theme::labelFont(12));
@@ -99,14 +102,20 @@ void SelfCheckPanel::setCheck(const SelfCheck& check) {
         rows_[index][0]->setText(chip_text(row.level));
         rows_[index][0]->setStyleSheet(chip_style(row.level));
         rows_[index][1]->setText(row.name);
-        QString detail = QStringLiteral("<span style='color:#c8d0dc'>%1</span>")
-                             .arg(row.detail.toHtmlEscaped());
+        QString detail = QStringLiteral("<span style='color:%1'>%2</span>")
+                             .arg(theme::kTextBright.name(), row.detail.toHtmlEscaped());
         if (!row.hint.isEmpty() && row.level != CheckLevel::Ok)
-            detail += QStringLiteral("<span style='color:#94a3b8'> → %1</span>")
-                          .arg(row.hint.toHtmlEscaped());
+            detail += QStringLiteral("<span style='color:%1'> → %2</span>")
+                          .arg(theme::kTextSecondary.name(), row.hint.toHtmlEscaped());
         rows_[index][2]->setText(detail);
     }
     adjustSize();
+}
+
+void SelfCheckPanel::paintEvent(QPaintEvent* event) {
+    QPainter painter(this);
+    theme::paintGlass(painter, QRectF(rect()), 10, false, theme::kOverlay, theme::kBorderBright, true);
+    QFrame::paintEvent(event);
 }
 
 }  // namespace rm_terminal

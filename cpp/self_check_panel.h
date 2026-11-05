@@ -24,6 +24,9 @@ public:
 Q_SIGNALS:
     void closeRequested();
 
+protected:
+    void paintEvent(QPaintEvent* event) override;
+
 private:
     QLabel* verdict_;
     QGridLayout* grid_;
