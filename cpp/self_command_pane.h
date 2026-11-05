@@ -1,6 +1,7 @@
 #pragma once
 
 #include "domain.h"
+#include "next_step.h"
 #include "role_commands.h"
 
 #include <QString>
@@ -31,8 +32,6 @@ struct SelfCommandView {
 
 SelfCommandView self_command_view(const Snapshot& snapshot);
 
-// 规则手册表 5-7:50 + ROUNDUP((420 - 剩余秒数) / 60 × 20)。
-std::uint32_t remote_heal_cost(std::int32_t remaining_sec);
 
 // 本车指令:兑换和远程兑换发弹量、远程兑换血量、开能量机关、赛前选性能体系。
 // 重装和步兵共用,重装没有性能体系和能量机关。复活照官方选手端,阵亡时才弹出复活框
@@ -47,10 +46,14 @@ public:
     void setSender(std::function<bool(const char* topic, const std::string& payload)> sender);
     // 键鼠控制由主程序的 KmCapture 管,面板只在状态行里显示它。
     void setKeyboardMouseState(bool active, const QString& detail);
+    // 「下一步」推荐开能量机关时,按钮上标同一个编号并发光。空串去掉。
+    void setRuneBadge(const QString& badge);
     void tick(MonotonicMs now);
 
     QString statusText() const;
     QString contextText() const;
+    // 卡片标题栏右侧的状态(富文本):「● 就绪 · 交战中」、断线、回显。
+    QString headerHtml() const;
     bool preMatch() const;
     // 复活框的两颗按钮和 Y 键调这两个。条件不满足(没阵亡、读条没满、金币不够、断线)
     // 时什么都不发,返回 false。

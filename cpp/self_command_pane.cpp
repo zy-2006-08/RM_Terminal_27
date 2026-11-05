@@ -1,5 +1,6 @@
 #include "self_command_pane.h"
 
+#include "glass.h"
 #include "theme.h"
 
 #include <QGridLayout>
@@ -7,6 +8,7 @@
 #include <QPainter>
 #include <QPaintEvent>
 #include <QPushButton>
+#include <QFontMetricsF>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -16,8 +18,9 @@ namespace rm_terminal {
 
 namespace {
 
-constexpr int kRowHeight = 16;
-constexpr int kGap = 4;
+// 顶上两块信息小牌子(能量机关 / 回血价)高 28,下面按钮之间、按钮和小牌子之间都隔 6(效果图)。
+constexpr int kChipHeight = 28;
+constexpr int kGap = 6;
 constexpr std::uint32_t kStageMatch = 4;
 
 // CommonCommand.cmd_type(2.2.25)。
@@ -44,13 +47,28 @@ std::optional<T> present(const Field<T>& field) {
     return field.value;
 }
 
-QPushButton* make_button(QWidget* parent, const QString& text, const char* name) {
-    auto* button = new QPushButton(text, parent);
+GlassButton* make_button(QWidget* parent, const QString& text, const char* name,
+                         GlassButton::Kind kind = GlassButton::Kind::Command) {
+    auto* button = new GlassButton(text, parent, kind);
     button->setObjectName(QString::fromLatin1(name));
-    button->setStyleSheet(command_button_style());
-    button->setCursor(Qt::PointingHandCursor);
-    button->setFocusPolicy(Qt::NoFocus);
     return button;
+}
+
+// 一块信息小牌子:左边说明,右边数值。数值里的数字用数字字体。
+void paint_chip(QPainter& painter, const QRectF& box, const QString& label, const QString& value,
+                const QColor& ink) {
+    theme::paintGlass(painter, box, 4, false, theme::kChip, theme::kRowBorder);
+    const QRectF inner = box.adjusted(10, 0, -10, 0);
+    const QFont label_font = theme::labelPx(13);
+    painter.setFont(label_font);
+    painter.setPen(theme::kTextSecondary);
+    const qreal label_w = QFontMetricsF(label_font).horizontalAdvance(label);
+    painter.drawText(inner, Qt::AlignLeft | Qt::AlignVCenter, label);
+    if (value.isEmpty()) return;
+    const QFont value_font = theme::labelPx(13, QFont::Bold);
+    const QFont number_font = theme::numericPx(15, QFont::Bold);
+    const QRectF value_box(inner.left() + label_w + 8, inner.top(), inner.width() - label_w - 8, inner.height());
+    theme::paintMixedText(painter, value_box, Qt::AlignRight | Qt::AlignVCenter, value, value_font, number_font, ink);
 }
 
 QString rune_text(std::optional<std::uint32_t> status, std::optional<std::uint32_t> arms) {
@@ -64,11 +82,6 @@ QString rune_text(std::optional<std::uint32_t> status, std::optional<std::uint32
 }
 
 }  // namespace
-
-std::uint32_t remote_heal_cost(std::int32_t remaining_sec) {
-    const double elapsed = 420.0 - std::clamp(remaining_sec, 0, 420);
-    return 50u + static_cast<std::uint32_t>(std::ceil(elapsed / 60.0 * 20.0 - 1e-9));
-}
 
 SelfCommandView self_command_view(const Snapshot& snapshot) {
     SelfCommandView view;
@@ -104,14 +117,14 @@ SelfCommandView self_command_view(const Snapshot& snapshot) {
 
 SelfCommandPane::SelfCommandPane(QWidget* parent) : QWidget(parent) {
     auto* column = new QVBoxLayout(this);
-    column->setContentsMargins(0, 0, 0, 0);
+    // 顶上留出两块信息小牌子的高度,由 paintEvent 画。
+    column->setContentsMargins(0, kChipHeight + kGap, 0, 0);
     column->setSpacing(kGap);
-    column->addStretch(1);
 
     pre_page_ = new QWidget(this);
     auto* pre = new QGridLayout(pre_page_);
     pre->setContentsMargins(0, 0, 0, 0);
-    pre->setSpacing(4);
+    pre->setSpacing(kGap);
     chassis_hp_ = make_button(pre_page_, QStringLiteral("血量优先"), "selfChassisHp");
     chassis_power_ = make_button(pre_page_, QStringLiteral("功率优先"), "selfChassisPower");
     shooter_cooling_ = make_button(pre_page_, QStringLiteral("冷却优先"), "selfShooterCooling");
@@ -129,13 +142,15 @@ SelfCommandPane::SelfCommandPane(QWidget* parent) : QWidget(parent) {
     match_page_ = new QWidget(this);
     auto* match = new QGridLayout(match_page_);
     match->setContentsMargins(0, 0, 0, 0);
-    match->setSpacing(4);
+    match->setSpacing(kGap);
     auto* amount = new QHBoxLayout;
-    amount->setSpacing(4);
+    amount->setSpacing(kGap);
     minus_ = make_button(match_page_, QStringLiteral("−"), "selfExchangeLess");
-    plus_ = make_button(match_page_, QStringLiteral("＋"), "selfExchangeMore");
-    minus_->setFixedWidth(34);
-    plus_->setFixedWidth(34);
+    plus_ = make_button(match_page_, QStringLiteral("+"), "selfExchangeMore");
+    static_cast<GlassButton*>(minus_)->setSquare(true);
+    static_cast<GlassButton*>(plus_)->setSquare(true);
+    minus_->setFixedWidth(42);
+    plus_->setFixedWidth(42);
     exchange_ = make_button(match_page_, QString(), "selfExchange");
     amount->addWidget(minus_);
     amount->addWidget(exchange_, 1);
@@ -143,7 +158,7 @@ SelfCommandPane::SelfCommandPane(QWidget* parent) : QWidget(parent) {
     match->addLayout(amount, 0, 0, 1, 2);
     remote_ammo_ = make_button(match_page_, QStringLiteral("远程补弹"), "selfRemoteAmmo");
     remote_heal_ = make_button(match_page_, QStringLiteral("远程回血"), "selfRemoteHeal");
-    rune_ = make_button(match_page_, QStringLiteral("能量机关 按住"), "selfRune");
+    rune_ = make_button(match_page_, QStringLiteral("能量机关 按住"), "selfRune", GlassButton::Kind::Accent);
     match->addWidget(remote_ammo_, 1, 0);
     match->addWidget(remote_heal_, 1, 1);
     match->addWidget(rune_, 2, 0, 1, 2);
@@ -187,8 +202,7 @@ SelfCommandPane::SelfCommandPane(QWidget* parent) : QWidget(parent) {
         if (fired) sendRune();
     });
 
-    for (QPushButton* button : findChildren<QPushButton*>()) button->ensurePolished();
-    setMinimumHeight(match_page_->minimumSizeHint().height() + kGap + kRowHeight * 2);
+    setMinimumHeight(match_page_->minimumSizeHint().height() + kGap + kChipHeight);
     refreshButtons();
 }
 
@@ -255,6 +269,12 @@ void SelfCommandPane::setKeyboardMouseState(bool active, const QString& detail) 
     km_detail_ = detail;
     refreshButtons();
     update();
+}
+
+void SelfCommandPane::setRuneBadge(const QString& badge) {
+    auto* rune = static_cast<GlassButton*>(rune_);
+    rune->setBadge(badge);
+    rune->setGlow(!badge.isEmpty());
 }
 
 void SelfCommandPane::tick(MonotonicMs now) {
@@ -382,8 +402,7 @@ void SelfCommandPane::refreshButtons() {
     remote_heal_->setEnabled(live && playing && alive && !full && view_.can_remote_heal.value_or(true));
     rune_->setVisible(view_.infantry);
     rune_->setEnabled(live && view_.infantry && playing && view_.rune_status.value_or(1) == 1);
-    const double opening = rune_hold_.progress(now_);
-    rune_->setStyleSheet(opening > 0.0 ? hold_button_style(opening) : command_button_style());
+    static_cast<GlassButton*>(rune_)->setProgress(rune_hold_.progress(now_));
     rune_->setText(rune_hold_.ready(now_) ? QStringLiteral("能量机关 松手")
                                           : QStringLiteral("能量机关 按住"));
 }
@@ -444,56 +463,65 @@ QString SelfCommandPane::contextText() const {
     return QStringLiteral("远程补弹 %1金/%2发 · %3").arg(kRemotePrice).arg(kRemoteUnit42).arg(heal);
 }
 
+QString SelfCommandPane::headerHtml() const {
+    const QString status = statusText();
+    const bool bad_echo = echo_result_.status == EchoStatus::Unconfirmed || echo_result_.status == EchoStatus::Failed;
+    QColor ink = theme::kTextBright;
+    if (!link_up_) ink = theme::kDangerText;
+    else if (!sender_) ink = theme::kTextMuted;
+    else if (km_active_) ink = theme::kAccentText;
+    else if (view_.dead.value_or(false) && status == contextText()) ink = theme::kDangerText;
+    else if (bad_echo) ink = theme::kWarn;
+    else if (status == QStringLiteral("就绪") || echo_result_.status == EchoStatus::Confirmed) ink = theme::kOkText;
+    QString html = QStringLiteral("<span style='color:%1; font-size:10px'>●</span>&nbsp;<span style='color:%1'>%2</span>")
+                       .arg(ink.name(), status.toHtmlEscaped());
+    if (link_up_ && !view_.dead.value_or(false) && view_.out_of_combat)
+        html += QStringLiteral("<span style='color:%1'>&nbsp;·&nbsp;%2</span>")
+                    .arg(theme::kTextSecondary.name(),
+                         *view_.out_of_combat ? QStringLiteral("脱战") : QStringLiteral("交战中"));
+    return html;
+}
+
 // 宽度给小值:面板放在花名册那一列,列宽由花名册钉死(两侧花名册必须等宽),
 // 这里报大了会把整列撑宽。
 QSize SelfCommandPane::sizeHint() const {
-    return QSize(200, match_page_->minimumSizeHint().height() + kGap + kRowHeight * 3 + 2);
+    const QWidget* page = preMatch() ? pre_page_ : match_page_;
+    return QSize(200, kChipHeight + kGap + page->sizeHint().height());
 }
 
 void SelfCommandPane::paintEvent(QPaintEvent*) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
-    const QWidget* page = preMatch() ? pre_page_ : match_page_;
-    const int w = width();
-    const int canvas_h = std::max(page->geometry().top() - kGap, 0);
-    if (canvas_h < kRowHeight || w <= 0) return;
-
-    // 自下而上排:状态行永远在,空间够再画说明行,再够才画经济/发弹量那一行。
-    const bool bad_echo = echo_result_.status == EchoStatus::Unconfirmed ||
-                          echo_result_.status == EchoStatus::Failed;
-    const QString status_text = statusText();
-    const bool showing_context = status_text == contextText();
-    const QRect status(0, canvas_h - kRowHeight, w, kRowHeight);
-    painter.setFont(theme::labelFont(10, !link_up_ || km_active_));
-    painter.setPen(!link_up_ ? theme::kDanger
-                             : (km_active_ ? theme::kCyan
-                                           : (bad_echo ? theme::kWarn
-                                                       : (showing_context ? theme::kDanger
-                                                                          : theme::kTextSecondary))));
-    painter.drawText(status, Qt::AlignLeft | Qt::AlignVCenter,
-                     painter.fontMetrics().elidedText(status_text, Qt::ElideRight, w));
-
-    int top = status.top();
-    if (!showing_context) {
-        if (top - kRowHeight < 0) return;
-        const QRect context(0, top - kRowHeight, w, kRowHeight);
-        painter.setFont(theme::labelFont(10));
-        painter.setPen(view_.dead.value_or(false) ? theme::kDanger : theme::kTextMuted);
-        painter.drawText(context, Qt::AlignLeft | Qt::AlignVCenter,
-                         painter.fontMetrics().elidedText(contextText(), Qt::ElideRight, w));
-        top = context.top();
+    const qreal w = width();
+    if (w <= 0) return;
+    // 顶上两块信息小牌子。赛前和阵亡时换成那一刻最要紧的事。
+    const QRectF row(0, 0, w, kChipHeight);
+    const qreal half = (w - kGap) / 2;
+    const QRectF left(row.left(), row.top(), half, row.height());
+    const QRectF right(row.left() + half + kGap, row.top(), half, row.height());
+    if (preMatch()) {
+        paint_chip(painter, row, contextText(), QString(), theme::kTextPrimary);
+        return;
     }
-
-    if (top - kRowHeight < 0) return;
-    const QRect info(0, top - kRowHeight - 2, w, kRowHeight);
-    const QString combat = view_.dead.value_or(false) ? QStringLiteral("阵亡")
-                           : !view_.out_of_combat     ? kDash
-                           : (*view_.out_of_combat ? QStringLiteral("脱战") : QStringLiteral("交战中"));
-    role_paint::row(painter, info, QStringLiteral("经济"),
-                    QStringLiteral("%1 · 弹 %2 · %3")
-                        .arg(view_.economy ? QString::number(*view_.economy) : kDash,
-                             view_.ammo ? QString::number(*view_.ammo) : kDash, combat),
-                    view_.economy ? theme::kTextPrimary : theme::kTextMuted);
+    if (view_.dead.value_or(false)) {
+        paint_chip(painter, left, QStringLiteral("阵亡"),
+                   QStringLiteral("读条 %1/%2")
+                       .arg(view_.revive_current ? QString::number(*view_.revive_current) : kDash,
+                            view_.revive_total ? QString::number(*view_.revive_total) : kDash),
+                   theme::kDangerText);
+        paint_chip(painter, right, QStringLiteral("金币复活"),
+                   view_.revive_cost ? QStringLiteral("%1 金").arg(*view_.revive_cost) : kDash, theme::kTextPrimary);
+        return;
+    }
+    if (view_.infantry)
+        paint_chip(painter, left, QStringLiteral("能量机关"), rune_text(view_.rune_status, view_.rune_arms),
+                   theme::kTextPrimary);
+    else
+        paint_chip(painter, left, QStringLiteral("远程补弹"),
+                   QStringLiteral("%1 金/%2 发").arg(kRemotePrice).arg(kRemoteUnit42), theme::kTextPrimary);
+    paint_chip(painter, right, QStringLiteral("回血"),
+               view_.remaining ? QStringLiteral("%1 金").arg(remote_heal_cost(*view_.remaining)) : kDash,
+               theme::kTextPrimary);
 }
 
 }  // namespace rm_terminal
