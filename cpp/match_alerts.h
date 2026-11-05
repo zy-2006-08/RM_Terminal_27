@@ -51,6 +51,14 @@ QString alert_level_name(AlertLevel level);
 // 所有可能说出口的句子,供赛前一次性合成。
 QStringList match_alert_phrases();
 
+// 赛程里固定的时间点(能量机关、飞镖闸门),按开赛后第几秒排好。「接下来的时间点」面板用。
+struct TimelineMark {
+    std::int32_t at_sec;
+    AlertKind kind;
+    QString text;
+};
+std::vector<TimelineMark> match_timeline();
+
 struct MatchAlertSettings {
     std::uint32_t self_faction = 1;  // 1 红 2 蓝
     int control_gap = 30;
@@ -68,6 +76,8 @@ class MatchAlerts {
 public:
     explicit MatchAlerts(MatchAlertSettings settings);
     std::vector<MatchAlert> observe(const Snapshot& snapshot, MonotonicMs now);
+    // 运行中改关掉的种类(操作手的界面设置)。只影响以后的提醒,判定状态不清零。
+    void setDisabled(QStringList disabled) { settings_.disabled = std::move(disabled); }
 
 private:
     void report(std::vector<MatchAlert>& out, MatchAlert alert) const;
@@ -102,6 +112,8 @@ class BannerQueue {
 public:
     void push(const QString& text, AlertLevel level, MonotonicMs now);
     std::optional<BannerItem> current(MonotonicMs now);
+    // 正在显示的这条是什么时候换上的,横幅底下那道「还剩多久」的细线用。
+    MonotonicMs shownAt() const { return shown_at_; }
 
 private:
     std::deque<BannerItem> queue_;

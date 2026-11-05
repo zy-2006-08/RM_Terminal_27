@@ -70,6 +70,15 @@ QString alert_level_name(AlertLevel level) {
     return QString();
 }
 
+std::vector<TimelineMark> match_timeline() {
+    std::vector<TimelineMark> out;
+    for (const TimelinePoint& point : timeline())
+        if (QString::fromUtf8(point.banner).contains(QStringLiteral("可以")) &&
+            !QString::fromUtf8(point.banner).contains(QStringLiteral("秒后")))
+            out.push_back({point.at_sec, point.kind, QString::fromUtf8(point.banner)});
+    return out;
+}
+
 QStringList match_alert_phrases() {
     QStringList phrases{QStringLiteral("敌方临时控制我方前哨阵地"),
                         QStringLiteral("我方前哨阵地被敌方完全控制"),
