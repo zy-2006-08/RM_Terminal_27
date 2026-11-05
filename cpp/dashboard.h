@@ -9,11 +9,17 @@
 #include "popup_state.h"
 #include "roster_pane.h"
 #include "roster_panel.h"
+#include "self_status_pane.h"
+#include "timeline_pane.h"
 #include "battle_analysis_pane.h"
 #include "event_feed_pane.h"
+#include "glass.h"
 #include "link_health.h"
 #include "match_alerts.h"
+#include "next_step.h"
+#include "next_step_pane.h"
 #include "top_bar.h"
+#include "ui_profile.h"
 #include "ui_mode.h"
 #include "video_receiver.h"
 
@@ -39,6 +45,9 @@ namespace rm_terminal {
 class ReminderController;
 class ReminderDialog;
 class SelfCheckPanel;
+class UiProfileController;
+class UnitGridLayout;
+class LayoutEditor;
 
 // 横幅行状态灯的富文本:每条链路一个圆点,不正常时圆点后跟几个字说明。
 QString link_lights_html(const LinkReport& report);
@@ -123,6 +132,8 @@ public:
     // 到完整视野,裁掉边缘可能裁掉对手。
     enum class Scaling { Fit, Cover };
     void setScaling(Scaling scaling);
+    // 信息页的小窗:切角、底部一行「图传 / 点击放大」。全屏页不画。
+    void setCaption(bool caption);
 
     // Observation only. Returns the owned copy this pane is painting, so a caller
     // can confirm both panes received the same frame.
@@ -139,6 +150,7 @@ private:
     QImage image_;
     QString status_ = QStringLiteral("waiting for video");
     Scaling scaling_ = Scaling::Fit;
+    bool caption_ = false;
 };
 
 // Hands ONE already-owned frame to both panes.
@@ -162,6 +174,18 @@ public:
     // 后端和配置文件),所以入口按钮先建好、控制器后挂上:没挂时按钮显示为不可用,
     // 而不是让整个仪表盘依赖一个可选子系统。
     void attachReminders(ReminderController* controller);
+
+    // 操作手的界面设置。挂上后状态条出现「界面设置」按钮,当前方案立刻生效,以后每次改动
+    // 都会重排。不挂时(测试、回放截图)用席位默认布局。比赛中(收到「比赛中」阶段)按钮
+    // 置灰、设置页收起,直到收到别的阶段。`config_disabled_alerts` 是配置文件关掉的提醒。
+    void attachUiProfiles(UiProfileController* controller, const QStringList& config_disabled_alerts);
+    // 按方案藏面板、调细项。attachUiProfiles 之外也给测试直接调用。
+    // editing:界面设置页开着时按它正在改的那份排,「有急事才弹出」的「下一步」也画在格子里好摆。
+    void applyUiScheme(const UiScheme& scheme, bool editing = false);
+    // 界面设置页(一页搞定:方案、拖面板、细项)。
+    bool uiSettingsVisible() const;
+    void setUiSettingsVisible(bool visible);
+    LayoutEditor* layoutEditor() const { return layout_editor_; }
 
     // 空字符串隐藏。实况录制是红点,回放是青色播放标记。
     void setRecordingStatus(const QString& text);
@@ -223,17 +247,39 @@ public:
     void setKeyboardMouseStatus(const QString& text);
     // 指挥手地图下的标记工具条,其他席位为 nullptr。
     MarkToolbar* markToolbar() const { return mark_toolbar_; }
-    // 角色面板的卡片(装配/飞镖/哨兵),主程序把真正的面板放进去。不在当前布局里时返回 nullptr。
+    // 这块面板现在在画面里才返回它的卡片,不在时返回 nullptr。
     QWidget* paneCard(PaneId pane) const;
+    // 这个席位有这块面板就返回它的卡片,不管现在在不在画面里。主程序启动时用它放装配/飞镖/哨兵/本车:
+    // 启动时的方案里没有这块,后来加回画面或换了方案,里面照样有按钮。
+    QWidget* roleCard(PaneId pane) const;
+    // 把主程序建的面板放进卡片。用它而不是往 paneCard()->layout() 里加:「本车」卡片下半截
+    // 已经装着图传,指令面板要排在图传上面。
+    void placePane(PaneId pane, QWidget* widget);
+    // 卡片标题栏右侧的小字(富文本),例如「本车」的「● 就绪」。
+    void setPaneHeader(PaneId pane, const QString& rich_text);
+
+    // 「下一步」现在给「能量机关 · 按住」按钮标的编号(空串 = 不标),主程序转给本车面板。
+    QString runeBadge() const { return rune_badge_; }
+    // 第 1 件换了、要念出来的那句话;取一次就清空。
+    QString takeNextSpeech();
+    const std::vector<NextCard>& nextCards() const { return next_cards_; }
 
 protected:
     // The popup is outside both page layouts (see popup_ below), so nothing else
     // would ever resize it.
     void resizeEvent(QResizeEvent* event) override;
+    // 窗口背景:深空渐变 + 光晕(theme::backdrop)。
+    void paintEvent(QPaintEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     void refreshPage();
     void placeSelfCheck();
+    void placeBanner();
+    void placeAlertStrip();
+    void placeVideo();
+    void capVideo();
+    void layoutCells(const LayoutProfile& profile);
     // Two VideoPane instances, one per page, sharing the single resident
     // VideoReceiver. The same pane is deliberately NOT reparented between pages:
     // the reason is engineering determinism, avoiding a simultaneous
@@ -244,20 +290,38 @@ private:
     QWidget* info_page_;
     QWidget* video_page_;
 
-    QLabel* mode_banner_;
-    QLabel* alert_strip_;
+    static constexpr int kStatusHeight = 28;
+    ChipLabel* mode_banner_;
+    ChipLabel* alert_strip_;
+    QString alert_text_;
 
     // 固定在横幅行右端。刻意不放进 QML 顶部栏:1280 宽度下顶部栏右侧只剩约 19px,
     // 塞进去会压到前哨站徽标。
-    QPushButton* reminder_entry_;
-    QLabel* recording_status_;
-    QLabel* link_lights_;
-    QPushButton* self_check_entry_;
-    QPushButton* keyboard_mouse_entry_;
+    GlassButton* reminder_entry_;
+    ChipLabel* recording_status_;
+    ChipLabel* link_lights_;
+    GlassButton* self_check_entry_;
+    GlassButton* keyboard_mouse_entry_;
+    GlassButton* ui_settings_entry_;
+    UiProfileController* ui_profiles_ = nullptr;
+    LayoutEditor* layout_editor_ = nullptr;
+    QTimer* preview_timer_ = nullptr;
+    QTimer* preview_grab_ = nullptr;
+    // 每块面板最后一次在主画面上的样子:组件库里 QML 面板的缩略图从这里取。
+    std::map<PaneId, QPixmap> pane_shots_;
+    std::uint32_t self_robot_id_ = 3;
+    void refreshEditorPreview();
+    // 整个窗口(不含设置页)的样子,画在窗口背景上。
+    QPixmap windowShot();
+    void rememberPaneShots(const QPixmap& shot);
+    QPixmap paneImage(PaneId pane, QSize size);
+    void setEditingLook(bool on);
+    bool editing_look_ = false;
+    bool ui_locked_ = false;
     SelfCheckPanel* self_check_ = nullptr;
     bool self_check_enabled_ = false;
     bool was_pre_match_ = false;
-    QLabel* alert_banner_ = nullptr;
+    GlowBanner* alert_banner_ = nullptr;
     BannerQueue banners_;
     MonotonicMs base_flash_until_ = 0;
     bool our_base_left_ = true;
@@ -271,6 +335,24 @@ private:
     bool eliminated_overlay_replaced_ = false;
     // 每种面板外面那张卡片,按 PaneId 索引;不在当前布局里的卡片隐藏、不进网格。
     std::map<PaneId, QWidget*> pane_cards_;
+    UnitGridLayout* grid_ = nullptr;
+    LayoutProfile current_profile_;
+    // 「下一步」:格子里那块和「有急事才弹出」时浮在中间的那块。
+    NextStepPane* next_pane_ = nullptr;
+    GlassCard* next_popup_ = nullptr;
+    NextStepPane* next_popup_pane_ = nullptr;
+    NextStepBoard next_board_;
+    std::vector<NextCard> next_cards_;
+    bool next_enabled_ = false;
+    bool next_popup_mode_ = false;
+    UiOptions next_options_;
+    std::optional<NextRule> spoken_rule_;
+    QString pending_speech_;
+    QString rune_badge_;
+    void updateNextStep(const Snapshot& snapshot, MonotonicMs now);
+    void placeNextPopup();
+    // 图传小窗藏起来了(只对装在「本车」卡片里的小窗有效)。
+    bool video_hidden_ = false;
 
     void sendMark(double x_m, double y_m, std::optional<std::uint32_t> enemy_id);
     MarkToolbar* mark_toolbar_ = nullptr;
@@ -295,6 +377,8 @@ private:
     RosterPanel* ally_roster_;
     RosterPanel* enemy_roster_;
     BattleAnalysisPane* analysis_;
+    SelfStatusPane* self_status_ = nullptr;
+    TimelinePane* timeline_ = nullptr;
 
     MapPane* map_;
     EventFeedPane* event_;

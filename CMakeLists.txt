@@ -44,8 +44,18 @@ add_library(terminal_presentation cpp/presentation.cpp cpp/ui_mode.cpp cpp/ui_mo
     cpp/link_health.cpp cpp/link_health.h
     cpp/match_alerts.cpp cpp/match_alerts.h
     cpp/layout_profile.cpp cpp/layout_profile.h
-    cpp/map_marks.cpp cpp/map_marks.h)
+    cpp/map_marks.cpp cpp/map_marks.h cpp/next_step.cpp cpp/next_step.h)
 target_link_libraries(terminal_presentation PUBLIC terminal_domain terminal_logging Qt6::Core)
+
+# 操作手个性化界面:方案模型、藏面板后的补位规则、存盘。只链 Qt6::Core,
+# 和战术提醒的持久化一样,测试不必拉起界面。
+add_library(terminal_ui_profiles
+    cpp/ui_profile.cpp cpp/ui_profile.h
+    cpp/layout_ops.cpp cpp/layout_ops.h
+    cpp/ui_profile_store.cpp cpp/ui_profile_store.h)
+target_include_directories(terminal_ui_profiles PUBLIC cpp)
+target_link_libraries(terminal_ui_profiles PUBLIC terminal_presentation Qt6::Core)
+target_compile_definitions(terminal_ui_profiles PRIVATE QT_NO_KEYWORDS)
 
 # 战术提醒的持久化和语音后端。独立于 terminal_presentation:调度器是纯逻辑,
 # 而这一层要碰文件系统和子进程,分开后纯逻辑测试不必链接这些副作用。
@@ -77,13 +87,18 @@ endif()
 # 而缺图会静默退化成空白地图而不是报错。AUTORCC 只对这个目标开。
 add_library(terminal_map cpp/map_pane.cpp cpp/map_pane.h resources/minimap.qrc)
 set_target_properties(terminal_map PROPERTIES AUTORCC ON)
-target_link_libraries(terminal_map PUBLIC terminal_presentation Qt6::Widgets)
+target_link_libraries(terminal_map PUBLIC terminal_presentation terminal_visual Qt6::Widgets)
 
 # Visual layer: the shared palette plus the self-drawn widgets that the reference
 # layout needs (gradient roster cards). Grouped with the map because they share the
 # same Widgets dependency.
 add_library(terminal_visual
     cpp/theme.cpp cpp/theme.h
+    cpp/glass.cpp cpp/glass.h
+    cpp/glass_items.cpp cpp/glass_items.h
+    cpp/next_step_pane.cpp cpp/next_step_pane.h
+    cpp/unit_grid.cpp cpp/unit_grid.h
+    cpp/timeline_pane.cpp cpp/timeline_pane.h
     cpp/roster_pane.cpp cpp/roster_pane.h
     cpp/roster_panel.cpp cpp/roster_panel.h
     cpp/self_status_pane.cpp cpp/self_status_pane.h
@@ -159,8 +174,12 @@ target_compile_definitions(terminal_seat_picker PRIVATE QT_NO_KEYWORDS)
 # A library rather than sources compiled straight into the executable, so the
 # offscreen layout test can link the real Dashboard instead of a reimplementation.
 add_library(terminal_dashboard cpp/dashboard.cpp cpp/dashboard.h
-    cpp/self_check_panel.cpp cpp/self_check_panel.h)
-target_link_libraries(terminal_dashboard PUBLIC terminal_map terminal_visual terminal_video terminal_reminder_ui Qt6::Widgets)
+    cpp/layout_editor.cpp cpp/layout_editor.h
+    cpp/pane_details.cpp cpp/pane_details.h
+    cpp/self_check_panel.cpp cpp/self_check_panel.h
+)
+target_link_libraries(terminal_dashboard PUBLIC terminal_map terminal_visual terminal_video terminal_reminder_ui
+    terminal_ui_profiles Qt6::Widgets)
 target_compile_definitions(terminal_dashboard PRIVATE QT_NO_KEYWORDS)
 
 add_executable(rm_terminal
@@ -283,6 +302,10 @@ if(BUILD_TESTING)
     add_executable(reminder_repository_test cpp/reminder_repository_test.cpp)
     target_link_libraries(reminder_repository_test PRIVATE terminal_reminders)
     add_test(NAME reminder_repository COMMAND reminder_repository_test)
+    add_executable(ui_profile_test cpp/ui_profile_test.cpp)
+    target_link_libraries(ui_profile_test PRIVATE terminal_ui_profiles)
+    target_compile_definitions(ui_profile_test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME ui_profile COMMAND ui_profile_test)
     add_executable(reminder_scheduler_test cpp/reminder_scheduler_test.cpp)
     target_link_libraries(reminder_scheduler_test PRIVATE terminal_presentation)
     add_test(NAME reminder_scheduler COMMAND reminder_scheduler_test)
@@ -310,6 +333,11 @@ if(BUILD_TESTING)
         RM_TERMINAL_DASHBOARD_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/cpp/dashboard.cpp")
     add_test(NAME dashboard_layout COMMAND dashboard_layout_test)
     set_tests_properties(dashboard_layout PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
+    add_executable(layout_editor_test cpp/layout_editor_test.cpp)
+    target_link_libraries(layout_editor_test PRIVATE terminal_qrc terminal_dashboard Qt6::Widgets)
+    target_compile_definitions(layout_editor_test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME layout_editor COMMAND layout_editor_test)
+    set_tests_properties(layout_editor PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
 
     # 验收用截图工具,不注册为测试:它只产出图片,不做断言。
     add_executable(popup_shots cpp/popup_shots.cpp)

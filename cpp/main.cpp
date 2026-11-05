@@ -27,6 +27,7 @@
 #include "dashboard.h"
 #include "link_health.h"
 #include "match_alerts.h"
+#include "next_step.h"
 #include "rm_terminal.pb.h"
 #include "logging.h"
 #include "mqtt_intake.h"
@@ -46,6 +47,7 @@
 #include "store.h"
 #include "tactical_reminder_controller.h"
 #include "ui_mode.h"
+#include "ui_profile_store.h"
 #include "video_receiver.h"
 
 #if defined(RM_TERMINAL_HAS_SPEECH)
@@ -360,9 +362,19 @@ int main(int argc, char* argv[]) {
         return rm_terminal::kExitConfigError;
     // 席位在连网和建主界面之前定下来:登录名(MQTT clientID)和布局都取决于它,
     // 本次运行内不能再改。回放用录像里记的席位,不弹选席位页。
+    // 界面设置按操作手存。选席位页顺便选人;跳过选席位页(--seat、RM_SELF_ID、回放)时
+    // 用这台电脑上次那个人,进去后在「界面设置」里换。
+    const rm_terminal::UiProfileRepository ui_profile_files(rm_terminal::UiProfileRepository::defaultDirectory());
+    QString picked_operator;
     if (seat_source.isEmpty() && replay_path.isEmpty()) {
         rm_terminal::SeatPicker picker;
+        rm_terminal::UiProfileLoad known = ui_profile_files.load();
+        rm_terminal::normalize(&known.book);
+        QStringList names;
+        for (const auto& profile : known.book.operators) names << profile.name;
+        picker.setOperators(names, known.book.last_operator);
         const auto seat = picker.exec();
+        picked_operator = picker.operatorName();
         if (!seat) {
             rm_terminal::StructuredLog::write(rm_terminal::LogLevel::info, QStringLiteral("seat_cancelled"), {});
             log_shutdown(QStringLiteral("terminal"), rm_terminal::kExitSuccess);
@@ -543,11 +555,30 @@ int main(int argc, char* argv[]) {
     rm_terminal::MatchAlerts match_alerts(alert_settings);
     rm_terminal::AlertVoice alert_voice(make_speech_backend(&app, cfg.speech_dir));
     if (!replay)
-        alert_voice.prepare(cache_dir, rm_terminal::match_alert_phrases(), reminders.currentVoice(),
+        alert_voice.prepare(cache_dir, rm_terminal::match_alert_phrases() + rm_terminal::next_step_phrases(),
+                            reminders.currentVoice(),
                             reminders.config().rate_wpm);
 
     rm_terminal::Dashboard dashboard(cfg);
     dashboard.attachReminders(&reminders);
+    const rm_terminal::Role seat_role = rm_terminal::Seat::fromRobotId(cfg.self_robot_id)
+                                            ? rm_terminal::Seat::fromRobotId(cfg.self_robot_id)->role()
+                                            : rm_terminal::Role::Infantry;
+    rm_terminal::UiProfileController ui_profiles(ui_profile_files, seat_role);
+    if (!picked_operator.isEmpty()) ui_profiles.switchOperator(picked_operator);
+    // 操作手关掉的提醒叠加在配置文件 alerts_disabled 之上,语音开关只管事件提醒的声音。
+    bool alert_voice_on = true;
+    const auto apply_alert_choices = [&] {
+        const rm_terminal::UiOptions& options = ui_profiles.activeScheme().options;
+        QStringList disabled = cfg.alerts_disabled;
+        for (const QString& kind : options.alerts_muted)
+            if (!disabled.contains(kind)) disabled << kind;
+        match_alerts.setDisabled(disabled);
+        alert_voice_on = options.alert_voice;
+    };
+    apply_alert_choices();
+    QObject::connect(&ui_profiles, &rm_terminal::UiProfileController::changed, &dashboard, apply_alert_choices);
+    dashboard.attachUiProfiles(&ui_profiles, cfg.alerts_disabled);
     QObject::connect(&reminders, &rm_terminal::ReminderController::reminderDue, &dashboard,
                      [&dashboard](const QString& text) {
                          rm_terminal::StructuredLog::write(
@@ -630,7 +661,8 @@ int main(int argc, char* argv[]) {
         QObject::connect(replay.get(), &rm_terminal::ReplayPlayer::pausedChanged, &dashboard,
                          &rm_terminal::Dashboard::setReplayPaused);
     }
-    // 角色面板放进布局给的卡片里。回放时不发任何指令:intake 没启动,publish 必然返回假。
+    // 角色面板放进这个席位的卡片里,不管启动时的方案里有没有这块:复活框、键鼠控制都挂在「本车」上,
+    // 方案里拿掉本车也得照样能用。回放时不发任何指令:intake 没启动,publish 必然返回假。
     const auto send = [&intake, &replay](const char* topic, const std::string& payload) {
         return !replay && intake.publish(topic, payload);
     };
@@ -638,25 +670,25 @@ int main(int argc, char* argv[]) {
     rm_terminal::AssemblyPane* assembly = nullptr;
     rm_terminal::DartPane* dart = nullptr;
     rm_terminal::SentryPane* sentry = nullptr;
-    if (QWidget* card = dashboard.paneCard(rm_terminal::PaneId::Assembly)) {
+    if (QWidget* card = dashboard.roleCard(rm_terminal::PaneId::Assembly)) {
         assembly = new rm_terminal::AssemblyPane(card);
-        card->layout()->addWidget(assembly);
+        dashboard.placePane(rm_terminal::PaneId::Assembly, assembly);
         assembly->setSender(send);
     }
-    if (QWidget* card = dashboard.paneCard(rm_terminal::PaneId::Dart)) {
+    if (QWidget* card = dashboard.roleCard(rm_terminal::PaneId::Dart)) {
         dart = new rm_terminal::DartPane(card);
-        card->layout()->addWidget(dart);
+        dashboard.placePane(rm_terminal::PaneId::Dart, dart);
         dart->setSender(send);
     }
-    if (QWidget* card = dashboard.paneCard(rm_terminal::PaneId::Sentry)) {
+    if (QWidget* card = dashboard.roleCard(rm_terminal::PaneId::Sentry)) {
         sentry = new rm_terminal::SentryPane(card);
-        card->layout()->addWidget(sentry);
+        dashboard.placePane(rm_terminal::PaneId::Sentry, sentry);
         sentry->setSender(send);
     }
     rm_terminal::SelfCommandPane* self_commands = nullptr;
-    if (QWidget* card = dashboard.paneCard(rm_terminal::PaneId::SelfCommands)) {
+    if (QWidget* card = dashboard.roleCard(rm_terminal::PaneId::SelfCommands)) {
         self_commands = new rm_terminal::SelfCommandPane(card);
-        card->layout()->addWidget(self_commands);
+        dashboard.placePane(rm_terminal::PaneId::SelfCommands, self_commands);
         self_commands->setSender(send);
     }
     // 复活框照官方选手端:阵亡才弹出;读条结束后按 Y(或点「免费复活」)确认,点「金币复活」
@@ -782,7 +814,7 @@ int main(int argc, char* argv[]) {
     QObject::connect(&freshness_timer, &QTimer::timeout,
                      [&store, &reporter, &dashboard, &video, &reminders, &intake,
                       &recorder, &replay, &sample_links, &cfg, &recordings, speech,
-                      &match_alerts, &alert_voice, assembly, dart, sentry, &controller,
+                      &match_alerts, &alert_voice, &alert_voice_on, assembly, dart, sentry, &controller,
                       &arm_rate, &seat_matched, &logged_event_at, &logged_sentry_result_at,
                       &logged_dart, &logged_mark_at, self_commands, revive_popup, &keyboard_mouse,
                       &self_log]() {
@@ -834,9 +866,12 @@ int main(int argc, char* argv[]) {
                  QStringLiteral("text=%1").arg(alert.banner)});
             dashboard.showAlert(alert.banner, alert.level, now);
             if (alert.kind == rm_terminal::AlertKind::BaseAttacked) dashboard.flashBase(now);
-            if (!replay) reminders.announce(alert_voice.pathFor(alert.speech));
+            if (!replay && alert_voice_on) reminders.announce(alert_voice.pathFor(alert.speech));
         }
         dashboard.update(snapshot, &video, now);
+        // 「下一步」第 1 件换了就念一句(固定句子,赛前合成好的)。
+        if (const QString phrase = dashboard.takeNextSpeech(); !phrase.isEmpty() && !replay)
+            reminders.announce(alert_voice.pathFor(phrase));
         dashboard.setRecordingStatus(replay ? replay->statusText() : recorder.statusText());
         const bool link_up = !replay && intake.connected();
         dashboard.setLinkUp(link_up);
@@ -864,7 +899,9 @@ int main(int argc, char* argv[]) {
             const rm_terminal::SelfCommandView view = rm_terminal::self_command_view(snapshot);
             self_commands->setView(view);
             self_commands->setLinkUp(link_up);
+            self_commands->setRuneBadge(dashboard.runeBadge());
             self_commands->tick(now);
+            dashboard.setPaneHeader(rm_terminal::PaneId::SelfCommands, self_commands->headerHtml());
             const auto text = [](const auto& value) {
                 return value ? QString::number(*value) : QStringLiteral("--");
             };

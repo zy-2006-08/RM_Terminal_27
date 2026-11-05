@@ -1,4 +1,8 @@
 #include "dashboard.h"
+#include "layout_editor.h"
+#include "layout_ops.h"
+#include "ui_profile.h"
+#include "ui_profile_store.h"
 
 #include <QApplication>
 #include <QCoreApplication>
@@ -6,13 +10,19 @@
 #include <QFile>
 #include <QImage>
 #include <QLabel>
+#include <QListWidget>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
 #include <QQuickWidget>
+#include <QTemporaryDir>
+#include <QThread>
 #include <algorithm>
+#include <cstdlib>
+#include <numeric>
 #include <iostream>
 #include <stdexcept>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -159,8 +169,37 @@ const QLabel* find_label(const Dashboard& dashboard, const char* name) {
 Config test_config() { return Config{}; }
 
 // (1) and (2): info mode is map-dominant, and the thumbnail stays a thumbnail.
+// 主程序把本车指令放进「本车」卡片。测试里没有指令面板,放一个同样高的占位,
+// 「本车」才是它在真程序里的样子。
+void place_self_commands_stand_in(Dashboard& dashboard) {
+    auto* stand_in = new QWidget;
+    stand_in->setFixedHeight(148);
+    dashboard.placePane(PaneId::SelfCommands, stand_in);
+}
+
+// 启动时的方案里没有「本车」:主程序照样能把指令面板放进去,加回画面时按钮都在。
+void a_role_pane_placed_while_off_screen_shows_up_later() {
+    Dashboard dashboard(test_config());
+    dashboard.resize(1440, 900);
+    const UiScheme standard = builtin_scheme(Role::Infantry, QStringLiteral("standard")).value();
+    UiScheme without = standard;
+    without.cells = layout_remove(scheme_layout(Role::Infantry, standard).cells, PaneId::SelfCommands);
+    dashboard.applyUiScheme(without);
+    settle(dashboard);
+    check(dashboard.paneCard(PaneId::SelfCommands) == nullptr && dashboard.roleCard(PaneId::SelfCommands) != nullptr,
+          "a pane that is off screen still has its card for the seat");
+    check(dashboard.roleCard(PaneId::Dart) == nullptr, "a pane the seat does not have has no card");
+    auto* commands = new QPushButton(QStringLiteral("兑换"));
+    dashboard.placePane(PaneId::SelfCommands, commands);
+    dashboard.applyUiScheme(standard);
+    settle(dashboard);
+    check(dashboard.paneCard(PaneId::SelfCommands) != nullptr && commands->isVisible() && commands->height() > 0,
+          "when the pane comes back on screen its buttons are there");
+}
+
 void info_mode_is_map_dominant_with_a_capped_thumbnail() {
     Dashboard dashboard(test_config());
+    place_self_commands_stand_in(dashboard);
     dashboard.resize(kWidth, kHeight);
     drive_to_info(dashboard);
     check(dashboard.mode() == UiMode::Info, "clear blind data settles into info mode");
@@ -199,6 +238,7 @@ void the_layout_fits_the_requested_screen_size() {
 // minimum size and the stats label was painted on top of the picture.
 void the_thumbnail_and_its_stats_never_overlap() {
     Dashboard dashboard(test_config());
+    place_self_commands_stand_in(dashboard);
     dashboard.resize(kMinWidth, kMinHeight);
     drive_to_info(dashboard);
 
@@ -224,7 +264,8 @@ void the_thumbnail_and_its_stats_never_overlap() {
     // Without these, the overlap check below passes vacuously: a zero-height picture
     // intersects nothing, and a clipped stats label shrinks out of the way. Both are
     // worse than the bug, so the useful area is asserted before the non-overlap.
-    check(thumbnail->height() >= 90 && thumbnail->width() >= 160,
+    // 图传单独一块 2 格高,1280 × 760 下再加两行故障,画面还剩 72 像素以上。
+    check(thumbnail->height() >= 72 && thumbnail->width() >= 160,
           "the thumbnail keeps a usable picture area instead of collapsing");
     check(stats->height() >= stats->minimumSizeHint().height(),
           "the stats label is tall enough to show every line it holds");
@@ -438,7 +479,10 @@ void the_event_time_fits_its_column() {
     const QFont time_font = event_time_font();
     check(QFontMetrics(time_font).horizontalAdvance(QStringLiteral("00:00")) <= kEventTimeWidth,
           "the event time fits its column instead of being cut");
-    check(time_font.pointSizeF() < EventFeedPane().font().pointSizeF(),
+    const auto pixels = [](const QFont& font) {
+        return font.pixelSize() > 0 ? static_cast<double>(font.pixelSize()) : font.pointSizeF() * 96.0 / 72.0;
+    };
+    check(pixels(time_font) < pixels(EventFeedPane().font()),
           "the event time is drawn smaller than the event text");
 }
 
@@ -664,6 +708,58 @@ void the_reminder_entry_hugs_its_text_at_the_right_edge() {
           "the reminder entry stays inside the minimum window width");
 }
 
+// 告警带(我方 X 号阵亡)在比分正上方的正中,不偏到一边;字太长时往空的那边让、截短,不压到状态条两边的牌子。
+void the_alert_strip_sits_centred_above_the_score() {
+    const auto with_dead = [](std::initializer_list<std::uint32_t> ids, bool blinded) {
+        Snapshot snapshot = blinded ? blinded_snapshot() : clear_snapshot();
+        for (const std::uint32_t id : ids) {
+            RobotHealth robot;
+            robot.id = RobotId{id};
+            robot.faction = 1;
+            robot.current_hp = present<std::uint32_t>(0);
+            snapshot.robot_health.push_back(robot);
+        }
+        return snapshot;
+    };
+    const auto siblings_clear = [](const Dashboard& dashboard, const QWidget* strip) {
+        for (const char* name : {"modeBanner", "linkLights", "recordingStatus", "selfCheckEntry", "keyboardMouseEntry",
+                                 "reminderEntry", "uiSettingsEntry"}) {
+            const QWidget* other = dashboard.findChild<QWidget*>(QString::fromLatin1(name));
+            if (other && other->isVisible() && other->geometry().intersects(strip->geometry())) return false;
+        }
+        return true;
+    };
+    for (const QSize size : {QSize(1440, 900), QSize(kMinWidth, kMinHeight)}) {
+        Dashboard dashboard(test_config());
+        dashboard.resize(size);
+        drive_to_info(dashboard);
+        dashboard.update(with_dead({4}, false), nullptr, 4800);
+        settle(dashboard);
+        const auto* strip = static_cast<const QLabel*>(find(dashboard, "alertStrip"));
+        const QWidget* top_bar = find(dashboard, "topBar");
+        check(strip->isVisible() && strip->text() == QStringLiteral("我方 4 号阵亡"), "a dead robot of ours shows in the strip");
+        check(std::abs(strip->geometry().center().x() - top_bar->geometry().center().x()) <= 2,
+              "the strip is centred over the score, not pushed to one side");
+        check(strip->geometry().bottom() < top_bar->geometry().top() && siblings_clear(dashboard, strip),
+              "the strip sits in the status row above the score, clear of the chips on both sides");
+    }
+    // 最长的情况:被飞镖遮挡、数据过期、七台都阵亡,两边的牌子也都是最长的字。
+    Dashboard dashboard(test_config());
+    dashboard.resize(kMinWidth, kMinHeight);
+    drive_to_info(dashboard);
+    dashboard.setRecordingStatus(QStringLiteral("● REC 03:04 · 46.2 MB"));
+    dashboard.findChild<QPushButton*>(QStringLiteral("reminderEntry"))->setText(QStringLiteral("战术提醒 · 99 条"));
+    Snapshot worst = with_dead({1, 2, 3, 4, 5, 6, 7}, true);
+    worst.game.stage_countdown_sec.freshness = Freshness::Stale;
+    dashboard.update(worst, nullptr, 4800);
+    settle(dashboard);
+    const auto* strip = static_cast<const QLabel*>(find(dashboard, "alertStrip"));
+    check(strip->isVisible() && siblings_clear(dashboard, strip) && dashboard.rect().contains(strip->geometry()),
+          "a long strip moves over and stays clear of the other chips");
+    check(strip->text().endsWith(QStringLiteral("…")) && strip->toolTip().contains(QStringLiteral("我方 7 号阵亡")),
+          "text that does not fit is shortened and the whole of it is in the tooltip");
+}
+
 // Regression: 两层覆盖层都铺满整窗 + AlwaysStackOnTop,不穿透鼠标时会吞掉全屏点击。
 // 备战阶段 PreMatch 弹窗常驻,操作手按顶部「战术提醒」毫无反应 —— 而那正是唯一
 // 能改提醒的时机。断言落在 childAt() 上而不是 testAttribute():childAt() 跳过
@@ -794,6 +890,52 @@ void alert_banners_float_and_queue() {
 
 // 三种席位的布局 × 两档屏幕:档案里的面板都在、互不重叠、不出窗口;不在档案里的
 // 面板藏起来;地图保持 28:15;花名册两列等宽。RM_UI_EVIDENCE_DIR 设了就顺手出图。
+// 界面设置里排出来的布局(包括内置的「图传为主」)在主界面上:面板互不重叠、都在窗口里,
+// 而且把信息页铺满 —— 缩小地图以后空出来的格子由旁边的面板补上。
+void dragged_layouts_fill_the_page() {
+    for (const int seat : {3, 1}) {
+        Config config;
+        config.self_robot_id = seat;
+        Dashboard dashboard(config);
+        dashboard.resize(1440, 900);
+        drive_to_info(dashboard);
+        const Role role = dashboard.role();
+        UiScheme shrunk = builtin_scheme(role, QStringLiteral("standard")).value();
+        shrunk.cells = layout_profile(role).cells;
+        for (PaneSlot& slot : shrunk.cells)
+            if (slot.pane == PaneId::Map) slot.column_span = 5;
+        shrunk.cells.push_back({PaneId::Timeline, 6, 9, 3, 3});
+        // 地图和一个花名册也删掉:剩下的照样铺满。
+        UiScheme mapless = builtin_scheme(role, QStringLiteral("standard")).value();
+        mapless.cells = layout_remove(layout_remove(scheme_layout(role, mapless).cells, PaneId::Map), PaneId::AllyRoster);
+        for (const UiScheme& scheme : {builtin_scheme(role, QStringLiteral("video")).value(), shrunk, mapless}) {
+            dashboard.applyUiScheme(scheme);
+            drive_to_info(dashboard);
+            const LayoutProfile profile = scheme_layout(role, scheme);
+            std::vector<QRect> boxes;
+            QRect all;
+            for (const PaneSlot& cell : profile.cells) {
+                const QWidget* card = dashboard.paneCard(cell.pane);
+                check(card && card->isVisible(), "every dragged pane is visible");
+                const QRect box(card->mapTo(&dashboard, QPoint(0, 0)), card->size());
+                for (const QRect& other : boxes) check(!other.intersects(box), "dragged panes never overlap");
+                boxes.push_back(box);
+                all = all.united(box);
+            }
+            check(dashboard.rect().contains(all), "dragged panes stay inside the window");
+            const double step_x = all.width() / static_cast<double>(kGridColumns);
+            const double step_y = all.height() / static_cast<double>(kGridRows);
+            for (int r = 0; r < kGridRows; ++r)
+                for (int c = 0; c < kGridColumns; ++c) {
+                    const QPoint centre(all.left() + static_cast<int>((c + 0.5) * step_x),
+                                        all.top() + static_cast<int>((r + 0.5) * step_y));
+                    check(std::any_of(boxes.begin(), boxes.end(), [&](const QRect& b) { return b.contains(centre); }),
+                          "no empty cell is left on the info page");
+                }
+        }
+    }
+}
+
 void every_role_layout_fits_its_screens() {
     const std::vector<PaneId> all_panes{PaneId::AllyRoster, PaneId::EnemyRoster, PaneId::Map,
                                         PaneId::Events,     PaneId::Analysis,    PaneId::Video,
@@ -806,46 +948,70 @@ void every_role_layout_fits_its_screens() {
             Dashboard dashboard(config);
             dashboard.resize(size);
             drive_to_info(dashboard);
-            const LayoutProfile& profile = layout_profile(dashboard.role());
-            const std::string tag = role_name(dashboard.role()).toStdString() + " " +
-                                    std::to_string(size.width()) + "x" + std::to_string(size.height());
-            check(dashboard.size() == size, ("the window keeps the requested size: " + tag).c_str());
+            // 内置方案会藏的那几块(事件、分析、图传、下一步)的每一种组合都在同一个窗口里依次重排一遍,
+            // 最后回到默认布局:既验证每种藏法都排得下,也验证运行中重排不会留下上一次的拉伸或钉宽。
+            // 花名册、地图也能关,那是在界面设置页里删,见 dragged_layouts_fill_the_page。
+            const std::set<PaneId> optional{PaneId::Events, PaneId::Analysis, PaneId::Video, PaneId::NextStep};
+            std::vector<PaneId> hideable;
+            for (const PaneSlot& slot : layout_profile(dashboard.role()).cells)
+                if (optional.count(slot.pane)) hideable.push_back(slot.pane);
+            const unsigned combos = 1u << hideable.size();
+            const std::string base_tag = role_name(dashboard.role()).toStdString() + " " +
+                                         std::to_string(size.width()) + "x" + std::to_string(size.height());
+            for (unsigned step = 1; step <= combos; ++step) {
+                const unsigned mask = step % combos;
+                UiScheme scheme;
+                for (std::size_t i = 0; i < hideable.size(); ++i)
+                    if (mask & (1u << i)) scheme.hidden.insert(hideable[i]);
+                dashboard.applyUiScheme(scheme);
+                drive_to_info(dashboard);
+                const LayoutProfile profile = scheme_layout(dashboard.role(), scheme);
+                const std::string tag = base_tag + " hidden=" + std::to_string(mask);
+                check(dashboard.size() == size, ("the window keeps the requested size: " + tag).c_str());
 
-            std::vector<QRect> boxes;
-            for (const PaneSlot& cell : profile.cells) {
-                const QWidget* card = dashboard.paneCard(cell.pane);
-                check(card && card->isVisible(), ("every profile pane is visible: " + tag).c_str());
-                const QRect box(card->mapTo(&dashboard, QPoint(0, 0)), card->size());
-                check(dashboard.rect().contains(box), ("every pane stays inside the window: " + tag).c_str());
-                check(box.width() >= 150 && box.height() >= 100,
-                      ("no pane collapses to a sliver: " + tag).c_str());
-                for (const QRect& other : boxes)
-                    check(!other.intersects(box), ("panes never overlap: " + tag).c_str());
-                boxes.push_back(box);
+                std::vector<QRect> boxes;
+                for (const PaneSlot& cell : profile.cells) {
+                    const QWidget* card = dashboard.paneCard(cell.pane);
+                    check(card && card->isVisible(), ("every profile pane is visible: " + tag).c_str());
+                    const QRect box(card->mapTo(&dashboard, QPoint(0, 0)), card->size());
+                    check(dashboard.rect().contains(box), ("every pane stays inside the window: " + tag).c_str());
+                    check(box.width() >= 150 && box.height() >= 100,
+                          ("no pane collapses to a sliver: " + tag).c_str());
+                    for (const QRect& other : boxes)
+                        check(!other.intersects(box), ("panes never overlap: " + tag).c_str());
+                    boxes.push_back(box);
+                }
+                for (const PaneId pane : all_panes) {
+                    const bool listed = std::any_of(profile.cells.begin(), profile.cells.end(),
+                                                    [pane](const PaneSlot& cell) { return cell.pane == pane; });
+                    if (!listed)
+                        check(dashboard.paneCard(pane) == nullptr, ("panes outside the profile stay hidden: " + tag).c_str());
+                }
+                const QWidget* map_card = dashboard.paneCard(PaneId::Map);
+                int used = 0;
+                for (const QRect& box : boxes) used += box.width() * box.height();
+                const QRect grid_area = std::accumulate(boxes.begin(), boxes.end(), QRect(),
+                                                        [](QRect a, const QRect& b) { return a | b; });
+                check(map_card && used * 100 >= grid_area.width() * grid_area.height() * 95,
+                      ("hidden panes leave no hole in the grid: " + tag).c_str());
+                const QWidget* ally = find(dashboard, "allyRoster");
+                const QWidget* enemy = find(dashboard, "enemyRoster");
+                check(ally->width() == enemy->width(), ("both rosters are equally wide: " + tag).c_str());
+                // 场地按比例画在格子里:格子不比场地需要的更高(上下没有黑带),画出来的场地是 28:15,
+                // 而且至少占格子宽或高的 90%。
+                const QWidget* map = find(dashboard, "mapPane");
+                const FieldExtent field = default_field_extent();
+                const MapViewport drawn = map_viewport(field, map->width(), map->height());
+                check(map->height() <= map_height_for_width(field, map->width()) + 2,
+                      ("the map cell is not taller than the field: " + tag).c_str());
+                check(std::abs(static_cast<double>(drawn.width) / drawn.height - field.width_m / field.height_m) < 0.02,
+                      ("the field is drawn at 28:15: " + tag).c_str());
+                check(drawn.width >= map->width() * 0.9 || drawn.height >= map->height() * 0.9,
+                      ("the field fills its cell: " + tag).c_str());
             }
-            for (const PaneId pane : all_panes) {
-                const bool listed = std::any_of(profile.cells.begin(), profile.cells.end(),
-                                                [pane](const PaneSlot& cell) { return cell.pane == pane; });
-                if (!listed)
-                    check(dashboard.paneCard(pane) == nullptr, ("panes outside the profile stay hidden: " + tag).c_str());
-            }
-            const QWidget* ally = find(dashboard, "allyRoster");
-            const QWidget* enemy = find(dashboard, "enemyRoster");
-            check(ally->width() == enemy->width(), ("both rosters are equally wide: " + tag).c_str());
-            // 场地按比例画在格子里:格子不比场地需要的更高(上下没有黑带),画出来的场地是 28:15,
-            // 而且至少占格子宽或高的 90%。
-            const QWidget* map = find(dashboard, "mapPane");
-            const FieldExtent field = default_field_extent();
-            const MapViewport drawn = map_viewport(field, map->width(), map->height());
-            check(map->height() <= map_height_for_width(field, map->width()) + 2,
-                  ("the map cell is not taller than the field: " + tag).c_str());
-            check(std::abs(static_cast<double>(drawn.width) / drawn.height - field.width_m / field.height_m) < 0.02,
-                  ("the field is drawn at 28:15: " + tag).c_str());
-            check(drawn.width >= map->width() * 0.9 || drawn.height >= map->height() * 0.9,
-                  ("the field fills its cell: " + tag).c_str());
             const std::string dump = dashboard.layoutDump();
             check(dump.find("\"role\": \"" + role_name(dashboard.role()).toStdString() + "\"") != std::string::npos,
-                  ("the layout dump names the role: " + tag).c_str());
+                  ("the layout dump names the role: " + base_tag).c_str());
 
             const QString directory = qEnvironmentVariable("RM_UI_EVIDENCE_DIR");
             if (!directory.isEmpty()) {
@@ -919,12 +1085,89 @@ void the_commander_marks_the_map() {
     check(!infantry_map->clickAt(QPointF(100, 100)), "other seats' maps ignore clicks");
 }
 
+// 界面设置:勾掉一块面板,主界面立刻少一块、文件里记下;换方案;比赛中锁定、赛前解锁;
+// 重开终端(新建一个读同一目录的控制器)以后设置还在。
+void click_on(QWidget* widget, const QPoint& pos) {
+    for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+        QMouseEvent event(type, QPointF(pos), widget->mapToGlobal(QPointF(pos)), Qt::LeftButton,
+                          type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(widget, &event);
+    }
+}
+
+// 界面设置(效果图 10):点状态条的「界面设置」直接进一页,盖住整个窗口;中间是主界面的真画面,
+// 删掉一块主界面马上跟着变、马上存盘;点方案整个换;比赛中锁定并关掉这一页。
+void the_ui_settings_page_hides_panes_saves_and_locks() {
+    QTemporaryDir directory;
+    UiProfileController profiles{UiProfileRepository(directory.path()), Role::Infantry};
+    Config config;
+    config.self_robot_id = 3;
+    Dashboard dashboard(config);
+    dashboard.resize(1440, 900);
+    dashboard.attachUiProfiles(&profiles, {QStringLiteral("base")});
+    dashboard.update(pre_match_snapshot(), nullptr, 1000);
+    settle(dashboard);
+    auto* entry = dashboard.findChild<QPushButton*>(QStringLiteral("uiSettingsEntry"));
+    check(entry && entry->isVisible() && entry->isEnabled(), "the settings entry is in the status bar before the match");
+    entry->click();
+    settle(dashboard);
+    LayoutEditor* editor = dashboard.layoutEditor();
+    check(dashboard.uiSettingsVisible() && editor->geometry() == dashboard.rect(),
+          "the settings page opens straight away and covers the window");
+    // 主界面排好以后约 120ms 截一张给设置页。
+    for (int i = 0; i < 30 && !editor->hasPreview(); ++i) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        QThread::msleep(10);
+    }
+    check(editor->hasPreview() && editor->canvasRect().width() > 900, "the page shows the whole screen in the middle");
+
+    click_on(editor, editor->closeRect(PaneId::Events).center());
+    settle(dashboard);
+    check(dashboard.paneCard(PaneId::Events) == nullptr, "removing a pane takes it off the screen at once");
+    const UiProfileLoad saved = UiProfileRepository(directory.path()).load();
+    const std::vector<PaneSlot> saved_cells =
+        scheme_layout(Role::Infantry, active_scheme(saved.book.operators.front().roles.at(Role::Infantry))).cells;
+    check(saved.result == UiProfileLoadResult::Loaded &&
+              std::none_of(saved_cells.begin(), saved_cells.end(),
+                           [](const PaneSlot& slot) { return slot.pane == PaneId::Events; }),
+          "the change is already on disk");
+
+    QPushButton* novice = editor->schemeButton(QStringLiteral("novice"));
+    check(novice != nullptr && editor->schemeButton(QStringLiteral("quiet")) == nullptr,
+          "the built-in schemes are listed, without the old quiet one");
+    novice->click();
+    QCoreApplication::processEvents();
+    settle(dashboard);
+    check(profiles.activeScheme().id == QStringLiteral("novice") && dashboard.paneCard(PaneId::Events) != nullptr &&
+              dashboard.paneCard(PaneId::NextStep) != nullptr,
+          "choosing another scheme switches the whole screen");
+
+    dashboard.update(clear_snapshot(), nullptr, 2000);
+    settle(dashboard);
+    check(!dashboard.uiSettingsVisible() && !entry->isEnabled() && profiles.locked(),
+          "the match locks the settings and closes the page");
+    entry->click();
+    check(!dashboard.uiSettingsVisible(), "a locked entry does not open the page");
+    dashboard.update(pre_match_snapshot(), nullptr, 3000);
+    check(entry->isEnabled() && !profiles.locked(), "the next pre-match stage unlocks the settings");
+
+    UiProfileController restarted{UiProfileRepository(directory.path()), Role::Infantry};
+    const RoleSetup& setup = restarted.setup();
+    const std::vector<PaneSlot> standard = scheme_layout(Role::Infantry, setup.schemes.front()).cells;
+    check(restarted.activeScheme().id == QStringLiteral("novice") &&
+              std::none_of(standard.begin(), standard.end(), [](const PaneSlot& slot) { return slot.pane == PaneId::Events; }),
+          "after a restart the scheme and the edit to the standard scheme are both back");
+}
+
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
     qInstallMessageHandler(messages);
     try {
+        a_role_pane_placed_while_off_screen_shows_up_later();
+        the_alert_strip_sits_centred_above_the_score();
         info_mode_is_map_dominant_with_a_capped_thumbnail();
         every_role_layout_fits_its_screens();
+        dragged_layouts_fill_the_page();
         the_commander_marks_the_map();
         the_layout_fits_the_requested_screen_size();
         the_thumbnail_and_its_stats_never_overlap();
@@ -944,6 +1187,7 @@ int main(int argc, char* argv[]) {
         the_popup_also_covers_the_video_page();
         link_lights_and_self_check_fit_and_follow_the_stage();
         alert_banners_float_and_queue();
+        the_ui_settings_page_hides_panes_saves_and_locks();
         check(!qml_error, "all dashboard QML loads and runs without warnings");
     } catch (const std::exception& error) {
         std::cerr << "FAIL " << error.what() << '\n';
