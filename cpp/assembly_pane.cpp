@@ -1,5 +1,6 @@
 #include "assembly_pane.h"
 
+#include "glass.h"
 #include "theme.h"
 
 #include <QHBoxLayout>
@@ -54,9 +55,8 @@ QString enemy_core_text(std::optional<std::uint32_t> status) {
 }
 
 QPushButton* make_button(QWidget* parent, const QString& text, const char* name) {
-    auto* button = new QPushButton(text, parent);
+    auto* button = new GlassButton(text, parent);
     button->setObjectName(QString::fromLatin1(name));
-    button->setStyleSheet(command_button_style());
     button->setCursor(Qt::PointingHandCursor);
     button->setFocusPolicy(Qt::NoFocus);
     return button;
@@ -109,7 +109,7 @@ AssemblyPane::AssemblyPane(QWidget* parent) : QWidget(parent) {
     auto* top = new QHBoxLayout;
     top->setSpacing(4);
     minus_ = make_button(this, QStringLiteral("−"), "assemblyDifficultyDown");
-    plus_ = make_button(this, QStringLiteral("＋"), "assemblyDifficultyUp");
+    plus_ = make_button(this, QStringLiteral("+"), "assemblyDifficultyUp");
     minus_->setFixedWidth(34);
     plus_->setFixedWidth(34);
     start_ = make_button(this, QStringLiteral("开始兑换"), "assemblyStart");
@@ -153,7 +153,8 @@ AssemblyPane::AssemblyPane(QWidget* parent) : QWidget(parent) {
         if (fired) send(kAssemblyCancel, difficulty_);
     });
 
-    setMinimumHeight(190);
+    // 不钉最小高度:按钮在下面排好,上面画的信息放不下就少画几行。钉死的话格子矮时
+    // 面板会比卡片高,最下面一排按钮被裁掉(1280x760 的指挥手、重装实测)。
     refreshButtons();
 }
 
@@ -229,7 +230,7 @@ void AssemblyPane::refreshButtons() {
     plus_->setEnabled(live && difficulty_ < std::max<std::uint32_t>(top_level, 1));
 
     const double held = cancel_hold_.progress(now_);
-    cancel_->setStyleSheet(held > 0.0 ? hold_button_style(held) : command_button_style());
+    static_cast<GlassButton*>(cancel_)->setProgress(held);
     cancel_->setText(cancel_hold_.ready(now_) ? QStringLiteral("取消装配 松手发送")
                                               : QStringLiteral("取消装配 按住"));
     start_->setText(QStringLiteral("开始兑换 难度 %1")

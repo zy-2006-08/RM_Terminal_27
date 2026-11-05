@@ -1,6 +1,7 @@
 #include "sentry_pane.h"
 
 #include "roster_pane.h"
+#include "glass.h"
 #include "theme.h"
 
 #include <QGridLayout>
@@ -44,9 +45,8 @@ std::optional<T> present(const Field<T>& field) {
 }
 
 QPushButton* make_button(QWidget* parent, const QString& text, const QString& name) {
-    auto* button = new QPushButton(text, parent);
+    auto* button = new GlassButton(text, parent);
     button->setObjectName(name);
-    button->setStyleSheet(command_button_style());
     button->setCursor(Qt::PointingHandCursor);
     button->setFocusPolicy(Qt::NoFocus);
     return button;
@@ -145,7 +145,8 @@ SentryPane::SentryPane(QWidget* parent) : QWidget(parent) {
         if (fired) send(kCmdGoldRevive);
     });
 
-    setMinimumHeight(230);
+    // 不钉最小高度:按钮在下面排好,上面画的信息放不下就少画几行。钉死的话格子矮时
+    // 面板会比卡片高,最下面一排按钮被裁掉(1280x760 的指挥手、重装实测)。
     refreshButtons();
 }
 
@@ -229,7 +230,7 @@ void SentryPane::refreshButtons() {
     gold_revive_->setEnabled(live);
 
     const double held = gold_hold_.progress(now_);
-    gold_revive_->setStyleSheet(held > 0.0 ? hold_button_style(held) : command_button_style());
+    static_cast<GlassButton*>(gold_revive_)->setProgress(held);
     gold_revive_->setText(gold_hold_.ready(now_) ? QStringLiteral("花金币复活 松手")
                                                  : QStringLiteral("花金币复活 按住"));
 }

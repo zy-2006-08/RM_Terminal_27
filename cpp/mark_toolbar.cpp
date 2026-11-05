@@ -1,5 +1,6 @@
 #include "mark_toolbar.h"
 
+#include "glass.h"
 #include "theme.h"
 
 #include <QButtonGroup>
@@ -41,7 +42,7 @@ MarkToolbar::MarkToolbar(QWidget* parent) : QWidget(parent) {
     column->addLayout(row);
 
     auto* title = new QLabel(QStringLiteral("标记"), this);
-    title->setFont(theme::labelFont(11, true));
+    title->setFont(theme::labelPx(14, QFont::Bold));
     row->addWidget(title);
 
     kinds_ = new QButtonGroup(this);
@@ -50,10 +51,9 @@ MarkToolbar::MarkToolbar(QWidget* parent) : QWidget(parent) {
         {"攻击", MarkKind::Attack}, {"防御", MarkKind::Defend},
         {"警戒", MarkKind::Alert},  {"自定义", MarkKind::Custom}};
     for (const auto& kind : kinds) {
-        auto* button = new QPushButton(QString::fromUtf8(kind.text), this);
+        auto* button = new GlassButton(QString::fromUtf8(kind.text), this);
         button->setCheckable(true);
         button->setMinimumHeight(30);
-        button->setFont(theme::labelFont(11, true));
         kinds_->addButton(button, static_cast<int>(kind.kind));
         row->addWidget(button);
     }
@@ -80,7 +80,7 @@ MarkToolbar::MarkToolbar(QWidget* parent) : QWidget(parent) {
 
     status_ = new QLabel(this);
     status_->setObjectName(QStringLiteral("markStatus"));
-    status_->setFont(theme::labelFont(10));
+    status_->setFont(theme::labelPx(12));
     // 状态文字长短不定,不许它反过来撑宽工具条。
     status_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     column->addWidget(status_);

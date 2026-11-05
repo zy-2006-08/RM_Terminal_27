@@ -1,5 +1,6 @@
 #include "revive_popup.h"
 
+#include "glass.h"
 #include "theme.h"
 
 #include <QEvent>
@@ -21,9 +22,8 @@ constexpr int kLineHeight = 18;
 constexpr int kPad = 16;
 
 QPushButton* make_button(QWidget* parent, const char* name) {
-    auto* button = new QPushButton(parent);
+    auto* button = new GlassButton(QString(), parent);
     button->setObjectName(QString::fromLatin1(name));
-    button->setStyleSheet(command_button_style());
     button->setCursor(Qt::PointingHandCursor);
     button->setFocusPolicy(Qt::NoFocus);
     return button;
@@ -106,8 +106,8 @@ void RevivePopup::place() {
     if (!host) return;
     const int width = std::min(kWidth, host->width() - 40);
     const int height = sizeHint().height();
-    setGeometry((host->width() - width) / 2, std::max(0, host->height() * 2 / 5 - height / 2), width,
-                height);
+    // 中心放在半高处:上面是「下一步」三张卡(第 1 张也会说怎么复活),不能盖住。
+    setGeometry((host->width() - width) / 2, std::max(0, host->height() / 2 - height / 2), width, height);
 }
 
 QSize RevivePopup::sizeHint() const {
@@ -123,29 +123,26 @@ void RevivePopup::paintEvent(QPaintEvent*) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
     const QRectF box = QRectF(rect()).adjusted(1, 1, -1, -1);
-    painter.setPen(QPen(theme::kOk, 2));
-    painter.setBrush(QColor(theme::kSurface.red(), theme::kSurface.green(), theme::kSurface.blue(), 240));
-    painter.drawPath(theme::skewPath(box, 8));
+    theme::paintGlass(painter, box, 10, false, theme::kOverlay, theme::kOk, true);
 
     const int inner = width() - kPad * 2;
-    painter.setFont(theme::labelFont(18, true));
+    painter.setFont(theme::labelPx(24, QFont::Bold));
     painter.setPen(theme::kTextPrimary);
     painter.drawText(QRect(kPad, kPad, inner, kTitleHeight), Qt::AlignCenter, titleText());
 
     const QRect track(kPad + 30, kPad + kTitleHeight, inner - 60, kBarHeight);
     painter.setPen(Qt::NoPen);
-    painter.setBrush(theme::kSurfaceRaised);
-    painter.drawRect(track);
+    painter.setBrush(QColor(255, 255, 255, 18));
+    painter.drawPath(theme::skewBar(QRectF(track), -24));
     if (view_.revive_total && *view_.revive_total > 0) {
         const double ratio =
             std::clamp(static_cast<double>(view_.revive_current.value_or(0)) / *view_.revive_total, 0.0, 1.0);
         painter.setBrush(theme::kOk);
-        painter.drawRect(QRect(track.left(), track.top(), static_cast<int>(track.width() * ratio),
-                               track.height()));
+        painter.drawPath(theme::skewBar(QRectF(track.left(), track.top(), track.width() * ratio, track.height()), -24));
     }
 
     const int text_top = pay_button_->geometry().bottom() + 10;
-    painter.setFont(theme::labelFont(10));
+    painter.setFont(theme::labelPx(13));
     painter.setPen(theme::kTextSecondary);
     painter.drawText(QRect(kPad, text_top, inner, kLineHeight), Qt::AlignLeft | Qt::AlignVCenter,
                      painter.fontMetrics().elidedText(

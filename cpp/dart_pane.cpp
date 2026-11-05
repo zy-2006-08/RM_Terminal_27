@@ -1,5 +1,6 @@
 #include "dart_pane.h"
 
+#include "glass.h"
 #include "theme.h"
 
 #include <QGridLayout>
@@ -52,9 +53,8 @@ QColor gate_colour(std::optional<std::uint32_t> gate) {
 }
 
 QPushButton* make_button(QWidget* parent, const QString& text, const QString& name) {
-    auto* button = new QPushButton(text, parent);
+    auto* button = new GlassButton(text, parent);
     button->setObjectName(name);
-    button->setStyleSheet(command_button_style());
     button->setCursor(Qt::PointingHandCursor);
     button->setFocusPolicy(Qt::NoFocus);
     return button;
@@ -127,7 +127,8 @@ DartPane::DartPane(QWidget* parent) : QWidget(parent) {
         if (fired) send(view_.target_id.value_or(0), true, true, kTagLaunch);
     });
 
-    setMinimumHeight(190);
+    // 不钉最小高度:按钮在下面排好,上面画的信息放不下就少画几行。钉死的话格子矮时
+    // 面板会比卡片高,最下面一排按钮被裁掉(1280x760 的指挥手、重装实测)。
     refreshButtons();
 }
 
@@ -186,7 +187,7 @@ void DartPane::refreshButtons() {
     launch_->setEnabled(live && view_.gate.value_or(0) == kGateOpened);
 
     const double held = launch_hold_.progress(now_);
-    launch_->setStyleSheet(held > 0.0 ? hold_button_style(held) : command_button_style());
+    static_cast<GlassButton*>(launch_)->setProgress(held);
     launch_->setText(launch_hold_.ready(now_) ? QStringLiteral("确认发射 松手发送")
                                               : QStringLiteral("确认发射 按住"));
 }
