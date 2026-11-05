@@ -3,6 +3,7 @@
 #include "seat.h"
 
 #include <QQuickWidget>
+#include <QStringList>
 #include <cstdint>
 #include <optional>
 
@@ -26,6 +27,10 @@ public:
     void chooseFaction(std::uint32_t f);  // 1 红 2 蓝
     void chooseSeat(int number);          // 1 / 3 / 4 / 6
     bool canConfirm() const { return seat().has_value(); }
+    // 这台电脑上存过的操作手和上次是谁。选不选都能确认:默认就是上次那个人。
+    void setOperators(const QStringList& names, const QString& current);
+    void chooseOperator(const QString& name);
+    QString operatorName() const { return operator_; }
     void confirm();
     void cancel();
 
@@ -44,6 +49,7 @@ private Q_SLOTS:
     void onSeatRequested(int number);
     void onConfirmRequested();
     void onCancelRequested();
+    void onOperatorRequested(const QString& name);
 
 private:
     // 两步都选过且编号合法时给出席位,否则 nullopt。canConfirm 和摘要都由它派生,
@@ -55,6 +61,8 @@ private:
     int seat_number_ = 0;
     std::optional<Seat> result_;
     bool finished_ = false;
+    QStringList operators_;
+    QString operator_;
 };
 
 }  // namespace rm_terminal

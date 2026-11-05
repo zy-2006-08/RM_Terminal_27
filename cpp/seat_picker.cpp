@@ -1,6 +1,8 @@
 #include "seat_picker.h"
 
+#include "glass_items.h"
 #include "logging.h"
+#include "theme.h"
 
 #include <QCloseEvent>
 #include <QColor>
@@ -52,10 +54,10 @@ QVariantList seat_models() {
 
 SeatPicker::SeatPicker(QWidget* parent) : QQuickWidget(parent) {
     setResizeMode(QQuickWidget::SizeRootObjectToView);
-    // Quick 场景默认白底,深色 HUD 下会在面板圆角外沿露出白边。
-    setClearColor(QColor(7, 9, 13));
+    setClearColor(theme::kVoid);
     setMinimumSize(kMinWidth, kMinHeight);
     setWindowTitle(QStringLiteral("RM Terminal · 选择席位"));
+    prepare_quick_widget(this);
     setSource(QUrl(QStringLiteral("qrc:/qml/SeatPicker.qml")));
 
     QQuickItem* root = rootObject();
@@ -67,6 +69,7 @@ SeatPicker::SeatPicker(QWidget* parent) : QQuickWidget(parent) {
     connect(root, SIGNAL(seatRequested(int)), this, SLOT(onSeatRequested(int)));
     connect(root, SIGNAL(confirmRequested()), this, SLOT(onConfirmRequested()));
     connect(root, SIGNAL(cancelRequested()), this, SLOT(onCancelRequested()));
+    connect(root, SIGNAL(operatorRequested(QString)), this, SLOT(onOperatorRequested(QString)));
     publish();
 }
 
@@ -80,6 +83,20 @@ void SeatPicker::onConfirmRequested() { confirm(); }
 
 void SeatPicker::onCancelRequested() { cancel(); }
 
+void SeatPicker::onOperatorRequested(const QString& name) { chooseOperator(name); }
+
+void SeatPicker::setOperators(const QStringList& names, const QString& current) {
+    operators_ = names;
+    operator_ = names.contains(current) ? current : (names.isEmpty() ? QString() : names.front());
+    publish();
+}
+
+void SeatPicker::chooseOperator(const QString& name) {
+    if (!operators_.contains(name)) return;
+    operator_ = name;
+    publish();
+}
+
 std::optional<Seat> SeatPicker::seat() const {
     if (faction_ == 0 || seat_number_ == 0) return std::nullopt;
     return Seat::fromRobotId(faction_ == 2 ? seat_number_ + 100 : seat_number_);
@@ -91,6 +108,8 @@ void SeatPicker::publish() {
     root->setProperty("factionChoice", static_cast<int>(faction_));
     root->setProperty("seatChoice", seat_number_);
     root->setProperty("confirmEnabled", canConfirm());
+    root->setProperty("operators", operators_);
+    root->setProperty("operatorChoice", operator_);
     // 摘要整句在 C++ 拼好再灌进去:登录名换算只有 Seat 一份实现,测试也就能直接
     // 断言界面上那行字,而不是断言 QML 的拼接表达式。
     const std::optional<Seat> chosen = seat();

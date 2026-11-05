@@ -19,12 +19,18 @@ Item {
     // 两步都选完后 C++ 给出的整句摘要;没选完是空串,整条不显示。
     property string summaryText: ""
     property bool confirmEnabled: false
+    // 这台电脑上存过的操作手,默认选中上次那个人。
+    property var operators: []
+    property string operatorChoice: ""
+    // 窗口背景(glass_items.h),和主界面同一张。
+    property string backdropSource: ""
 
     // 用户动作只上报「点了什么」,不自行推导结果:确认是否可用、编号怎么换算都在 C++。
     signal factionRequested(int faction)
     signal seatRequested(int number)
     signal confirmRequested()
     signal cancelRequested()
+    signal operatorRequested(string name)
 
     readonly property bool factionKnown: factionChoice !== 0
     readonly property bool isBlue: factionChoice === 2
@@ -97,6 +103,14 @@ Item {
             font.family: Theme.labelFamily
             font.pixelSize: Math.round(13 * header.ratio)
         }
+    }
+
+    Image {
+        anchors.fill: parent
+        source: root.backdropSource
+        cache: false
+        smooth: false
+        visible: root.backdropSource !== ""
     }
 
     Panel {
@@ -335,11 +349,60 @@ Item {
                 }
             }
 
-            Text {
-                text: "本次运行不能更换席位，换席位要重启终端"
-                color: Theme.textMuted
-                font.family: Theme.labelFamily
-                font.pixelSize: Math.round(13 * root.k)
+            // 操作手一行。只有一个操作手时也显示:让人知道界面会按这个名字记设置。
+            Row {
+                spacing: Math.round(8 * root.k)
+                height: Math.round(34 * root.k)
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "操作手"
+                    color: Theme.textSecondary
+                    font.family: Theme.labelFamily
+                    font.pixelSize: Math.round(14 * root.k)
+                    font.bold: true
+                }
+
+                Repeater {
+                    model: root.operators
+                    Rectangle {
+                        objectName: "operatorChip"
+                        readonly property bool chosen: modelData === root.operatorChoice
+                        width: chipText.implicitWidth + Math.round(28 * root.k)
+                        height: Math.round(34 * root.k)
+                        radius: 3
+                        color: chosen ? Theme.cyanDim : (chipMouse.containsMouse ? Theme.surfaceRaised : Theme.surface)
+                        border.width: chosen ? 2 : 1
+                        border.color: chosen ? Theme.cyan : Theme.border
+
+                        Text {
+                            id: chipText
+                            anchors.centerIn: parent
+                            text: modelData
+                            color: parent.chosen ? Theme.textPrimary : Theme.textSecondary
+                            font.family: Theme.labelFamily
+                            font.pixelSize: Math.round(14 * root.k)
+                            font.bold: parent.chosen
+                        }
+
+                        MouseArea {
+                            id: chipMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.operatorRequested(modelData)
+                        }
+                    }
+                }
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    leftPadding: Math.round(10 * root.k)
+                    text: "界面按操作手记住，进去后在「界面设置」里新建或改名。本次运行不能更换席位。"
+                    color: Theme.textMuted
+                    font.family: Theme.labelFamily
+                    font.pixelSize: Math.round(13 * root.k)
+                }
             }
 
             Row {
