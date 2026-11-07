@@ -42,6 +42,8 @@ public:
     void synthesize(const QString& text, const QString& path, quint64 token) override;
     void play(const QString& path, quint64 token) override;
     void stop() override;
+    void setVolume(double volume) override { volume_ = volume; }
+    bool volumeAdjustable() const override { return true; }
 
     // 系统里列出的 zh_CN 声音,`say -v '?'` 的解析结果,保留**完整名字**。
     // 完整名字是必须的:`Eddy` 这样的裸名会匹配到同名的英文声音,合成出一个与
@@ -80,6 +82,7 @@ private:
 
     QString voice_;
     int rate_wpm_;
+    double volume_ = 1.0;
     // 构造时枚举一次的 zh_CN 声音列表(单次 say -v '?',实测 0.44 秒)。
     // 不在这里逐个做合成探测:那是 22 次 say、实测 9.8 秒的启动卡顿,而实测表明
     // 完整名字的 zh_CN 声音都能正常合成 —— 真正需要探测的只有操作手主动切换的那一个。

@@ -270,7 +270,7 @@ std::vector<NextCard> next_candidates(const Snapshot& snapshot, bool base_hit) {
                 card.group = NextGroup::Opportunity;
                 card.category = QStringLiteral("增益");
                 card.title = window.big ? QStringLiteral("开大能量机关") : QStringLiteral("开小能量机关");
-                card.reason = QStringLiteral("刚开放，按住「能量机关」1 秒");
+                card.reason = QStringLiteral("刚开放，长按 F 1 秒开启");
                 card.rune_button = true;
                 card.speech = QStringLiteral("去开能量机关");
                 cards.push_back(card);

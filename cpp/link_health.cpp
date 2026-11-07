@@ -230,9 +230,9 @@ SelfCheck build_self_check(const SelfCheckInputs& inputs) {
 
     for (const CheckRow& row : check.rows)
         if (row.level == CheckLevel::Fail) ++check.failures;
-    check.verdict = check.failures == 0
-                        ? QStringLiteral("可以上场")
-                        : QStringLiteral("有 %1 项异常，先别上场").arg(check.failures);
+    // 只说结果,能不能上场由人判断。
+    check.verdict = check.failures == 0 ? QStringLiteral("全部正常")
+                                        : QStringLiteral("有 %1 项异常").arg(check.failures);
     return check;
 }
 

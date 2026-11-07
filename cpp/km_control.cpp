@@ -130,6 +130,13 @@ KmCapture::~KmCapture() { stop(QStringLiteral("程序退出")); }
 
 void KmCapture::setSender(Sender sender) { sender_ = std::move(sender); }
 
+void KmCapture::setPassthroughKeys(std::vector<int> qt_keys) { passthrough_ = std::move(qt_keys); }
+
+bool KmCapture::passes(int qt_key) const {
+    return km_key_bit(qt_key) == 0 &&
+           std::find(passthrough_.begin(), passthrough_.end(), qt_key) != passthrough_.end();
+}
+
 void KmCapture::setLinkUp(bool up) {
     link_up_ = up;
     if (!up && active_) stop(QStringLiteral("断线"));
@@ -170,7 +177,7 @@ void KmCapture::setSuspended(bool suspended) {
         return;
     }
     if (!window_ || !window_->isActiveWindow()) {
-        stop(QStringLiteral("复活时窗口不在前台"));
+        stop(QStringLiteral("接着控制时窗口不在前台"));
         return;
     }
     suspended_ = false;
@@ -237,8 +244,9 @@ void KmCapture::schedule() {
 }
 
 void KmCapture::move(const QPointF& global) {
+    const double k = sensitivity_;
     if (!pointer_lock_ || !window_) {
-        state_.move(global.x() - last_.x(), global.y() - last_.y());
+        state_.move((global.x() - last_.x()) * k, (global.y() - last_.y()) * k);
         last_ = global;
         return;
     }
@@ -247,14 +255,14 @@ void KmCapture::move(const QPointF& global) {
     const QPointF from_center = global - center_;
     if (awaiting_warp_) {
         if (std::abs(from_center.x()) <= near && std::abs(from_center.y()) <= near) {
-            state_.move(from_center.x(), from_center.y());
+            state_.move(from_center.x() * k, from_center.y() * k);
             last_ = global;
             awaiting_warp_ = false;
             return;
         }
         if (elapsed_.elapsed() - warp_at_ms_ > kWarpTimeoutMs) awaiting_warp_ = false;
     }
-    state_.move(global.x() - last_.x(), global.y() - last_.y());
+    state_.move((global.x() - last_.x()) * k, (global.y() - last_.y()) * k);
     last_ = global;
     if (!awaiting_warp_ && (std::abs(from_center.x()) > far || std::abs(from_center.y()) > far)) {
         QCursor::setPos(center_.toPoint());
@@ -276,10 +284,16 @@ bool KmCapture::eventFilter(QObject* watched, QEvent* event) {
                                                       : QStringLiteral("按 F9 退出"));
                 return true;
             }
-            if (!key->isAutoRepeat()) state_.key(key->key(), press);
+            if (passes(key->key())) return false;
+            if (!key->isAutoRepeat()) {
+                state_.key(key->key(), press);
+                Q_EMIT keyChanged(key->key(), press);
+            }
             return true;
         }
         case QEvent::ShortcutOverride:
+            // 不接受 = 让 Qt 去找快捷键;其余的键一律接下,不让界面上的快捷键抢走发给车的键。
+            if (passes(static_cast<QKeyEvent*>(event)->key())) return false;
             event->accept();
             return true;
         case QEvent::MouseMove:

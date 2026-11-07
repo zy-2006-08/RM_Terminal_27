@@ -120,13 +120,13 @@ void self_check_counts_only_failures() {
               report.rows.front().level == rm_terminal::CheckLevel::Warn,
           "an unchecked seat is a warning, not a failure");
     check(report.failures == 0, "warnings and off rows do not block");
-    check(report.verdict == QStringLiteral("可以上场"), "all clear says go");
+    check(report.verdict == QStringLiteral("全部正常"), "all clear only states the result");
 
     inputs.links.car.level = LinkLevel::Down;
     inputs.links.video.level = LinkLevel::Down;
     report = rm_terminal::build_self_check(inputs);
     check(report.failures == 2, "two down links are two failures");
-    check(report.verdict == QStringLiteral("有 2 项异常，先别上场"), "failures say do not go");
+    check(report.verdict == QStringLiteral("有 2 项异常"), "failures are counted, the decision is left to people");
 
     inputs.links.car.level = LinkLevel::Ok;
     inputs.links.video.level = LinkLevel::Ok;

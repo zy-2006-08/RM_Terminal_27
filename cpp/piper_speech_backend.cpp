@@ -152,7 +152,21 @@ void PiperSpeechBackend::play(const QString& path, quint64 token) {
         finishPlayback(false, QStringLiteral("播放启动失败：%1").arg(play_->errorString()));
     });
     play_watchdog_.start(kPlaybackTimeoutMs);
-    play_->start(player_, {path});
+    play_->start(player_, player_arguments(player_, path, volume_));
+}
+
+bool PiperSpeechBackend::volumeAdjustable() const {
+    const QString name = QFileInfo(player_).fileName();
+    return name == QLatin1String("pw-play") || name == QLatin1String("paplay");
+}
+
+QStringList player_arguments(const QString& player, const QString& path, double volume) {
+    const QString name = QFileInfo(player).fileName();
+    const double clamped = std::clamp(volume, 0.0, 1.0);
+    // pw-play 收 0–1 的小数,paplay 收 0–65536 的整数;aplay 没有音量参数。
+    if (name == QLatin1String("pw-play")) return {QStringLiteral("--volume=%1").arg(clamped, 0, 'f', 2), path};
+    if (name == QLatin1String("paplay")) return {QStringLiteral("--volume=%1").arg(qRound(clamped * 65536)), path};
+    return {path};
 }
 
 void PiperSpeechBackend::stop() {

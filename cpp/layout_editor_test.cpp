@@ -108,15 +108,15 @@ void one_page_settings() {
     // 拖缝:两边一起变,拖不过最小尺寸。
     const QRect ally = box(PaneId::AllyRoster);
     const QRect analysis = box(PaneId::Analysis);
-    const QPoint seam((ally.right() + analysis.left()) / 2, ally.center().y());
+    const QPoint seam((ally.right() + analysis.left()) / 2, analysis.center().y());
     drag(&editor, seam, QPoint(editor.unitToCanvas(QRect(5, 0, 1, 1)).left() - 2, seam.y()));
     settle();
-    check(saved(profiles, PaneId::AllyRoster) == QRect(0, 0, 5, 4) && saved(profiles, PaneId::Analysis) == QRect(5, 0, 7, 4),
+    check(saved(profiles, PaneId::AllyRoster) == QRect(0, 0, 5, 7) && saved(profiles, PaneId::Analysis) == QRect(5, 0, 7, 4),
           "dragging the seam makes one side wider and the other narrower");
     const QRect wide = box(PaneId::AllyRoster);
     const QRect narrow = box(PaneId::Analysis);
-    drag(&editor, QPoint((wide.right() + narrow.left()) / 2, wide.center().y()),
-         QPoint(editor.unitToCanvas(QRect(10, 0, 1, 1)).left(), wide.center().y()));
+    drag(&editor, QPoint((wide.right() + narrow.left()) / 2, narrow.center().y()),
+         QPoint(editor.unitToCanvas(QRect(10, 0, 1, 1)).left(), narrow.center().y()));
     settle();
     check(saved(profiles, PaneId::Analysis).width() == pane_min_units(PaneId::Analysis).width(),
           "a seam stops where the other side would get too small");
@@ -148,20 +148,21 @@ void one_page_settings() {
     const QRect roster = box(PaneId::AllyRoster);
     drag(&editor, box(PaneId::Map).center(), QPoint(roster.left() + 8, roster.center().y()));
     settle();
-    check(saved(profiles, PaneId::Map) == QRect(0, 0, 4, 4) && saved(profiles, PaneId::AllyRoster) == QRect(4, 4, 8, 5),
+    check(saved(profiles, PaneId::Map) == QRect(0, 0, 4, 7) && saved(profiles, PaneId::AllyRoster) == QRect(4, 4, 8, 5),
           "an edge drop that cannot fit swaps the two panes instead");
     editor.undo();
     settle();
 
     // 换也换不了(花名册拖窄到 3 列,地图最小 4 列):原样不动,说清楚要多大。
     const QPoint ally_seam((box(PaneId::AllyRoster).right() + box(PaneId::Analysis).left()) / 2,
-                           box(PaneId::AllyRoster).center().y());
+                           box(PaneId::Analysis).center().y());
     drag(&editor, ally_seam, QPoint(editor.unitToCanvas(QRect(3, 0, 1, 1)).left() - 2, ally_seam.y()));
     settle();
-    check(saved(profiles, PaneId::AllyRoster) == QRect(0, 0, 3, 4), "the roster is now three columns wide");
+    check(saved(profiles, PaneId::AllyRoster) == QRect(0, 0, 3, 7), "the roster is now three columns wide");
+    const QRect map_before = saved(profiles, PaneId::Map);
     drag(&editor, box(PaneId::Map).center(), box(PaneId::AllyRoster).center());
     settle();
-    check(saved(profiles, PaneId::Map) == QRect(4, 4, 8, 5) && editor.toastText().contains(QStringLiteral("放不下")) &&
+    check(saved(profiles, PaneId::Map) == map_before && editor.toastText().contains(QStringLiteral("放不下")) &&
               editor.toastText().contains(QStringLiteral("4 × 3")),
           "a drop that does not fit changes nothing and says how big the pane has to be");
     editor.undo();
@@ -197,25 +198,19 @@ void one_page_settings() {
     check(saved(profiles, PaneId::Events) == QRect(12, 4, 4, 5) && saved(profiles, PaneId::Video) == QRect(0, 7, 4, 2),
           "undo brings the panes back from the library");
 
-    // 组件库来的放不下就替换,换下来的回到组件库。
-    drag(&editor, centre(PaneId::SelfStatus), box(PaneId::AllyRoster).center());
+    // 组件库来的放不下就替换,换下来的回到组件库。图传只有 4 × 2,再分不出一块来。
+    drag(&editor, centre(PaneId::SelfStatus), box(PaneId::Video).center());
     settle();
-    check(saved(profiles, PaneId::SelfStatus) == QRect(0, 0, 4, 4) && saved(profiles, PaneId::AllyRoster).isNull() &&
-              !editor.tileRect(PaneId::AllyRoster).isNull() && editor.toastText().contains(QStringLiteral("换下来了")),
+    check(saved(profiles, PaneId::SelfStatus) == QRect(0, 7, 4, 2) && saved(profiles, PaneId::Video).isNull() &&
+              !editor.tileRect(PaneId::Video).isNull() && editor.toastText().contains(QStringLiteral("换下来了")),
           "a library pane that cannot squeeze in replaces the pane under it");
     editor.undo();
     settle();
-    check(saved(profiles, PaneId::AllyRoster) == QRect(0, 0, 4, 4), "undo puts the replaced pane back");
+    check(saved(profiles, PaneId::Video) == QRect(0, 7, 4, 2), "undo puts the replaced pane back");
 
-    // 图传和本车是两块,不会并进本车里。本车放不进图传那 2 格,拖到本车正中间就调个先后,各自大小不变。
-    check(saved(profiles, PaneId::SelfCommands) == QRect(0, 4, 4, 3) && saved(profiles, PaneId::Video) == QRect(0, 7, 4, 2),
-          "本车 and the video are two panes, one above the other");
-    drag(&editor, box(PaneId::Video).center(), box(PaneId::SelfCommands).center());
-    settle();
-    check(saved(profiles, PaneId::Video) == QRect(0, 4, 4, 2) && saved(profiles, PaneId::SelfCommands) == QRect(0, 6, 4, 3),
-          "dropping the video in the middle of 本车 puts it above 本车, both keep their size");
-    editor.undo();
-    settle();
+    // 「本车」删掉了:画面里没有,组件库里也没有。
+    check(saved(profiles, PaneId::SelfCommands).isNull() && editor.tileRect(PaneId::SelfCommands).isNull(),
+          "本车 is neither on the page nor in the library");
 
     // 从组件库拖进来。
     const QRect events = box(PaneId::Events);

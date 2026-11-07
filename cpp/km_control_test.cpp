@@ -183,6 +183,25 @@ void capture_takes_over_the_window() {
     QApplication::sendEvent(&window, &override_event);
     check(override_event.isAccepted(), "shortcuts are swallowed while capturing");
 
+    // H(远程兑换)和 Ctrl+2 的 2 交给终端的快捷键;车用的键(R、Ctrl)照样拦下发给车。
+    capture.setPassthroughKeys({Qt::Key_H, Qt::Key_2, Qt::Key_R});
+    QKeyEvent remote_key(QEvent::ShortcutOverride, Qt::Key_H, Qt::NoModifier);
+    remote_key.ignore();
+    QApplication::sendEvent(&window, &remote_key);
+    check(!remote_key.isAccepted(), "a terminal hotkey reaches its shortcut while capturing");
+    QKeyEvent ctrl_two(QEvent::ShortcutOverride, Qt::Key_2, Qt::ControlModifier);
+    ctrl_two.ignore();
+    QApplication::sendEvent(&window, &ctrl_two);
+    check(!ctrl_two.isAccepted(), "Ctrl+2 reaches its shortcut too");
+    QKeyEvent car_key(QEvent::ShortcutOverride, Qt::Key_R, Qt::NoModifier);
+    car_key.ignore();
+    QApplication::sendEvent(&window, &car_key);
+    check(car_key.isAccepted(), "a key the robot uses is never handed to a shortcut");
+    key(window, QEvent::KeyPress, Qt::Key_H);
+    pump(30);
+    check(frames.sent.back().keyboard_value() == (km_key_bit(Qt::Key_W) | km_key_bit(Qt::Key_D)),
+          "a terminal hotkey changes nothing in the frames sent to the robot");
+
     const QPointF origin = window.mapToGlobal(QPointF(400, 300));
     move_to(window, origin);
     pump(30);
@@ -208,6 +227,16 @@ void capture_takes_over_the_window() {
     click(window, QEvent::MouseButtonRelease, Qt::LeftButton);
     pump(30);
     check(!frames.sent.back().left_button_down(), "left button released");
+
+    // P 设置面板的「控制灵敏度」:鼠标移动乘倍数再发给车。
+    capture.setSensitivity(2.0);
+    const std::size_t scaled_from = frames.sent.size();
+    move_to(window, origin + QPointF(15, -4));
+    pump(40);
+    std::int32_t scaled_dx = 0;
+    for (std::size_t i = scaled_from; i < frames.sent.size(); ++i) scaled_dx += frames.sent[i].mouse_x();
+    check(scaled_dx == 10, "sensitivity x2: a 5-pixel move goes out as 10");
+    capture.setSensitivity(1.0);
 
     const std::size_t at = frames.sent.size();
     pump(400);
@@ -280,7 +309,7 @@ void capture_takes_over_the_window() {
     QApplication::processEvents();
     check(!window.isActiveWindow(), "another window is in front");
     capture.setSuspended(false);
-    check(!capture.active() && stops.back() == QStringLiteral("复活时窗口不在前台"),
+    check(!capture.active() && stops.back() == QStringLiteral("接着控制时窗口不在前台"),
           "revived while another window is in front: leave instead of grabbing its mouse");
     other.hide();
     window.activateWindow();

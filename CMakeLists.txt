@@ -52,7 +52,8 @@ target_link_libraries(terminal_presentation PUBLIC terminal_domain terminal_logg
 add_library(terminal_ui_profiles
     cpp/ui_profile.cpp cpp/ui_profile.h
     cpp/layout_ops.cpp cpp/layout_ops.h
-    cpp/ui_profile_store.cpp cpp/ui_profile_store.h)
+    cpp/ui_profile_store.cpp cpp/ui_profile_store.h
+    cpp/terminal_settings.cpp cpp/terminal_settings.h)
 target_include_directories(terminal_ui_profiles PUBLIC cpp)
 target_link_libraries(terminal_ui_profiles PUBLIC terminal_presentation Qt6::Core)
 target_compile_definitions(terminal_ui_profiles PRIVATE QT_NO_KEYWORDS)
@@ -106,6 +107,7 @@ add_library(terminal_visual
     cpp/battle_analysis_pane.cpp cpp/battle_analysis_pane.h
     cpp/event_feed_pane.cpp cpp/event_feed_pane.h
     cpp/mark_toolbar.cpp cpp/mark_toolbar.h
+    cpp/input_method_guard.cpp cpp/input_method_guard.h
     cpp/top_bar.cpp cpp/top_bar.h)
 target_link_libraries(terminal_visual PUBLIC terminal_presentation Qt6::Widgets Qt6::QuickWidgets)
 
@@ -117,7 +119,11 @@ add_library(terminal_role_panes
     cpp/assembly_pane.cpp cpp/assembly_pane.h
     cpp/dart_pane.cpp cpp/dart_pane.h
     cpp/sentry_pane.cpp cpp/sentry_pane.h
-    cpp/self_command_pane.cpp cpp/self_command_pane.h
+    cpp/self_command_pane.cpp cpp/self_command_pane.h cpp/self_command_view.h
+    cpp/purchase.cpp cpp/purchase.h
+    cpp/purchase_popups.cpp cpp/purchase_popups.h
+    cpp/rune_key.cpp cpp/rune_key.h
+    cpp/hold_panels.cpp cpp/hold_panels.h
     cpp/revive_popup.cpp cpp/revive_popup.h
     cpp/km_control.cpp cpp/km_control.h)
 target_link_libraries(terminal_role_panes PUBLIC terminal_visual terminal_domain Qt6::Widgets)
@@ -177,9 +183,10 @@ add_library(terminal_dashboard cpp/dashboard.cpp cpp/dashboard.h
     cpp/layout_editor.cpp cpp/layout_editor.h
     cpp/pane_details.cpp cpp/pane_details.h
     cpp/self_check_panel.cpp cpp/self_check_panel.h
+    cpp/settings_panel.cpp cpp/settings_panel.h
 )
 target_link_libraries(terminal_dashboard PUBLIC terminal_map terminal_visual terminal_video terminal_reminder_ui
-    terminal_ui_profiles Qt6::Widgets)
+    terminal_ui_profiles terminal_role_panes Qt6::Widgets)
 target_compile_definitions(terminal_dashboard PRIVATE QT_NO_KEYWORDS)
 
 add_executable(rm_terminal
@@ -282,6 +289,27 @@ if(BUILD_TESTING)
         RM_TERMINAL_ARTIFACT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/artifacts")
     add_test(NAME role_panes COMMAND role_panes_test)
     set_tests_properties(role_panes PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
+    # 兑换:条件和原因、价钱、到没到账是纯逻辑;H 远程兑换框、O/I 补弹面板、确认框用离屏窗口验。
+    add_executable(purchase_test cpp/purchase_test.cpp)
+    target_link_libraries(purchase_test PRIVATE terminal_role_panes Qt6::Widgets)
+    target_compile_definitions(purchase_test PRIVATE QT_NO_KEYWORDS
+        RM_TERMINAL_ARTIFACT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/artifacts")
+    add_test(NAME purchase COMMAND purchase_test)
+    set_tests_properties(purchase PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
+    # P 设置面板:终端设置的存盘、面板上的每一项、输入法只给打字框。
+    add_executable(settings_panel_test cpp/settings_panel_test.cpp)
+    target_link_libraries(settings_panel_test PRIVATE terminal_qrc terminal_dashboard Qt6::Widgets Qt6::QuickWidgets)
+    target_compile_definitions(settings_panel_test PRIVATE QT_NO_KEYWORDS
+        RM_TERMINAL_ARTIFACT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/artifacts")
+    add_test(NAME settings_panel COMMAND settings_panel_test)
+    set_tests_properties(settings_panel PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
+    # 按住的键:长按 F 开能量机关(次数推算、按满一秒才发)、按住 Tab / ~ 的面板。
+    add_executable(hold_keys_test cpp/hold_keys_test.cpp)
+    target_link_libraries(hold_keys_test PRIVATE terminal_role_panes Qt6::Widgets)
+    target_compile_definitions(hold_keys_test PRIVATE QT_NO_KEYWORDS
+        RM_TERMINAL_ARTIFACT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/artifacts")
+    add_test(NAME hold_keys COMMAND hold_keys_test)
+    set_tests_properties(hold_keys PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
     # 键鼠控制:键位映射、累积和 75Hz 节拍是纯逻辑;接管窗口那层用离屏窗口和合成事件验。
     add_executable(km_control_test cpp/km_control_test.cpp)
     target_link_libraries(km_control_test PRIVATE terminal_role_panes Qt6::Widgets)

@@ -77,6 +77,12 @@ void RevivePopup::setStatus(const QString& status) {
     update();
 }
 
+void RevivePopup::setWindowActive(bool active) {
+    if (window_active_ == active) return;
+    window_active_ = active;
+    update();
+}
+
 QString RevivePopup::titleText() const {
     if (view_.can_free_revive.value_or(false)) return QStringLiteral("可以复活");
     if (view_.revive_total && view_.revive_current && *view_.revive_total >= *view_.revive_current)
@@ -88,7 +94,7 @@ void RevivePopup::refresh() {
     const bool dead = view_.dead.value_or(false);
     const bool can_pay = view_.can_pay_revive.value_or(true);
     const QString cost = view_.revive_cost ? QString::number(*view_.revive_cost) : QStringLiteral("--");
-    pay_button_->setText(can_pay ? QStringLiteral("金币复活 · %1金").arg(cost)
+    pay_button_->setText(can_pay ? QStringLiteral("金币复活 · %1金 [F1]").arg(cost)
                                  : QStringLiteral("%1 金币不足").arg(cost));
     pay_button_->setEnabled(link_up_ && can_pay);
     free_button_->setText(QStringLiteral("免费复活 [Y]"));
@@ -148,11 +154,11 @@ void RevivePopup::paintEvent(QPaintEvent*) {
                      painter.fontMetrics().elidedText(
                          QStringLiteral("免费复活后 10% 血量、进入虚弱(发射机构锁定),占增益点解除"),
                          Qt::ElideRight, inner));
-    const QString second = !link_up_ ? QStringLiteral("断线，指令不会发送")
-                           : !status_.isEmpty()
-                               ? status_
-                               : QStringLiteral("金币复活满血，3 秒后解除虚弱");
-    painter.setPen(!link_up_ ? theme::kDanger : theme::kTextMuted);
+    const QString second = !link_up_          ? QStringLiteral("断线，指令不会发送")
+                           : !window_active_   ? QStringLiteral("终端窗口不在前台：先点一下终端，再按 Y")
+                           : !status_.isEmpty() ? status_
+                                                : QStringLiteral("金币复活满血，3 秒后解除虚弱");
+    painter.setPen(!link_up_ ? theme::kDanger : !window_active_ ? theme::kWarn : theme::kTextMuted);
     painter.drawText(QRect(kPad, text_top + kLineHeight, inner, kLineHeight), Qt::AlignLeft | Qt::AlignVCenter,
                      painter.fontMetrics().elidedText(second, Qt::ElideRight, inner));
 }

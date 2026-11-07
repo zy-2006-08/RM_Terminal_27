@@ -12,7 +12,8 @@
 namespace rm_terminal {
 
 // 主界面信息页里能放进格子的面板。SelfStatus / Timeline 不在默认布局里,是组件库里能加的。
-// BigControl 已经不用了(改成战场数据分析的「只看控制度」),留着名字是为了读旧文件时认得它。
+// BigControl 已经不用了(改成战场数据分析的「只看控制度」),SelfCommands(「本车」)也删掉了
+// (功能都改成官方选手端的按键),留着名字是为了读旧文件时认得它们。
 enum class PaneId {
     AllyRoster,
     EnemyRoster,

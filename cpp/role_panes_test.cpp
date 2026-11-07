@@ -543,6 +543,9 @@ SelfCommandView infantry_in_match() {
     view.out_of_combat = true;
     view.can_remote_heal = true;
     view.can_remote_ammo = true;
+    view.at_exchange_point = true;
+    view.shooter_online = true;
+    view.logistics = 1.0;
     view.dead = false;
     view.rune_status = 1;
     view.shooter = 1;
@@ -574,22 +577,34 @@ void self_pane_sends_exchanges_with_the_right_caliber() {
     check(!pane.preMatch(), "in the 7-minute stage the infantry sees the match buttons");
     check(button(pane, "selfExchange")->text() == QStringLiteral("兑换 50发 · 50金"),
           "17mm exchange defaults to 50 rounds for 50 coins");
+    std::vector<std::pair<PurchaseKind, std::uint32_t>> asked;
+    pane.setPurchaseRequest([&asked](PurchaseKind kind, std::uint32_t rounds) { asked.emplace_back(kind, rounds); });
     button(pane, "selfExchange")->click();
-    check(capture.sent.size() == 1, "one click sends one command");
+    check(asked.size() == 1 && asked[0].first == PurchaseKind::Supply && asked[0].second == 50 &&
+              capture.sent.empty(),
+          "like the official client a click only asks for a confirmation, nothing is sent yet");
+    const SelfCommandView view = infantry_in_match();
+    check(pane.sendPurchase(supply_offer(view, true, Caliber::Small, 50)) && capture.sent.size() == 1,
+          "the confirmed exchange goes out once");
     auto parsed = common(capture.sent[0]);
     check(parsed.cmd_type() == 1 && parsed.param() == 50, "infantry buys 17mm: cmd 1, param = rounds");
-    button(pane, "selfExchange")->click();
-    check(capture.sent.size() == 1, "a second click inside 100ms is dropped (10Hz)");
+    check(!pane.sendPurchase(supply_offer(view, true, Caliber::Small, 50)) && capture.sent.size() == 1,
+          "a second exchange inside 100ms is dropped (10Hz)");
     button(pane, "selfExchangeMore")->click();
     button(pane, "selfExchangeMore")->click();
     check(pane.exchangeRounds() == 200, "+ walks the ladder 50 -> 100 -> 200");
 
     pane.tick(1200);
     button(pane, "selfRemoteAmmo")->click();
+    check(asked.back().first == PurchaseKind::RemoteAmmo && asked.back().second == 100,
+          "remote ammo asks for one 100-round unit");
+    check(pane.sendPurchase(remote_ammo_offer(view, true, Caliber::Small)), "remote ammo goes out after the Y");
     parsed = common(capture.sent.back());
     check(parsed.cmd_type() == 5 && parsed.param() == 100, "remote ammo sends one 100-round unit");
     pane.tick(1400);
     button(pane, "selfRemoteHeal")->click();
+    check(asked.back().first == PurchaseKind::RemoteHeal, "remote heal asks too");
+    check(pane.sendPurchase(remote_heal_offer(view, true)), "remote heal goes out after the Y");
     parsed = common(capture.sent.back());
     check(parsed.cmd_type() == 6 && parsed.param() == 0, "remote heal is cmd 6");
     check(pane.statusText() == QStringLiteral("远程回血 · 等待回显"), "the status line names the command");
@@ -598,11 +613,33 @@ void self_pane_sends_exchanges_with_the_right_caliber() {
     pane.setView(healed);
     pane.tick(1500);
     check(pane.statusText() == QStringLiteral("远程回血 · 已确认"), "spent coins confirm the command");
+    pane.setPurchaseText(QStringLiteral("远程回血 · 已兑换，6 秒后生效"), false);
+    check(pane.statusText() == QStringLiteral("远程回血 · 已兑换，6 秒后生效"),
+          "the purchase result takes the status line");
+    pane.setPurchaseText(QString(), false);
     SelfCommandView full = healed;
     full.hp = 200;
     pane.setView(full);
     pane.tick(1600);
-    check(!button(pane, "selfRemoteHeal")->isEnabled(), "full HP: remote heal would only waste coins");
+    check(!button(pane, "selfRemoteHeal")->isEnabled() &&
+              button(pane, "selfRemoteHeal")->toolTip() == QStringLiteral("满血，不用回血"),
+          "full HP: remote heal would only waste coins, the tooltip says so");
+    SelfCommandView away = healed;
+    away.at_exchange_point = false;
+    pane.setView(away);
+    pane.tick(1700);
+    check(!button(pane, "selfExchange")->isEnabled() &&
+              button(pane, "selfExchange")->toolTip() == QStringLiteral("未在兑换点"),
+          "off the exchange point the exchange button is grey and says why");
+    check(button(pane, "selfRemoteAmmo")->isEnabled(), "remote ammo does not need the exchange point");
+    away.shooter_online = false;
+    away.at_exchange_point = true;
+    pane.setView(away);
+    pane.tick(1800);
+    check(button(pane, "selfExchange")->toolTip() == QStringLiteral("17mm发射机构未连接"),
+          "a disconnected launcher blocks the exchange like the official client");
+    button(pane, "selfExchange")->click();
+    check(asked.back().first != PurchaseKind::Supply, "a grey button asks nothing");
 
     SelfCommandView hero = infantry_in_match();
     hero.infantry = false;
@@ -615,11 +652,11 @@ void self_pane_sends_exchanges_with_the_right_caliber() {
     hero_pane.tick(1000);
     check(hero_pane.exchangeRounds() == 5 && hero_pane.exchangeCost() == 50, "42mm: 5 rounds for 50 coins");
     check(!button(hero_pane, "selfRune")->isVisible(), "the hero has no energy-rune button");
-    button(hero_pane, "selfExchange")->click();
+    check(hero_pane.sendPurchase(supply_offer(hero, true, Caliber::Large, 5)), "hero exchange goes out");
     parsed = common(hero_capture.sent.back());
     check(parsed.cmd_type() == 2 && parsed.param() == 5, "hero buys 42mm: cmd 2");
     hero_pane.tick(1200);
-    button(hero_pane, "selfRemoteAmmo")->click();
+    check(hero_pane.sendPurchase(remote_ammo_offer(hero, true, Caliber::Large)), "hero remote ammo goes out");
     parsed = common(hero_capture.sent.back());
     check(parsed.cmd_type() == 5 && parsed.param() == 10, "hero remote ammo is one 10-round unit");
 }
@@ -687,7 +724,8 @@ void self_pane_revive_follows_the_official_client() {
     check(popup.isVisible() && popup.titleText() == QStringLiteral("复活中 15s"), "dead: the popup counts down");
     auto* pay = popup.findChild<QPushButton*>(QStringLiteral("revivePay"));
     auto* free = popup.findChild<QPushButton*>(QStringLiteral("reviveFree"));
-    check(pay->isEnabled() && pay->text() == QStringLiteral("金币复活 · 100金"), "paid revive shows its price");
+    check(pay->isEnabled() && pay->text() == QStringLiteral("金币复活 · 100金 [F1]"),
+          "paid revive shows its price and the official F1 key");
     check(!free->isEnabled() && free->text() == QStringLiteral("免费复活 [Y]"), "free revive waits for the bar");
     pay->click();
     check(pays == 1, "clicking 金币复活 calls the pay action once");
@@ -754,6 +792,9 @@ void self_pane_performance_is_infantry_prematch_only() {
     rm::RobotPerformanceSelectionCommand parsed;
     check(parsed.ParseFromString(capture.sent[0].second) && parsed.chassis() == 2 && parsed.shooter() == 1,
           "power-first chassis; the unchosen shooter goes out as the rule default (cooling-first)");
+    check(pane.performanceChosen() && pane.performanceEcho() == QStringLiteral("等待回显") &&
+              pane.shownChassis() == std::optional<std::uint32_t>(2),
+          "the P panel sees the pick and its echo before the sync comes back");
     prep.chassis = 2;
     prep.shooter = 1;
     pane.setView(prep);
@@ -795,6 +836,22 @@ void self_pane_performance_is_infantry_prematch_only() {
     pane.tick(1500);
     check(!pane.preMatch() && button(pane, "selfExchange")->isVisible(),
           "once the match starts the performance page is gone");
+    const std::size_t sent_before = capture.sent.size();
+    check(!pane.choosePerformance(2, 2) && capture.sent.size() == sent_before,
+          "after the match starts the P panel cannot change it either");
+
+    // 准备阶段点的就是现在生效的那一个(确认用默认):不发指令,但算选过了,提醒收起来。
+    SelfCommandPane keep;
+    Capture keep_capture;
+    SelfCommandView defaults = infantry_in_match();
+    defaults.stage = 1;
+    keep.setView(defaults);
+    keep.setSender(keep_capture.sender());
+    keep.setLinkUp(true);
+    keep.tick(1000);
+    check(!keep.performanceChosen(), "nothing chosen yet in this preparation stage");
+    check(keep.choosePerformance(std::nullopt, 1) && keep_capture.sent.empty() && keep.performanceChosen(),
+          "picking the choice already in force sends nothing and counts as chosen");
 
     SelfCommandPane hero;
     SelfCommandView hero_view = infantry_in_match();

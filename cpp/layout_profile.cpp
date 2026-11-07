@@ -11,22 +11,23 @@ PaneSlot at(PaneId pane, int column, int row, int width, int height) { return {p
 }  // namespace
 
 const LayoutProfile& layout_profile(Role role) {
-    // 步兵(效果图 v5):上排 我方机器人 / 战场数据分析 / 敌方机器人,下排 本车 + 图传 /
-    // 战术地图 / 战场事件。步兵最关心的控制度和阵地放在正中间,地图缩小放到下面。
-    // 本车和图传各是一块(本车下面就是图传),不再把图传塞进本车里。
+    // 步兵(效果图 v5):上排 我方机器人 / 战场数据分析 / 敌方机器人,下排 图传 / 战术地图 /
+    // 战场事件。步兵最关心的控制度和阵地放在正中间,地图缩小放到下面。
+    // 「本车」删掉了:兑换、远程兑换、性能体系、能量机关、复活都照官方选手端用按键(H、O/I、P、F、Y/F1),
+    // 原来本车那三格给了上面的我方机器人,图传还是下面两格(小窗按 16:9 才不被裁掉一大半)。
     // 「下一步」三张卡在中间一列最上面,不开的方案里它那两格由战场数据分析接过去。
     static const LayoutProfile infantry{
         Role::Infantry,
-        {at(PaneId::AllyRoster, 0, 0, 4, 4), at(PaneId::NextStep, 4, 0, 8, 2), at(PaneId::Analysis, 4, 2, 8, 2),
-         at(PaneId::EnemyRoster, 12, 0, 4, 4), at(PaneId::SelfCommands, 0, 4, 4, 3), at(PaneId::Video, 0, 7, 4, 2),
-         at(PaneId::Map, 4, 4, 8, 5), at(PaneId::Events, 12, 4, 4, 5)},
+        {at(PaneId::AllyRoster, 0, 0, 4, 7), at(PaneId::NextStep, 4, 0, 8, 2), at(PaneId::Analysis, 4, 2, 8, 2),
+         at(PaneId::EnemyRoster, 12, 0, 4, 4), at(PaneId::Video, 0, 7, 4, 2), at(PaneId::Map, 4, 4, 8, 5),
+         at(PaneId::Events, 12, 4, 4, 5)},
         {}};
     // 重装:和步兵一样,右下角多一块装配,战场事件挪到装配下面。
     static const LayoutProfile hero{
         Role::Hero,
-        {at(PaneId::AllyRoster, 0, 0, 4, 4), at(PaneId::NextStep, 4, 0, 8, 2), at(PaneId::Analysis, 4, 2, 8, 2),
-         at(PaneId::EnemyRoster, 12, 0, 4, 4), at(PaneId::SelfCommands, 0, 4, 4, 3), at(PaneId::Video, 0, 7, 4, 2),
-         at(PaneId::Map, 4, 4, 8, 5), at(PaneId::Assembly, 12, 4, 4, 3), at(PaneId::Events, 12, 7, 4, 2)},
+        {at(PaneId::AllyRoster, 0, 0, 4, 7), at(PaneId::NextStep, 4, 0, 8, 2), at(PaneId::Analysis, 4, 2, 8, 2),
+         at(PaneId::EnemyRoster, 12, 0, 4, 4), at(PaneId::Video, 0, 7, 4, 2), at(PaneId::Map, 4, 4, 8, 5),
+         at(PaneId::Assembly, 12, 4, 4, 3), at(PaneId::Events, 12, 7, 4, 2)},
         {}};
     // 指挥手:左列 我方 / 敌方花名册 / 战场事件,中间地图(带标记工具条)和战场数据分析,
     // 右列 飞镖 / 哨兵 / 图传。哨兵按钮最多,给它四格高。指挥手看全局,地图保持最大。

@@ -373,6 +373,44 @@ void VideoPane::setCaption(bool caption) {
     update();
 }
 
+void VideoPane::setRotated(bool rotated) {
+    if (rotated_ == rotated) return;
+    rotated_ = rotated;
+    update();
+}
+
+void Dashboard::setVideoRotated(bool rotated) {
+    info_video_pane_->setRotated(rotated);
+    video_full_pane_->setRotated(rotated);
+}
+
+void Dashboard::setPreMatchReminder(const QString& text) { pre_match_reminder_ = text; }
+
+void Dashboard::setRuneEntry(const QString& text, bool lit, double progress, const QString& tooltip) {
+    const bool shown = !text.isEmpty();
+    if (shown == rune_entry_->isHidden()) {
+        rune_entry_->setVisible(shown);
+        placeAlertStrip();
+    }
+    if (!shown) return;
+    if (rune_entry_->text() != text) {
+        rune_entry_->setText(text);
+        placeAlertStrip();
+    }
+    rune_entry_->setDot(lit ? theme::kOk : theme::kOffline);
+    rune_entry_->setTextColour(lit ? theme::kTextPrimary : theme::kTextMuted);
+    rune_entry_->setProgress(progress);
+    if (rune_entry_->toolTip() != tooltip) rune_entry_->setToolTip(tooltip);
+}
+
+void Dashboard::setRuneEntryHold(std::function<void(bool down)> hold) {
+    QObject::disconnect(rune_entry_, &QPushButton::pressed, this, nullptr);
+    QObject::disconnect(rune_entry_, &QPushButton::released, this, nullptr);
+    if (!hold) return;
+    QObject::connect(rune_entry_, &QPushButton::pressed, this, [hold] { hold(true); });
+    QObject::connect(rune_entry_, &QPushButton::released, this, [hold] { hold(false); });
+}
+
 void VideoPane::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
         event->accept();
@@ -397,7 +435,17 @@ void VideoPane::paintEvent(QPaintEvent*) {
                                              : Qt::KeepAspectRatio;
         const QImage scaled = image_.scaled(size(), mode, Qt::SmoothTransformation);
         const QPoint origin((width() - scaled.width()) / 2, (height() - scaled.height()) / 2);
-        painter.drawImage(origin, scaled);
+        if (rotated_) {
+            // 图传方向「反向」:绕格子中心转 180°,相机倒着装时画面才是正的。
+            painter.save();
+            painter.translate(width() / 2.0, height() / 2.0);
+            painter.rotate(180);
+            painter.translate(-width() / 2.0, -height() / 2.0);
+            painter.drawImage(origin, scaled);
+            painter.restore();
+        } else {
+            painter.drawImage(origin, scaled);
+        }
     } else {
         painter.setFont(theme::labelPx(13));
         painter.setPen(theme::kTextSecondary);
@@ -504,6 +552,9 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
 
     ui_settings_entry_ = chip_button(QStringLiteral("界面设置"), "uiSettingsEntry");
     ui_settings_entry_->setVisible(false);
+
+    rune_entry_ = chip_button(QString(), "runeEntry");
+    rune_entry_->setVisible(false);
     QObject::connect(ui_settings_entry_, &QPushButton::clicked, this,
                      [this] { setUiSettingsVisible(!uiSettingsVisible()); });
 
@@ -514,6 +565,7 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     // 状态灯紧跟席位。告警带不在这一行里排,出现、消失都不会让状态灯挪位置。
     banner_row->addWidget(link_lights_);
     banner_row->addWidget(recording_status_);
+    banner_row->addWidget(rune_entry_);
     banner_row->addStretch(1);
     banner_row->addWidget(self_check_entry_);
     banner_row->addWidget(keyboard_mouse_entry_);
@@ -909,6 +961,8 @@ void Dashboard::applyUiScheme(const UiScheme& scheme, bool editing) {
     if (!next_enabled_) {
         next_cards_.clear();
         rune_badge_.clear();
+        rune_entry_->setBadge(QString());
+        rune_entry_->setGlow(false);
         enemy_roster_->setRanks({});
         next_popup_->setVisible(false);
     }
@@ -946,6 +1000,9 @@ void Dashboard::updateNextStep(const Snapshot& snapshot, MonotonicMs now) {
             if (next_cards_[i].enemy_id) ranks.insert(QString::number(*next_cards_[i].enemy_id), rank);
             if (next_cards_[i].rune_button) rune_badge_ = rank;
         }
+    // 推荐开能量机关时,状态条上「F · 长按开启」那一格标同一个编号并发光。
+    rune_entry_->setBadge(rune_badge_);
+    rune_entry_->setGlow(!rune_badge_.isEmpty());
     enemy_roster_->setRanks(ranks);
     // 第 1 件换成了另一件事才念,同一件事数字变了不念。
     const std::optional<NextRule> top =
@@ -1303,6 +1360,9 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
     analysis_->setZoneBoard(zone_board(snapshot));
 
     alert_text_ = alert_strip_text(snapshot, video);
+    if (!pre_match_reminder_.isEmpty())
+        alert_text_ = alert_text_.isEmpty() ? pre_match_reminder_
+                                            : pre_match_reminder_ + QStringLiteral("      ") + alert_text_;
     alert_strip_->setVisible(!alert_text_.isEmpty());
     placeAlertStrip();
 
@@ -1453,7 +1513,7 @@ void Dashboard::placeAlertStrip() {
         return total + std::max(0, shown - 1) * kSpacing;
     };
     const QMargins margins = layout()->contentsMargins();
-    const int left = margins.left() + span({mode_banner_, link_lights_, recording_status_}) + kGap;
+    const int left = margins.left() + span({mode_banner_, link_lights_, recording_status_, rune_entry_}) + kGap;
     const int right = width() - margins.right() -
                       span({self_check_entry_, keyboard_mouse_entry_, reminder_entry_, ui_settings_entry_}) - kGap;
     const int centre = margins.left() + (width() - margins.left() - margins.right()) / 2;

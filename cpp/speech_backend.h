@@ -50,6 +50,11 @@ public:
     // 立刻停止当前播放。用于关总开关和比赛结束。
     virtual void stop() = 0;
 
+    // 播放音量 0–1(P 设置面板的「音量设置」),下一句起生效。播放程序调不了音量时
+    // volumeAdjustable() 为 false,面板上这一项灰着。
+    virtual void setVolume(double) {}
+    virtual bool volumeAdjustable() const { return false; }
+
 Q_SIGNALS:
     void synthesizeFinished(quint64 token, bool ok, const QString& error);
     void playbackFinished(quint64 token, bool ok, const QString& error);

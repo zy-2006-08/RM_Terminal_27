@@ -169,37 +169,31 @@ const QLabel* find_label(const Dashboard& dashboard, const char* name) {
 Config test_config() { return Config{}; }
 
 // (1) and (2): info mode is map-dominant, and the thumbnail stays a thumbnail.
-// 主程序把本车指令放进「本车」卡片。测试里没有指令面板,放一个同样高的占位,
-// 「本车」才是它在真程序里的样子。
-void place_self_commands_stand_in(Dashboard& dashboard) {
-    auto* stand_in = new QWidget;
-    stand_in->setFixedHeight(148);
-    dashboard.placePane(PaneId::SelfCommands, stand_in);
-}
-
-// 启动时的方案里没有「本车」:主程序照样能把指令面板放进去,加回画面时按钮都在。
+// 启动时的方案里没有「装配」:主程序照样能把装配面板放进去,加回画面时按钮都在。
 void a_role_pane_placed_while_off_screen_shows_up_later() {
-    Dashboard dashboard(test_config());
+    Config config = test_config();
+    config.self_robot_id = 1;
+    Dashboard dashboard(config);
     dashboard.resize(1440, 900);
-    const UiScheme standard = builtin_scheme(Role::Infantry, QStringLiteral("standard")).value();
+    const UiScheme standard = builtin_scheme(Role::Hero, QStringLiteral("standard")).value();
     UiScheme without = standard;
-    without.cells = layout_remove(scheme_layout(Role::Infantry, standard).cells, PaneId::SelfCommands);
+    without.cells = layout_remove(scheme_layout(Role::Hero, standard).cells, PaneId::Assembly);
     dashboard.applyUiScheme(without);
     settle(dashboard);
-    check(dashboard.paneCard(PaneId::SelfCommands) == nullptr && dashboard.roleCard(PaneId::SelfCommands) != nullptr,
+    check(dashboard.paneCard(PaneId::Assembly) == nullptr && dashboard.roleCard(PaneId::Assembly) != nullptr,
           "a pane that is off screen still has its card for the seat");
     check(dashboard.roleCard(PaneId::Dart) == nullptr, "a pane the seat does not have has no card");
-    auto* commands = new QPushButton(QStringLiteral("兑换"));
-    dashboard.placePane(PaneId::SelfCommands, commands);
+    check(dashboard.roleCard(PaneId::SelfCommands) == nullptr, "「本车」 is gone: no seat has it any more");
+    auto* assembly = new QPushButton(QStringLiteral("开始兑换"));
+    dashboard.placePane(PaneId::Assembly, assembly);
     dashboard.applyUiScheme(standard);
     settle(dashboard);
-    check(dashboard.paneCard(PaneId::SelfCommands) != nullptr && commands->isVisible() && commands->height() > 0,
+    check(dashboard.paneCard(PaneId::Assembly) != nullptr && assembly->isVisible() && assembly->height() > 0,
           "when the pane comes back on screen its buttons are there");
 }
 
 void info_mode_is_map_dominant_with_a_capped_thumbnail() {
     Dashboard dashboard(test_config());
-    place_self_commands_stand_in(dashboard);
     dashboard.resize(kWidth, kHeight);
     drive_to_info(dashboard);
     check(dashboard.mode() == UiMode::Info, "clear blind data settles into info mode");
@@ -238,7 +232,6 @@ void the_layout_fits_the_requested_screen_size() {
 // minimum size and the stats label was painted on top of the picture.
 void the_thumbnail_and_its_stats_never_overlap() {
     Dashboard dashboard(test_config());
-    place_self_commands_stand_in(dashboard);
     dashboard.resize(kMinWidth, kMinHeight);
     drive_to_info(dashboard);
 
@@ -939,8 +932,7 @@ void dragged_layouts_fill_the_page() {
 void every_role_layout_fits_its_screens() {
     const std::vector<PaneId> all_panes{PaneId::AllyRoster, PaneId::EnemyRoster, PaneId::Map,
                                         PaneId::Events,     PaneId::Analysis,    PaneId::Video,
-                                        PaneId::Assembly,   PaneId::Dart,        PaneId::Sentry,
-                                        PaneId::SelfCommands};
+                                        PaneId::Assembly,   PaneId::Dart,        PaneId::Sentry};
     for (const int seat : {3, 1, 6}) {
         for (const QSize size : {QSize(kMinWidth, kMinHeight), QSize(1920, 1080)}) {
             Config config;

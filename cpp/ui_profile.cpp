@@ -169,19 +169,18 @@ std::vector<UiScheme> builtin_schemes(Role role) {
     UiScheme novice = make_scheme(QStringLiteral("novice"), QStringLiteral("新手 · 带下一步"));
     UiScheme minimal = make_scheme(QStringLiteral("minimal"), QStringLiteral("极简"));
     minimal.hidden = {PaneId::Events, PaneId::Video, PaneId::NextStep};
-    // 图传为主(效果图 8):官方选手端黑屏时用。图传占右上 12 × 6 格(1440 × 900 下接近 16:9),
-    // 左列 我方 / 敌方 / 地图,下排 本车(重装还有装配)和战场数据分析。
+    // 图传为主(效果图 8):官方选手端被遮挡时用。图传占右上 12 × 6 格(1440 × 900 下接近 16:9),
+    // 左列 我方 / 敌方 / 地图,下排 战场数据分析(重装左边还有装配)。
     UiScheme video = make_scheme(QStringLiteral("video"), QStringLiteral("图传为主"));
     const auto cell = [](PaneId pane, int column, int row, int width, int height) {
         return PaneSlot{pane, row, column, height, width};
     };
     video.cells = {cell(PaneId::AllyRoster, 0, 0, 4, 3), cell(PaneId::EnemyRoster, 0, 3, 4, 3),
-                   cell(PaneId::Map, 0, 6, 4, 3), cell(PaneId::Video, 4, 0, 12, 6),
-                   cell(PaneId::SelfCommands, 4, 6, 4, 3)};
+                   cell(PaneId::Map, 0, 6, 4, 3), cell(PaneId::Video, 4, 0, 12, 6)};
     if (role == Role::Hero)
-        video.cells.insert(video.cells.end(), {cell(PaneId::Assembly, 8, 6, 4, 3), cell(PaneId::Analysis, 12, 6, 4, 3)});
+        video.cells.insert(video.cells.end(), {cell(PaneId::Assembly, 4, 6, 4, 3), cell(PaneId::Analysis, 8, 6, 8, 3)});
     else
-        video.cells.push_back(cell(PaneId::Analysis, 8, 6, 8, 3));
+        video.cells.push_back(cell(PaneId::Analysis, 4, 6, 12, 3));
     std::vector<UiScheme> out{standard, minimal};
     if (in_profile(role, PaneId::NextStep)) out.insert(out.begin() + 1, novice);
     if (role != Role::Commander) out.push_back(video);
@@ -201,7 +200,7 @@ QString scheme_description(const UiScheme& scheme) {
     if (scheme.id == QLatin1String("standard")) return QStringLiteral("所有面板都在，适合大多数人。");
     if (scheme.id == QLatin1String("novice")) return QStringLiteral("画面中间直接告诉你接下来最该做的三件事。");
     if (scheme.id == QLatin1String("minimal")) return QStringLiteral("关掉战场事件和图传小窗，画面更清爽。");
-    if (scheme.id == QLatin1String("video")) return QStringLiteral("官方选手端黑屏时用，图传放到最大。");
+    if (scheme.id == QLatin1String("video")) return QStringLiteral("官方选手端被遮挡时用，图传放到最大。");
     QStringList parts;
     for (const PaneId pane : scheme.hidden) parts << pane_title(pane);
     return parts.isEmpty() ? QStringLiteral("自己建的方案，所有面板都在。")
@@ -253,6 +252,7 @@ void split_old_video(Role role, UiScheme* scheme) {
     scheme->cells.push_back(PaneSlot{PaneId::Video, host->row + host->row_span, host->column, video_rows, host->column_span});
 }
 
+
 }  // namespace
 
 void normalize(RoleSetup* setup, Role role) {
@@ -301,13 +301,15 @@ void normalize(RoleSetup* setup, Role role) {
         // 这一版没有的面板(比如去掉的「控制度（大号）」)先拿掉,空出来的旁边补上;
         // 剩下的格子还对不上(改了格数、文件坏了)就回到默认布局,不猜。
         if (!scheme.cells.empty()) {
+            // 更旧的文件里图传还在本车里面:先拆出来,再删本车(「本车」也删掉了),图传才不会跟着
+            // 本车一起没了。本车空出来的格子和别的没了的面板一样,由旁边的面板长过来补上。
+            split_old_video(role, &scheme);
             const std::size_t before = scheme.cells.size();
             scheme.cells.erase(std::remove_if(scheme.cells.begin(), scheme.cells.end(),
                                               [role](const PaneSlot& slot) { return !in_profile(role, slot.pane); }),
                                scheme.cells.end());
             if (scheme.cells.size() != before) fill_empty_cells(&scheme.cells);
             if (!cells_valid(role, scheme.cells)) scheme.cells.clear();
-            split_old_video(role, &scheme);
         }
         if (builtin) scheme.name = builtin->name;
         kept.push_back(std::move(scheme));

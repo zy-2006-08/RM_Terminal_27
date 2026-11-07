@@ -23,19 +23,10 @@ constexpr int kChipHeight = 28;
 constexpr int kGap = 6;
 constexpr std::uint32_t kStageMatch = 4;
 
-// CommonCommand.cmd_type(2.2.25)。
-constexpr std::uint32_t kBuy17 = 1;
-constexpr std::uint32_t kBuy42 = 2;
+// CommonCommand.cmd_type(2.2.25)。兑换的三条在 purchase.cpp。
 constexpr std::uint32_t kConfirmRevive = 3;
 constexpr std::uint32_t kPayRevive = 4;
-constexpr std::uint32_t kRemoteAmmo = 5;
-constexpr std::uint32_t kRemoteHeal = 6;
 
-// 规则手册表 5-7、5-8、5-9:非远程兑换 17mm 10 金/10 发,42mm 10 金/1 发;
-// 远程兑换 150 金一份,17mm 一份 100 发,42mm 一份 10 发。
-constexpr std::uint32_t kRemoteUnit17 = 100;
-constexpr std::uint32_t kRemoteUnit42 = 10;
-constexpr std::uint32_t kRemotePrice = 150;
 constexpr std::array<std::uint32_t, 6> kLadder17{10, 20, 50, 100, 200, 500};
 constexpr std::array<std::uint32_t, 6> kLadder42{1, 2, 5, 10, 20, 50};
 
@@ -90,14 +81,28 @@ SelfCommandView self_command_view(const Snapshot& snapshot) {
     view.economy = present(snapshot.game.economy);
     view.rune_status = present(snapshot.game.rune_status);
     view.rune_arms = present(snapshot.game.rune_activated_arms);
+    view.rune_rings = present(snapshot.game.rune_average_rings);
     view.shooter = present(snapshot.game.selected_shooter);
     view.chassis = present(snapshot.game.selected_chassis);
     if (!snapshot.self) return view;
     view.infantry = snapshot.self->value % 100 != 1;
+    // 后勤系数 λ = 1 − 己方基地已损失血量 / 20000,在 [0.5, 1] 之间(规则手册 5.6.1)。
+    const bool red = faction_of(snapshot.self->value) == kRed;
+    const auto base_hp = present(red ? snapshot.game.red_base_hp : snapshot.game.blue_base_hp);
+    const auto base_max = present(red ? snapshot.game.red_base_max_hp : snapshot.game.blue_base_max_hp);
+    if (base_hp && base_max && *base_max > 0)
+        view.logistics = std::clamp(1.0 - (static_cast<double>(*base_max) - *base_hp) / 20000.0, 0.5, 1.0);
     const auto robot = snapshot.robots.find(*snapshot.self);
     if (robot == snapshot.robots.end()) return view;
     const RobotState& self = robot->second;
     view.ammo = present(self.dynamic.remaining_ammo);
+    view.fired = present(self.dynamic.total_fired);
+    // Buff 类型 6 站在点上时 1Hz 一直发,离开后不再发:还在时效窗口里就算在兑换点上。
+    if (self.buffs.can_exchange_ammo.last_valid)
+        view.at_exchange_point = self.buffs.can_exchange_ammo.freshness == Freshness::Fresh;
+    // 测速模块 0 离线 1 在线 2 安装不规范视为离线(协议 2.2.12)。
+    if (const auto module = present(view.infantry ? self.modules.small_shooter : self.modules.big_shooter))
+        view.shooter_online = *module == 1;
     view.hp = present(self.dynamic.current_hp);
     view.out_of_combat = present(self.dynamic.out_of_combat);
     view.can_remote_heal = present(self.dynamic.can_remote_heal);
@@ -164,14 +169,10 @@ SelfCommandPane::SelfCommandPane(QWidget* parent) : QWidget(parent) {
     match->addWidget(rune_, 2, 0, 1, 2);
     column->addWidget(match_page_);
 
-    QObject::connect(chassis_hp_, &QPushButton::clicked, this,
-                     [this] { sendPerformance(shooterChoice(), 1); });
-    QObject::connect(chassis_power_, &QPushButton::clicked, this,
-                     [this] { sendPerformance(shooterChoice(), 2); });
-    QObject::connect(shooter_cooling_, &QPushButton::clicked, this,
-                     [this] { sendPerformance(1, chassisChoice()); });
-    QObject::connect(shooter_burst_, &QPushButton::clicked, this,
-                     [this] { sendPerformance(2, chassisChoice()); });
+    QObject::connect(chassis_hp_, &QPushButton::clicked, this, [this] { choosePerformance(std::nullopt, 1); });
+    QObject::connect(chassis_power_, &QPushButton::clicked, this, [this] { choosePerformance(std::nullopt, 2); });
+    QObject::connect(shooter_cooling_, &QPushButton::clicked, this, [this] { choosePerformance(1, std::nullopt); });
+    QObject::connect(shooter_burst_, &QPushButton::clicked, this, [this] { choosePerformance(2, std::nullopt); });
     QObject::connect(minus_, &QPushButton::clicked, this, [this] {
         if (rounds_index_ > 0) --rounds_index_;
         refreshButtons();
@@ -183,13 +184,15 @@ SelfCommandPane::SelfCommandPane(QWidget* parent) : QWidget(parent) {
         update();
     });
     QObject::connect(exchange_, &QPushButton::clicked, this, [this] {
-        sendCommon(Kind::Exchange, view_.infantry ? kBuy17 : kBuy42, exchangeRounds());
+        if (purchase_request_) purchase_request_(PurchaseKind::Supply, exchangeRounds());
     });
     QObject::connect(remote_ammo_, &QPushButton::clicked, this, [this] {
-        sendCommon(Kind::RemoteAmmo, kRemoteAmmo, view_.infantry ? kRemoteUnit17 : kRemoteUnit42);
+        if (purchase_request_)
+            purchase_request_(PurchaseKind::RemoteAmmo, remote_ammo_rounds(own_caliber(view_)));
     });
-    QObject::connect(remote_heal_, &QPushButton::clicked, this,
-                     [this] { sendCommon(Kind::RemoteHeal, kRemoteHeal, 0); });
+    QObject::connect(remote_heal_, &QPushButton::clicked, this, [this] {
+        if (purchase_request_) purchase_request_(PurchaseKind::RemoteHeal, 0);
+    });
     // 开能量机关撤不回(role-layouts D4,官方选手端开能量机关也是长按),按住一秒才发。
     // pressed/released 而不是 clicked:clicked 拿不到按下的时刻。
     QObject::connect(rune_, &QPushButton::pressed, this, [this] {
@@ -208,6 +211,8 @@ SelfCommandPane::SelfCommandPane(QWidget* parent) : QWidget(parent) {
 
 void SelfCommandPane::setView(const SelfCommandView& view) {
     const bool infantry_changed = view.infantry != view_.infantry;
+    // 新的一次准备阶段开始:上一局选过不算这一局选过。
+    if (view.stage == std::optional<std::uint32_t>(1) && view_.stage != view.stage) performance_chosen_ = false;
     view_ = view;
     if (infantry_changed) {
         rounds_index_ = 2;
@@ -301,7 +306,7 @@ const std::array<std::uint32_t, 6>& SelfCommandPane::ladder() const {
 std::uint32_t SelfCommandPane::exchangeRounds() const { return ladder()[rounds_index_]; }
 
 std::uint32_t SelfCommandPane::exchangeCost() const {
-    return view_.infantry ? exchangeRounds() : exchangeRounds() * 10;
+    return supply_cost(own_caliber(view_), exchangeRounds());
 }
 
 std::uint64_t SelfCommandPane::fingerprint(Kind kind) const {
@@ -341,6 +346,27 @@ void SelfCommandPane::afterSend(Kind kind) {
     update();
 }
 
+void SelfCommandPane::setPurchaseRequest(std::function<void(PurchaseKind kind, std::uint32_t rounds)> request) {
+    purchase_request_ = std::move(request);
+}
+
+bool SelfCommandPane::sendPurchase(const PurchaseOffer& offer) {
+    if (!offer.available) return false;
+    switch (offer.kind) {
+        case PurchaseKind::Supply: return sendCommon(Kind::Exchange, offer.cmd_type, offer.param);
+        case PurchaseKind::RemoteAmmo: return sendCommon(Kind::RemoteAmmo, offer.cmd_type, offer.param);
+        case PurchaseKind::RemoteHeal: return sendCommon(Kind::RemoteHeal, offer.cmd_type, offer.param);
+    }
+    return false;
+}
+
+void SelfCommandPane::setPurchaseText(const QString& text, bool problem) {
+    if (purchase_text_ == text && purchase_problem_ == problem) return;
+    purchase_text_ = text;
+    purchase_problem_ = problem;
+    update();
+}
+
 bool SelfCommandPane::sendCommon(Kind kind, std::uint32_t cmd_type, std::uint32_t param) {
     // 断线期间的点击直接丢弃,不排队补发。
     if (!link_up_ || !sender_) return false;
@@ -350,20 +376,64 @@ bool SelfCommandPane::sendCommon(Kind kind, std::uint32_t cmd_type, std::uint32_
     return true;
 }
 
-void SelfCommandPane::sendPerformance(std::uint32_t shooter, std::uint32_t chassis) {
-    if (!link_up_ || !sender_) return;
-    if (!performance_gate_.allow(now_)) return;
-    if (!sender_("RobotPerformanceSelectionCommand", encode_performance(shooter, chassis))) return;
+bool SelfCommandPane::sendPerformance(std::uint32_t shooter, std::uint32_t chassis) {
+    if (!link_up_ || !sender_) return false;
+    if (!performance_gate_.allow(now_)) return false;
+    if (!sender_("RobotPerformanceSelectionCommand", encode_performance(shooter, chassis))) return false;
     wanted_shooter_ = shooter;
     wanted_chassis_ = chassis;
+    performance_chosen_ = true;
     afterSend(Kind::Performance);
+    return true;
 }
 
-void SelfCommandPane::sendRune() {
-    if (!link_up_ || !sender_) return;
-    if (!rune_gate_.allow(now_)) return;
-    if (!sender_("RuneActivateCommand", encode_rune_activate())) return;
+bool SelfCommandPane::performanceOpen() const {
+    // 规则手册 5.5.2:性能体系只有步兵能选,准备阶段开始后才能选,七分钟比赛开始后锁定。
+    return link_up_ && static_cast<bool>(sender_) && view_.infantry && view_.stage && *view_.stage >= 1 &&
+           *view_.stage < kStageMatch;
+}
+
+bool SelfCommandPane::choosePerformance(std::optional<std::uint32_t> shooter,
+                                        std::optional<std::uint32_t> chassis) {
+    if (!performanceOpen()) return false;
+    const std::uint32_t shooter_value = shooter.value_or(shooterChoice());
+    const std::uint32_t chassis_value = chassis.value_or(chassisChoice());
+    // 点的就是服务器现在报的那一个(比如确认要用默认):不用再发,发了服务器也不会变,
+    // 回显只会显示「未确认」。记下操作手选过,提醒就收起来。
+    if (!wanted_shooter_ && view_.shooter == shooter_value && view_.chassis == chassis_value) {
+        performance_chosen_ = true;
+        refreshButtons();
+        return true;
+    }
+    return sendPerformance(shooter_value, chassis_value);
+}
+
+std::optional<std::uint32_t> SelfCommandPane::shownShooter() const {
+    return wanted_shooter_ ? wanted_shooter_ : view_.shooter;
+}
+
+std::optional<std::uint32_t> SelfCommandPane::shownChassis() const {
+    return wanted_chassis_ ? wanted_chassis_ : view_.chassis;
+}
+
+QString SelfCommandPane::performanceEcho() const {
+    if (last_kind_ != Kind::Performance || echo_result_.status == EchoStatus::Idle) return QString();
+    return echo_status_text(echo_result_);
+}
+
+bool SelfCommandPane::sendRune() {
+    if (!link_up_ || !sender_) return false;
+    if (!rune_gate_.allow(now_)) return false;
+    if (!sender_("RuneActivateCommand", encode_rune_activate())) return false;
     afterSend(Kind::Rune);
+    return true;
+}
+
+bool SelfCommandPane::openRune() {
+    // 和「能量机关 按住」按钮同一套条件:步兵、比赛中、能量机关未激活。
+    const bool playing = view_.stage == std::optional<std::uint32_t>(kStageMatch);
+    if (!view_.infantry || !playing || view_.rune_status.value_or(1) != 1) return false;
+    return sendRune();
 }
 
 void SelfCommandPane::refreshButtons() {
@@ -372,9 +442,7 @@ void SelfCommandPane::refreshButtons() {
     pre_page_->setVisible(pre);
     match_page_->setVisible(!pre);
 
-    // 规则手册 5.5.2:性能体系只有步兵能选,准备阶段开始后才能选,七分钟比赛开始后锁定。
-    const bool choosing = live && view_.infantry && view_.stage && *view_.stage >= 1 &&
-                          *view_.stage < kStageMatch;
+    const bool choosing = performanceOpen();
     for (QPushButton* button : {chassis_hp_, chassis_power_, shooter_cooling_, shooter_burst_}) {
         button->setVisible(view_.infantry);
         button->setEnabled(choosing);
@@ -382,24 +450,26 @@ void SelfCommandPane::refreshButtons() {
     const auto check = [](QPushButton* button, bool on) {
         if (button->isChecked() != on) button->setChecked(on);
     };
-    const std::optional<std::uint32_t> chassis = wanted_chassis_ ? wanted_chassis_ : view_.chassis;
-    const std::optional<std::uint32_t> shooter = wanted_shooter_ ? wanted_shooter_ : view_.shooter;
+    const std::optional<std::uint32_t> chassis = shownChassis();
+    const std::optional<std::uint32_t> shooter = shownShooter();
     check(chassis_hp_, chassis == std::optional<std::uint32_t>(1));
     check(chassis_power_, chassis == std::optional<std::uint32_t>(2));
     check(shooter_cooling_, shooter == std::optional<std::uint32_t>(1));
     check(shooter_burst_, shooter == std::optional<std::uint32_t>(2));
 
     const bool playing = !view_.stage || *view_.stage == kStageMatch;
-    const bool dead = view_.dead.value_or(false);
-    const bool alive = !dead;
     exchange_->setText(QStringLiteral("兑换 %1发 · %2金").arg(exchangeRounds()).arg(exchangeCost()));
-    exchange_->setEnabled(live && playing && alive);
     minus_->setEnabled(rounds_index_ > 0);
     plus_->setEnabled(rounds_index_ + 1 < ladder().size());
-    remote_ammo_->setEnabled(live && playing && alive && view_.can_remote_ammo.value_or(true));
-    // 满血时远程回血只会白花金币(规则:加血不超过上限),先置灰。
-    const bool full = view_.hp && view_.max_hp && *view_.hp >= *view_.max_hp;
-    remote_heal_->setEnabled(live && playing && alive && !full && view_.can_remote_heal.value_or(true));
+    // 和 H 远程兑换框、O/I 补弹面板同一套条件;灰着时鼠标指上去看原因。
+    const Caliber caliber = own_caliber(view_);
+    const auto gate = [](QPushButton* button, const PurchaseOffer& offer) {
+        button->setEnabled(offer.available);
+        if (button->toolTip() != offer.reason) button->setToolTip(offer.reason);
+    };
+    gate(exchange_, supply_offer(view_, live, caliber, exchangeRounds()));
+    gate(remote_ammo_, remote_ammo_offer(view_, live, caliber));
+    gate(remote_heal_, remote_heal_offer(view_, live));
     rune_->setVisible(view_.infantry);
     rune_->setEnabled(live && view_.infantry && playing && view_.rune_status.value_or(1) == 1);
     static_cast<GlassButton*>(rune_)->setProgress(rune_hold_.progress(now_));
@@ -413,6 +483,7 @@ QString SelfCommandPane::statusText() const {
     if (km_active_)
         return QStringLiteral("键鼠控制中，Esc 退出") +
                (km_detail_.isEmpty() ? QString() : QStringLiteral(" · ") + km_detail_);
+    if (!purchase_text_.isEmpty()) return purchase_text_;
     const bool settled = echo_result_.status == EchoStatus::Idle || echo_result_.status == EchoStatus::Confirmed;
     // 阵亡时读条和复活价钱比「上一条指令已确认」要紧;1440x900 下面板只放得下这一行。
     if (view_.dead.value_or(false) && settled) return contextText();
@@ -460,7 +531,10 @@ QString SelfCommandPane::contextText() const {
                              : QStringLiteral("回血 --金");
     if (view_.infantry)
         return QStringLiteral("能量机关 %1 · %2").arg(rune_text(view_.rune_status, view_.rune_arms), heal);
-    return QStringLiteral("远程补弹 %1金/%2发 · %3").arg(kRemotePrice).arg(kRemoteUnit42).arg(heal);
+    return QStringLiteral("远程补弹 %1金/%2发 · %3")
+        .arg(kRemoteAmmoPrice)
+        .arg(remote_ammo_rounds(Caliber::Large))
+        .arg(heal);
 }
 
 QString SelfCommandPane::headerHtml() const {
@@ -470,6 +544,7 @@ QString SelfCommandPane::headerHtml() const {
     if (!link_up_) ink = theme::kDangerText;
     else if (!sender_) ink = theme::kTextMuted;
     else if (km_active_) ink = theme::kAccentText;
+    else if (!purchase_text_.isEmpty()) ink = purchase_problem_ ? theme::kWarn : theme::kTextBright;
     else if (view_.dead.value_or(false) && status == contextText()) ink = theme::kDangerText;
     else if (bad_echo) ink = theme::kWarn;
     else if (status == QStringLiteral("就绪") || echo_result_.status == EchoStatus::Confirmed) ink = theme::kOkText;
@@ -518,7 +593,8 @@ void SelfCommandPane::paintEvent(QPaintEvent*) {
                    theme::kTextPrimary);
     else
         paint_chip(painter, left, QStringLiteral("远程补弹"),
-                   QStringLiteral("%1 金/%2 发").arg(kRemotePrice).arg(kRemoteUnit42), theme::kTextPrimary);
+                   QStringLiteral("%1 金/%2 发").arg(kRemoteAmmoPrice).arg(remote_ammo_rounds(Caliber::Large)),
+                   theme::kTextPrimary);
     paint_chip(painter, right, QStringLiteral("回血"),
                view_.remaining ? QStringLiteral("%1 金").arg(remote_heal_cost(*view_.remaining)) : kDash,
                theme::kTextPrimary);

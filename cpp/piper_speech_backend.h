@@ -10,6 +10,9 @@ class QProcess;
 
 namespace rm_terminal {
 
+// 播放程序的参数,带上音量(pw-play / paplay 能调,aplay 调不了)。
+QStringList player_arguments(const QString& player, const QString& path, double volume);
+
 // Linux 的离线中文语音:Piper「超文」+ pypinyin,由 scripts/setup_voice.sh 安装。
 // 合成走 scripts/tts_say.py,播放用 pw-play / paplay / aplay 里先找到的那个。
 // 进程参数全部按数组传,不拼 shell 命令行:提醒文本是操作手输入的。
@@ -29,6 +32,8 @@ public:
     void synthesize(const QString& text, const QString& path, quint64 token) override;
     void play(const QString& path, quint64 token) override;
     void stop() override;
+    void setVolume(double volume) override { volume_ = volume; }
+    bool volumeAdjustable() const override;
 
 private:
     void discard(QProcess*& slot);
@@ -40,6 +45,7 @@ private:
     QString script_;
     QString model_;
     QString player_;
+    double volume_ = 1.0;
     QString unavailable_;
     int rate_wpm_;
     QProcess* synth_ = nullptr;

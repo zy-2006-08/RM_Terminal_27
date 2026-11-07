@@ -134,6 +134,8 @@ public:
     void setScaling(Scaling scaling);
     // 信息页的小窗:切角、底部一行「图传 / 点击放大」。全屏页不画。
     void setCaption(bool caption);
+    // P 设置面板的图传方向「反向」:画面转 180°。
+    void setRotated(bool rotated);
 
     // Observation only. Returns the owned copy this pane is painting, so a caller
     // can confirm both panes received the same frame.
@@ -151,6 +153,7 @@ private:
     QString status_ = QStringLiteral("waiting for video");
     Scaling scaling_ = Scaling::Fit;
     bool caption_ = false;
+    bool rotated_ = false;
 };
 
 // Hands ONE already-owned frame to both panes.
@@ -245,6 +248,14 @@ public:
     void setKeyboardMouseToggle(std::function<void()> toggle);
     // 非空时跟在状态条的席位名后面,例如「键鼠控制中（Esc 退出）」。
     void setKeyboardMouseStatus(const QString& text);
+    // P 设置面板的「图传方向」:两块图传都转 180°。
+    void setVideoRotated(bool rotated);
+    // 状态条左边能量机关那一格(只有步兵在比赛中):「F · 长按开启小能量机关 (1)」。按住 F 或按住
+    // 这一格一秒开启。text 为空时藏起来;lit 是现在能不能开,progress 是按住的进度。
+    void setRuneEntry(const QString& text, bool lit, double progress, const QString& tooltip);
+    void setRuneEntryHold(std::function<void(bool down)> hold);
+    // 赛前一直挂在比分上方的提醒(性能体系还是默认),空串去掉。
+    void setPreMatchReminder(const QString& text);
     // 指挥手地图下的标记工具条,其他席位为 nullptr。
     MarkToolbar* markToolbar() const { return mark_toolbar_; }
     // 这块面板现在在画面里才返回它的卡片,不在时返回 nullptr。
@@ -294,6 +305,7 @@ private:
     ChipLabel* mode_banner_;
     ChipLabel* alert_strip_;
     QString alert_text_;
+    QString pre_match_reminder_;
 
     // 固定在横幅行右端。刻意不放进 QML 顶部栏:1280 宽度下顶部栏右侧只剩约 19px,
     // 塞进去会压到前哨站徽标。
@@ -303,6 +315,7 @@ private:
     GlassButton* self_check_entry_;
     GlassButton* keyboard_mouse_entry_;
     GlassButton* ui_settings_entry_;
+    GlassButton* rune_entry_;
     UiProfileController* ui_profiles_ = nullptr;
     LayoutEditor* layout_editor_ = nullptr;
     QTimer* preview_timer_ = nullptr;

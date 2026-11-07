@@ -232,7 +232,9 @@ void MacosSpeechBackend::play(const QString& path, quint64 token) {
         finishPlayback(false, QStringLiteral("afplay 执行失败: %1").arg(play_->errorString()));
     });
     play_watchdog_.start(kPlaybackTimeoutMs);
-    play_->start(QString::fromLatin1(kPlay), {path});
+    // afplay -v:1 是原音量,小于 1 变小。
+    play_->start(QString::fromLatin1(kPlay),
+                 {QStringLiteral("-v"), QString::number(std::clamp(volume_, 0.0, 1.0), 'f', 2), path});
 }
 
 void MacosSpeechBackend::stop() {

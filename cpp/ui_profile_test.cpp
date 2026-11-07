@@ -225,7 +225,7 @@ void editing_moves() {
           "the pane above takes the removed pane's place");
     const std::vector<PaneSlot> no_analysis = layout_remove(standard, PaneId::Analysis);
     check(units_in(no_analysis, PaneId::Map) == QRect(4, 0, 8, 9) &&
-              units_in(no_analysis, PaneId::AllyRoster) == QRect(0, 0, 4, 4),
+              units_in(no_analysis, PaneId::AllyRoster) == QRect(0, 0, 4, 7),
           "the map grows up rather than a roster growing sideways");
 
     const auto inserted = layout_drop(standard, PaneId::Events, PaneId::Map, DropSide::Left);
@@ -252,28 +252,28 @@ void editing_moves() {
     check(!layout_drop(standard, PaneId::Map, PaneId::Map, DropSide::Center), "a pane cannot be dropped on itself");
 
     const auto seam = seam_at(standard, 4.05, 1.5, 0.24);
-    check(seam && seam->vertical && seam->line == 4 && seam->from == 0 && seam->to == 4,
-          "the seam between the ally roster and the analysis is found");
+    check(seam && seam->vertical && seam->line == 4 && seam->from == 0 && seam->to == 9,
+          "the seam between the left column and the middle is found, full height");
     const std::vector<Seam> handles = all_seams(standard);
     check(std::find(handles.begin(), handles.end(), *seam) != handles.end(), "and it has a handle");
     const auto wider = layout_move_seam(standard, *seam, 5);
-    check(wider && units_in(*wider, PaneId::AllyRoster) == QRect(0, 0, 5, 4) &&
+    check(wider && units_in(*wider, PaneId::AllyRoster) == QRect(0, 0, 5, 7) &&
               units_in(*wider, PaneId::Analysis) == QRect(5, 0, 7, 4) && tiles_the_grid(*wider),
           "dragging the seam makes one side wider and the other narrower");
-    check(units_in(*wider, PaneId::SelfCommands) == units_in(standard, PaneId::SelfCommands),
+    check(units_in(*wider, PaneId::EnemyRoster) == units_in(standard, PaneId::EnemyRoster),
           "panes that do not touch the seam stay as they are");
     check(!layout_move_seam(standard, *seam, 9), "a seam cannot squeeze a pane below its minimum");
     check(!seam_at(standard, 2.0, 1.5, 0.24), "the middle of a pane is not a seam");
-    const auto across = seam_at(standard, 2.0, 4.02, 0.24);
-    check(across && !across->vertical && across->line == 4 && across->from == 0 && across->to == 4,
+    const auto across = seam_at(standard, 2.0, 7.02, 0.24);
+    check(across && !across->vertical && across->line == 7 && across->from == 0 && across->to == 4,
           "the seam under the ally roster only spans the panes that touch it");
 
     const auto replaced = layout_replace(standard, PaneId::SelfStatus, PaneId::AllyRoster);
-    check(replaced && tiles_the_grid(*replaced) && units_in(*replaced, PaneId::SelfStatus) == QRect(0, 0, 4, 4) &&
+    check(replaced && tiles_the_grid(*replaced) && units_in(*replaced, PaneId::SelfStatus) == QRect(0, 0, 4, 7) &&
               units_in(*replaced, PaneId::AllyRoster).isNull(),
           "a library pane can take another pane's whole place");
     const auto moved_onto = layout_replace(standard, PaneId::Events, PaneId::AllyRoster);
-    check(moved_onto && tiles_the_grid(*moved_onto) && units_in(*moved_onto, PaneId::Events) == QRect(0, 0, 4, 4) &&
+    check(moved_onto && tiles_the_grid(*moved_onto) && units_in(*moved_onto, PaneId::Events) == QRect(0, 0, 4, 7) &&
               units_in(*moved_onto, PaneId::AllyRoster).isNull() &&
               units_in(*moved_onto, PaneId::EnemyRoster) == QRect(12, 0, 4, 9),
           "a pane put in another's place leaves its old place to a neighbour");
@@ -405,13 +405,15 @@ void old_video_inside_self_commands_is_split() {
         QString error;
         return book_from_json(book_to_json(book), &error).value().operators[0].roles.at(Role::Infantry).schemes.front().cells;
     };
+    // 「本车」也删掉了:拆出来的图传留下,本车那几格由上面的花名册长下来补上。
     const std::vector<PaneSlot> split = load(false);
-    check(units_in(split, PaneId::SelfCommands) == QRect(0, 4, 4, 3) && units_in(split, PaneId::Video) == QRect(0, 7, 4, 2) &&
-              tiles_the_grid(split),
-          "an old layout with the video inside 本车 opens as 本车 with the video below it");
+    check(units_in(split, PaneId::SelfCommands).isNull() && units_in(split, PaneId::Video) == QRect(0, 7, 4, 2) &&
+              units_in(split, PaneId::AllyRoster) == QRect(0, 0, 4, 7) && tiles_the_grid(split),
+          "an old layout with the video inside 本车 keeps the video; 本车 is gone and its cells are filled");
     const std::vector<PaneSlot> removed = load(true);
-    check(units_in(removed, PaneId::SelfCommands) == QRect(0, 4, 4, 5) && units_in(removed, PaneId::Video).isNull(),
-          "a layout whose video was removed keeps it removed");
+    check(units_in(removed, PaneId::SelfCommands).isNull() && units_in(removed, PaneId::Video).isNull() &&
+              tiles_the_grid(removed),
+          "a layout whose video was removed keeps it removed, and 本车 is gone too");
 }
 
 void controller_persists(const QString& dir) {

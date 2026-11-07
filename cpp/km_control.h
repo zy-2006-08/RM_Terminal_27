@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 class QWidget;
 
@@ -92,13 +93,19 @@ public:
 
     void setSender(Sender sender);
     void setLinkUp(bool up);
+    // 终端自己的快捷键(远程兑换 H、补弹 O/I、确认 Y/N、Ctrl+1/2/3 的数字键)。它们不在协议的
+    // 16 个键里、不发给车,接管期间照样交给终端的快捷键。
+    void setPassthroughKeys(std::vector<int> qt_keys);
+    // P 设置面板的「控制灵敏度」:鼠标移动乘这个倍数再发给车,1 = 原样。
+    void setSensitivity(double scale) { sensitivity_ = scale; }
+    double sensitivity() const { return sensitivity_; }
     // 断线或没有发送链路时不进入,返回 false。
     bool start();
     void stop(const QString& reason);
     void toggle();
-    // 阵亡时暂停,照官方选手端:放开鼠标、显示光标、不再拦键盘,操作手才能点复活框、按 Y。
-    // 暂停期间照常按 75Hz 发「全部松开」。复活后恢复接管;那时窗口不在前台就直接退出,
-    // 不去抢别的程序的鼠标。
+    // 阵亡、开着补弹面板时暂停,照官方选手端:放开鼠标、显示光标、不再拦键盘,操作手才能点
+    // 复活框、补弹面板。暂停期间照常按 75Hz 发「全部松开」。之后恢复接管;那时窗口不在前台就
+    // 直接退出,不去抢别的程序的鼠标。
     void setSuspended(bool suspended);
 
     bool active() const { return active_; }
@@ -113,6 +120,9 @@ public:
 Q_SIGNALS:
     void activeChanged(bool active, const QString& reason);
     void suspendedChanged(bool suspended);
+    // 接管期间发给车的键按下/松开(不含自动重复)。长按 F 开能量机关要看 F 按了多久,
+    // 而 F 同时还要照常发给车。
+    void keyChanged(int qt_key, bool down);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -124,9 +134,12 @@ private:
     void ungrab();
     bool send(const KmFrame& frame);
     void move(const QPointF& global);
+    bool passes(int qt_key) const;
 
     QPointer<QWidget> window_;
     Sender sender_;
+    std::vector<int> passthrough_;
+    double sensitivity_ = 1.0;
     bool link_up_ = false;
     bool active_ = false;
     bool suspended_ = false;

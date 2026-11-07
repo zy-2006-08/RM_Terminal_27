@@ -25,6 +25,7 @@
 #include "alert_voice.h"
 #include "controller_link.h"
 #include "dashboard.h"
+#include "input_method_guard.h"
 #include "link_health.h"
 #include "match_alerts.h"
 #include "next_step.h"
@@ -40,10 +41,15 @@
 #include "seat_picker.h"
 #include "assembly_pane.h"
 #include "dart_pane.h"
+#include "hold_panels.h"
 #include "km_control.h"
+#include "purchase_popups.h"
+#include "rune_key.h"
 #include "revive_popup.h"
 #include "self_command_pane.h"
 #include "sentry_pane.h"
+#include "settings_panel.h"
+#include "terminal_settings.h"
 #include "store.h"
 #include "tactical_reminder_controller.h"
 #include "ui_mode.h"
@@ -356,10 +362,17 @@ int main(int argc, char* argv[]) {
     }
 
     QApplication app(argc, argv);
+    // 中文输入法只给打字框:不然字母键(Y 复活、H/O/I 兑换、P 设置、WASD 键鼠控制)会被拿去拼字。
+    auto* input_method_guard = new rm_terminal::InputMethodGuard(&app);
+    app.installEventFilter(input_method_guard);
     rm_terminal::Config cfg;
     QString seat_source;
     if (!prepare_runtime(config_path, &cfg, cli_seat, &seat_source))
         return rm_terminal::kExitConfigError;
+    QObject::connect(input_method_guard, &rm_terminal::InputMethodGuard::blocked, &app, [](const QString& what) {
+        rm_terminal::StructuredLog::write(rm_terminal::LogLevel::info, QStringLiteral("input_method_blocked"),
+                                          {QStringLiteral("object=%1").arg(what)});
+    });
     // 席位在连网和建主界面之前定下来:登录名(MQTT clientID)和布局都取决于它,
     // 本次运行内不能再改。回放用录像里记的席位,不弹选席位页。
     // 界面设置按操作手存。选席位页顺便选人;跳过选席位页(--seat、RM_SELF_ID、回放)时
@@ -554,8 +567,12 @@ int main(int argc, char* argv[]) {
     alert_settings.disabled = cfg.alerts_disabled;
     rm_terminal::MatchAlerts match_alerts(alert_settings);
     rm_terminal::AlertVoice alert_voice(make_speech_backend(&app, cfg.speech_dir));
+    // 步兵进入 15 秒自检阶段还没选性能体系时念的那一句。
+    const QString performance_phrase = QStringLiteral("还没选性能体系");
     if (!replay)
-        alert_voice.prepare(cache_dir, rm_terminal::match_alert_phrases() + rm_terminal::next_step_phrases(),
+        alert_voice.prepare(cache_dir,
+                            rm_terminal::match_alert_phrases() + rm_terminal::next_step_phrases() +
+                                QStringList{performance_phrase},
                             reminders.currentVoice(),
                             reminders.config().rate_wpm);
 
@@ -661,8 +678,8 @@ int main(int argc, char* argv[]) {
         QObject::connect(replay.get(), &rm_terminal::ReplayPlayer::pausedChanged, &dashboard,
                          &rm_terminal::Dashboard::setReplayPaused);
     }
-    // 角色面板放进这个席位的卡片里,不管启动时的方案里有没有这块:复活框、键鼠控制都挂在「本车」上,
-    // 方案里拿掉本车也得照样能用。回放时不发任何指令:intake 没启动,publish 必然返回假。
+    // 角色面板放进这个席位的卡片里,不管启动时的方案里有没有这块。回放时不发任何指令:intake 没启动,
+    // publish 必然返回假。
     const auto send = [&intake, &replay](const char* topic, const std::string& payload) {
         return !replay && intake.publish(topic, payload);
     };
@@ -685,31 +702,86 @@ int main(int argc, char* argv[]) {
         dashboard.placePane(rm_terminal::PaneId::Sentry, sentry);
         sentry->setSender(send);
     }
+    // 「本车」面板删掉了,画面上不再有它。这个对象留着、不显示:兑换、复活、开能量机关、选性能体系
+    // 的发送、限频和回显都在它里面,按键(H、O/I、Y/F1、F、P)和弹框都走它。步兵和重装才有。
     rm_terminal::SelfCommandPane* self_commands = nullptr;
-    if (QWidget* card = dashboard.roleCard(rm_terminal::PaneId::SelfCommands)) {
-        self_commands = new rm_terminal::SelfCommandPane(card);
-        dashboard.placePane(rm_terminal::PaneId::SelfCommands, self_commands);
+    if (seat_role != rm_terminal::Role::Commander) {
+        self_commands = new rm_terminal::SelfCommandPane(&dashboard);
+        self_commands->hide();
         self_commands->setSender(send);
     }
+    // P 设置面板照官方选手端:按 P 打开 / 关闭,所有席位都有。终端自己的几项按这台电脑存。
+    auto* settings_panel = new rm_terminal::SettingsPanel(&dashboard);
+    const QString settings_path = rm_terminal::terminal_settings_path();
+    QString settings_error;
+    rm_terminal::TerminalSettings terminal_settings = rm_terminal::load_terminal_settings(settings_path, &settings_error);
+    if (!settings_error.isEmpty())
+        rm_terminal::StructuredLog::write(rm_terminal::LogLevel::warning, QStringLiteral("terminal_settings"),
+                                          {QStringLiteral("state=invalid"), QStringLiteral("error=%1").arg(settings_error)});
+    settings_panel->setSettings(terminal_settings);
     // 复活框照官方选手端:阵亡才弹出;读条结束后按 Y(或点「免费复活」)确认,点「金币复活」
     // 花钱。活着时按 Y 什么都不发。
     rm_terminal::RevivePopup* revive_popup = nullptr;
+    // 兑换照官方选手端:H 远程兑换框(Ctrl+1 回血、Ctrl+2 17mm、Ctrl+3 42mm),O/I 补给区补弹面板
+    // (17mm / 42mm),都要按 Y 二次确认、N 取消。本车面板上的按钮也走同一个确认框。
+    rm_terminal::PurchaseFlow* purchases = nullptr;
     if (self_commands) {
+        purchases = new rm_terminal::PurchaseFlow(&dashboard);
+        purchases->setSender(
+            [self_commands](const rm_terminal::PurchaseOffer& offer) { return self_commands->sendPurchase(offer); });
+        self_commands->setPurchaseRequest([purchases](rm_terminal::PurchaseKind kind, std::uint32_t rounds) {
+            purchases->ask(kind, rounds);
+        });
+        const auto shortcut = [&dashboard](const QKeySequence& keys, auto action) {
+            auto* key = new QShortcut(keys, &dashboard);
+            key->setContext(Qt::ApplicationShortcut);
+            QObject::connect(key, &QShortcut::activated, &dashboard, action);
+        };
+        // macOS 上 Qt::CTRL 是 Command 键,物理 Ctrl 是 META(和 km_control.cpp 一样)。
+#if defined(Q_OS_MACOS)
+        const int ctrl = Qt::META;
+#else
+        const int ctrl = Qt::CTRL;
+#endif
+        shortcut(QKeySequence(Qt::Key_H), [purchases, settings_panel] {
+            settings_panel->setOpen(false);
+            purchases->toggleRemote();
+        });
+        shortcut(QKeySequence(Qt::Key_O), [purchases, settings_panel] {
+            settings_panel->setOpen(false);
+            purchases->toggleSupply(rm_terminal::Caliber::Small);
+        });
+        shortcut(QKeySequence(Qt::Key_I), [purchases, settings_panel] {
+            settings_panel->setOpen(false);
+            purchases->toggleSupply(rm_terminal::Caliber::Large);
+        });
+        shortcut(QKeySequence(ctrl | Qt::Key_1), [purchases] { purchases->chooseRemote(0); });
+        shortcut(QKeySequence(ctrl | Qt::Key_2), [purchases] { purchases->chooseRemote(1); });
+        shortcut(QKeySequence(ctrl | Qt::Key_3), [purchases] { purchases->chooseRemote(2); });
+        shortcut(QKeySequence(Qt::Key_N), [purchases] { purchases->no(); });
+
         revive_popup = new rm_terminal::RevivePopup(&dashboard);
         dashboard.setEliminatedOverlayReplaced(true);
         revive_popup->setActions([self_commands] { self_commands->confirmRevive(); },
                                  [self_commands] { self_commands->payRevive(); });
-        auto* revive_key = new QShortcut(QKeySequence(Qt::Key_Y), &dashboard);
-        revive_key->setContext(Qt::ApplicationShortcut);
-        QObject::connect(revive_key, &QShortcut::activated, self_commands,
-                         [self_commands] { self_commands->confirmRevive(); });
+        // Y:兑换确认框开着时是「确定」,否则是免费复活。
+        shortcut(QKeySequence(Qt::Key_Y), [self_commands, purchases] {
+            if (!purchases->yes()) self_commands->confirmRevive();
+        });
+        // F1:花金币立即复活,照官方选手端(手册第 9 页)。活着时什么都不发。
+        shortcut(QKeySequence(Qt::Key_F1), [self_commands] { self_commands->payRevive(); });
     }
     // 键鼠控制只在实况下有:回放没有链路,录像里也没有这台电脑的键盘。
     std::unique_ptr<rm_terminal::KmCapture> keyboard_mouse;
+    // 键鼠控制暂停的原因:阵亡(点复活框)或开着补弹面板(点数量)。状态条和日志用。
+    QString km_pause_reason;
     if (self_commands && !replay) {
         keyboard_mouse = std::make_unique<rm_terminal::KmCapture>(&dashboard);
         rm_terminal::KmCapture* km = keyboard_mouse.get();
         km->setSender(send);
+        km->setPassthroughKeys({Qt::Key_H, Qt::Key_O, Qt::Key_I, Qt::Key_P, Qt::Key_Y, Qt::Key_N, Qt::Key_1,
+                                Qt::Key_2, Qt::Key_3, Qt::Key_F1, Qt::Key_Tab, Qt::Key_Backtab, Qt::Key_QuoteLeft,
+                                Qt::Key_AsciiTilde});
         dashboard.setKeyboardMouseToggle([km] { km->toggle(); });
         auto* toggle_key = new QShortcut(QKeySequence(Qt::Key_F9), &dashboard);
         toggle_key->setContext(Qt::ApplicationShortcut);
@@ -727,17 +799,151 @@ int main(int argc, char* argv[]) {
                                  active ? QStringLiteral("键鼠控制中（Esc 退出）") : QString());
                          });
         QObject::connect(km, &rm_terminal::KmCapture::suspendedChanged, &dashboard,
-                         [km, &dashboard](bool paused) {
+                         [km, &dashboard, &km_pause_reason](bool paused) {
+                             const bool died = km_pause_reason == QStringLiteral("阵亡");
                              rm_terminal::StructuredLog::write(
                                  rm_terminal::LogLevel::info, QStringLiteral("km_capture"),
                                  {QStringLiteral("state=%1").arg(paused ? "paused" : "resumed"),
-                                  QStringLiteral("reason=%1").arg(paused ? "阵亡" : "复活"),
+                                  QStringLiteral("reason=%1")
+                                      .arg(paused ? km_pause_reason
+                                           : died ? QStringLiteral("复活")
+                                                  : QStringLiteral("关掉") + km_pause_reason),
                                   QStringLiteral("frames=%1").arg(km->framesSent())});
                              dashboard.setKeyboardMouseStatus(
-                                 paused ? QStringLiteral("键鼠控制暂停（阵亡，复活后自动继续）")
-                                        : QStringLiteral("键鼠控制中（Esc 退出）"));
+                                 !paused ? QStringLiteral("键鼠控制中（Esc 退出）")
+                                 : died  ? QStringLiteral("键鼠控制暂停（阵亡，复活后自动继续）")
+                                         : QStringLiteral("键鼠控制暂停（%1，关掉后自动继续）").arg(km_pause_reason));
                          });
     }
+    // 阵亡、开着补弹面板或 P 设置面板时暂停键鼠控制、放开鼠标,复活框和面板才点得到;之后自动接着控制。
+    bool self_dead = false;
+    const auto pause_keyboard_mouse = [&keyboard_mouse, &km_pause_reason, &self_dead, purchases, settings_panel] {
+        if (!keyboard_mouse) return;
+        const bool supply = purchases && purchases->supplyOpen();
+        const bool settings = settings_panel->isOpen();
+        if (self_dead) km_pause_reason = QStringLiteral("阵亡");
+        else if (supply) km_pause_reason = QStringLiteral("补弹面板");
+        else if (settings) km_pause_reason = QStringLiteral("设置面板");
+        keyboard_mouse->setSuspended(self_dead || supply || settings);
+    };
+    if (purchases)
+        QObject::connect(purchases, &rm_terminal::PurchaseFlow::supplyOpenChanged, &dashboard,
+                         [&pause_keyboard_mouse](bool) { pause_keyboard_mouse(); });
+
+    // 按住的键,照官方选手端:按住 Tab 看双方机器人(手册第 19 页),按住 ~ 看伤害和模块(第 20 页),
+    // 步兵长按 F 一秒开能量机关(第 12 页)。F 同时照常发给车:队里的程序一般是短按 F 触发。
+    auto* team_panel = new rm_terminal::TeamPanel(&dashboard);
+    auto* injury_panel = new rm_terminal::InjuryPanel(&dashboard);
+    auto* hold_keys = new rm_terminal::HoldKeyFilter(&app);
+    app.installEventFilter(hold_keys);
+    rm_terminal::RuneKey rune_key;
+    QTimer rune_timer;
+    rune_timer.setInterval(40);
+    const auto rune_step = [&rune_key, &rune_timer, &dashboard, self_commands] {
+        const rm_terminal::MonotonicMs now = rm_terminal::monotonic_now();
+        if (self_commands && rune_key.due(now)) {
+            const bool ok = self_commands->openRune();
+            rune_key.sent(ok, now);
+            rm_terminal::StructuredLog::write(rm_terminal::LogLevel::info, QStringLiteral("rune_key"),
+                                              {QStringLiteral("state=%1").arg(ok ? "sent" : "not_sent")});
+        }
+        const rm_terminal::RuneKey::Display shown = rune_key.display(now);
+        dashboard.setRuneEntry(shown.visible ? shown.text : QString(), shown.lit, shown.progress, shown.tooltip);
+        if (!rune_key.holding()) rune_timer.stop();
+    };
+    QObject::connect(&rune_timer, &QTimer::timeout, &dashboard, rune_step);
+    const auto rune_hold = [&rune_key, &rune_timer, &rune_step](bool down) {
+        if (down) {
+            rune_key.press(rm_terminal::monotonic_now());
+            if (rune_key.holding()) rune_timer.start();
+        } else {
+            rune_key.release();
+        }
+        rune_step();
+    };
+    QObject::connect(hold_keys, &rm_terminal::HoldKeyFilter::runeKeyChanged, &dashboard, rune_hold);
+    dashboard.setRuneEntryHold(rune_hold);
+    QObject::connect(hold_keys, &rm_terminal::HoldKeyFilter::tabChanged, &dashboard, [team_panel](bool down) {
+        team_panel->setHeld(down);
+        rm_terminal::StructuredLog::write(rm_terminal::LogLevel::info, QStringLiteral("hold_panel"),
+                                          {QStringLiteral("panel=tab"), QStringLiteral("shown=%1").arg(down ? 1 : 0)});
+    });
+    QObject::connect(hold_keys, &rm_terminal::HoldKeyFilter::tildeChanged, &dashboard, [injury_panel](bool down) {
+        injury_panel->setHeld(down);
+        rm_terminal::StructuredLog::write(rm_terminal::LogLevel::info, QStringLiteral("hold_panel"),
+                                          {QStringLiteral("panel=tilde"), QStringLiteral("shown=%1").arg(down ? 1 : 0)});
+    });
+    if (keyboard_mouse) {
+        // 键鼠控制接管时 F 发给车,按键事件到不了上面的过滤器,由接管那边报 F 按下/松开。
+        QObject::connect(keyboard_mouse.get(), &rm_terminal::KmCapture::keyChanged, &dashboard,
+                         [&rune_hold](int key, bool down) {
+                             if (key == Qt::Key_F) rune_hold(down);
+                         });
+        // 接管开始、结束、暂停的那一下,F 的松开可能落在另一边:当作全松开,免得没按着也开了能量机关。
+        const auto release_holds = [hold_keys, &rune_key, &rune_step] {
+            hold_keys->releaseAll();
+            rune_key.release();
+            rune_step();
+        };
+        QObject::connect(keyboard_mouse.get(), &rm_terminal::KmCapture::activeChanged, &dashboard,
+                         [release_holds](bool, const QString&) { release_holds(); });
+        QObject::connect(keyboard_mouse.get(), &rm_terminal::KmCapture::suspendedChanged, &dashboard,
+                         [release_holds](bool) { release_holds(); });
+    }
+    QObject::connect(settings_panel, &rm_terminal::SettingsPanel::openChanged, &dashboard,
+                     [&pause_keyboard_mouse](bool) { pause_keyboard_mouse(); });
+    auto* settings_key = new QShortcut(QKeySequence(Qt::Key_P), &dashboard);
+    settings_key->setContext(Qt::ApplicationShortcut);
+    QObject::connect(settings_key, &QShortcut::activated, &dashboard, [settings_panel, purchases] {
+        if (purchases && !settings_panel->isOpen()) purchases->closeAll();
+        settings_panel->toggle();
+    });
+    const auto apply_settings = [speech, &dashboard, &keyboard_mouse](const rm_terminal::TerminalSettings& settings) {
+        speech->setVolume(settings.volume / 100.0);
+        dashboard.setVideoRotated(settings.video_reversed);
+        if (keyboard_mouse) keyboard_mouse->setSensitivity(rm_terminal::sensitivity_scale(settings.sensitivity));
+    };
+    apply_settings(terminal_settings);
+    // 拖滑块时每一格都会改一次,停手 0.4 秒再存盘。
+    QTimer settings_save;
+    settings_save.setSingleShot(true);
+    settings_save.setInterval(400);
+    QObject::connect(&settings_save, &QTimer::timeout, &app, [&settings_path, &terminal_settings] {
+        QString error;
+        if (!rm_terminal::save_terminal_settings(settings_path, terminal_settings, &error))
+            rm_terminal::StructuredLog::write(rm_terminal::LogLevel::warning, QStringLiteral("terminal_settings"),
+                                              {QStringLiteral("state=save_failed"), QStringLiteral("error=%1").arg(error)});
+    });
+    const auto log_settings = [](const QString& what, const rm_terminal::TerminalSettings& settings) {
+        rm_terminal::StructuredLog::write(
+            rm_terminal::LogLevel::info, QStringLiteral("terminal_settings"),
+            {QStringLiteral("change=%1").arg(what), QStringLiteral("sensitivity=%1").arg(settings.sensitivity),
+             QStringLiteral("volume=%1").arg(settings.volume),
+             QStringLiteral("video_reversed=%1").arg(settings.video_reversed ? 1 : 0)});
+    };
+    settings_panel->setActions(
+        [&terminal_settings, &apply_settings, &settings_save, &log_settings](const rm_terminal::TerminalSettings& settings) {
+            terminal_settings = settings;
+            apply_settings(settings);
+            settings_save.start();
+            log_settings(QStringLiteral("set"), settings);
+        },
+        [self_commands](std::optional<std::uint32_t> shooter, std::optional<std::uint32_t> chassis) {
+            if (self_commands) self_commands->choosePerformance(shooter, chassis);
+        },
+        [&dashboard](bool full) {
+            if (full) dashboard.showFullScreen();
+            else dashboard.showNormal();
+            rm_terminal::StructuredLog::write(rm_terminal::LogLevel::info, QStringLiteral("display"),
+                                              {QStringLiteral("state=%1").arg(full ? "fullscreen" : "window")});
+        },
+        [&terminal_settings, &apply_settings, &settings_save, &log_settings, settings_panel] {
+            terminal_settings = rm_terminal::TerminalSettings{};
+            settings_panel->setSettings(terminal_settings);
+            apply_settings(terminal_settings);
+            settings_save.start();
+            log_settings(QStringLiteral("reset"), terminal_settings);
+        });
 
     if (fullscreen) dashboard.showFullScreen();
     else dashboard.show();
@@ -805,10 +1011,12 @@ int main(int argc, char* argv[]) {
     rm_terminal::MonotonicMs logged_sentry_result_at = -1;
     std::optional<std::pair<std::uint32_t, std::uint32_t>> logged_dart;
     rm_terminal::MonotonicMs logged_mark_at = -1;
+    // 上一帧的比赛阶段:进入自检阶段的那一下要提醒没选性能体系。
+    std::optional<std::uint32_t> last_stage;
     // 本车的经济/发弹量/阵亡、能量机关、性能体系,变了才写一行:验收脚本靠它看
     // 兑换、复活、开能量机关、选性能体系有没有被服务器执行,复盘也看得到。
     struct SelfLog {
-        QString supply, rune, performance;
+        QString supply, rune, performance, exchange, purchase;
     } self_log;
     QTimer freshness_timer;
     QObject::connect(&freshness_timer, &QTimer::timeout,
@@ -817,7 +1025,8 @@ int main(int argc, char* argv[]) {
                       &match_alerts, &alert_voice, &alert_voice_on, assembly, dart, sentry, &controller,
                       &arm_rate, &seat_matched, &logged_event_at, &logged_sentry_result_at,
                       &logged_dart, &logged_mark_at, self_commands, revive_popup, &keyboard_mouse,
-                      &self_log]() {
+                      &self_log, purchases, &self_dead, &pause_keyboard_mouse, settings_panel, seat_role,
+                      &performance_phrase, &last_stage, &rune_key, &rune_step, team_panel, injury_panel]() {
         // One clock read per tick, shared by the snapshot and the mode machine:
         // two reads would hand the machine an instant the snapshot never saw.
         const rm_terminal::MonotonicMs now = rm_terminal::monotonic_now();
@@ -895,13 +1104,15 @@ int main(int argc, char* argv[]) {
             sentry->setLinkUp(link_up);
             sentry->tick(now);
         }
+        bool performance_untouched = false;
+        QString video_status;
         if (self_commands) {
             const rm_terminal::SelfCommandView view = rm_terminal::self_command_view(snapshot);
+            rune_key.update(view, now);
+            rune_step();
             self_commands->setView(view);
             self_commands->setLinkUp(link_up);
-            self_commands->setRuneBadge(dashboard.runeBadge());
             self_commands->tick(now);
-            dashboard.setPaneHeader(rm_terminal::PaneId::SelfCommands, self_commands->headerHtml());
             const auto text = [](const auto& value) {
                 return value ? QString::number(*value) : QStringLiteral("--");
             };
@@ -925,15 +1136,48 @@ int main(int argc, char* argv[]) {
             log_change(self_log.performance,
                        QStringLiteral("shooter=%1 chassis=%2").arg(text(view.shooter), text(view.chassis)),
                        "performance");
+            // 兑换的前提(兑换点、发射机构)和兑换到没到账:验收脚本和复盘看终端判断得对不对。
+            log_change(self_log.exchange,
+                       QStringLiteral("point=%1 shooter=%2 remote_ammo=%3 remote_heal=%4")
+                           .arg(flag(view.at_exchange_point), flag(view.shooter_online),
+                                flag(view.can_remote_ammo), flag(view.can_remote_heal)),
+                       "exchange_state");
+            self_dead = view.dead.value_or(false);
+            if (purchases) {
+                purchases->update(view, link_up, now);
+                self_commands->setPurchaseText(purchases->statusText(), purchases->statusProblem());
+                const QString result = purchases->statusText();
+                if (!result.isEmpty()) log_change(self_log.purchase, QStringLiteral("text=%1").arg(result), "purchase");
+            }
+            // 性能体系(只有步兵):准备到倒计时阶段还是默认,比分上方一直挂提醒;进入 15 秒自检
+            // 阶段时还没选,再弹一次横幅并念一句。终端分不出「没选」和「在官方选手端选了默认」,
+            // 所以提醒写的是「还是默认」。
+            performance_untouched = view.infantry && !self_commands->performanceChosen() &&
+                                    self_commands->shownShooter().value_or(1) == 1 &&
+                                    self_commands->shownChassis().value_or(1) == 1;
+            const bool choosing = view.stage && *view.stage >= 1 && *view.stage <= 3;
+            dashboard.setPreMatchReminder(
+                choosing && performance_untouched
+                    ? QStringLiteral("性能体系还是默认（血量优先 + 冷却优先）· 按 P 修改，开赛就锁定")
+                    : QString());
+            if (performance_untouched && view.stage == std::optional<std::uint32_t>(2) && last_stage != view.stage) {
+                dashboard.showAlert(QStringLiteral("还没选性能体系：按 P 选，开赛就锁定"),
+                                    rm_terminal::AlertLevel::Warning, now);
+                rm_terminal::StructuredLog::write(rm_terminal::LogLevel::info, QStringLiteral("alert"),
+                                                  {QStringLiteral("kind=performance_default"),
+                                                   QStringLiteral("level=warning")});
+                if (!replay && alert_voice_on) reminders.announce(alert_voice.pathFor(performance_phrase));
+            }
+            last_stage = view.stage;
             if (revive_popup) {
+                revive_popup->setWindowActive(dashboard.isActiveWindow());
                 revive_popup->setLinkUp(link_up);
                 revive_popup->setStatus(self_commands->reviveEchoText());
                 revive_popup->setView(view);
             }
             if (keyboard_mouse) {
                 keyboard_mouse->setLinkUp(link_up);
-                // 阵亡就暂停键鼠控制、放开鼠标,复活框才点得到;复活后自动接着控制。
-                keyboard_mouse->setSuspended(view.dead.value_or(false));
+                pause_keyboard_mouse();
                 QStringList held;
                 const QString keys = rm_terminal::km_keys_text(keyboard_mouse->keysDown());
                 if (!keys.isEmpty()) held << keys;
@@ -971,7 +1215,65 @@ int main(int argc, char* argv[]) {
             inputs.speech_hint = speech->unavailableReason();
             dashboard.setLinkReport(inputs.links);
             dashboard.setSelfCheck(rm_terminal::build_self_check(inputs));
+            video_status = inputs.links.video.detail.isEmpty()
+                               ? rm_terminal::link_level_name(inputs.links.video.level)
+                               : inputs.links.video.detail;
         }
+        // P 设置面板每帧刷新:登录、性能设置、全屏与否、图传状态。
+        rm_terminal::SettingsView settings_view;
+        settings_view.seat = rm_terminal::self_robot_label(cfg.self_robot_id);
+        if (replay) {
+            settings_view.login = QStringLiteral("回放录像，不连服务器");
+        } else if (!link_up) {
+            settings_view.login = QStringLiteral("没连上裁判系统服务器");
+            settings_view.login_problem = true;
+        } else if (seat_matched == std::optional<bool>(false)) {
+            settings_view.login = QStringLiteral("服务器报的编号和开机选的不一样，席位选错了");
+            settings_view.login_problem = true;
+        } else if (seat_matched == std::optional<bool>(true)) {
+            settings_view.login = QStringLiteral("已登录 · 服务器核对过编号");
+        } else {
+            settings_view.login = QStringLiteral("已连上，等服务器核对编号");
+        }
+        const auto& stage_field = snapshot.game.current_stage;
+        if (stage_field.quality == rm_terminal::Quality::Valid) settings_view.stage = stage_field.value;
+        settings_view.has_performance = self_commands && seat_role == rm_terminal::Role::Infantry;
+        if (!settings_view.has_performance) {
+            settings_view.performance_note = seat_role == rm_terminal::Role::Hero
+                                                 ? QStringLiteral("重装没有性能体系")
+                                                 : QStringLiteral("这个席位没有性能体系");
+        } else {
+            settings_view.performance_open = self_commands->performanceOpen();
+            settings_view.shooter = self_commands->shownShooter();
+            settings_view.chassis = self_commands->shownChassis();
+            const auto stage = settings_view.stage;
+            if (!stage) {
+                settings_view.performance_note = QStringLiteral("还没收到比赛阶段");
+            } else if (*stage == 0) {
+                settings_view.performance_note = QStringLiteral("准备阶段开始后才能选");
+            } else if (*stage <= 3) {
+                settings_view.performance_warn = performance_untouched;
+                settings_view.performance_note = performance_untouched
+                                                     ? QStringLiteral("还是默认，开赛就锁定成血量优先 + 冷却优先")
+                                                     : QStringLiteral("准备、自检阶段能改，开赛锁定");
+                if (const QString echo = self_commands->performanceEcho(); !echo.isEmpty())
+                    settings_view.performance_note += QStringLiteral(" · ") + echo;
+            } else {
+                settings_view.performance_note = QStringLiteral("比赛中已锁定");
+            }
+        }
+        settings_view.fullscreen = dashboard.isFullScreen();
+        settings_view.volume_adjustable = speech->volumeAdjustable();
+        settings_view.video = replay ? QStringLiteral("回放录像") : video_status;
+        settings_panel->setView(settings_view);
+        // 上面的 update()、setSelfCheck() 会把自检页、比赛弹窗提到最上面;操作手自己按键打开的框
+        // 要盖在它们上面才点得到。放在这一拍最后。
+        if (purchases) purchases->raiseOpen();
+        if (settings_panel->isOpen()) settings_panel->raise();
+        team_panel->setView(rm_terminal::team_view(snapshot));
+        injury_panel->setView(rm_terminal::injury_view(snapshot));
+        if (team_panel->isVisible()) team_panel->raise();
+        if (injury_panel->isVisible()) injury_panel->raise();
         // 同一个 now 和同一份快照喂给提醒:另取一次时钟会让调度看到一个快照
         // 从未见过的时刻,而两遍之间的间隔正是按这个时刻算的。
         reminders.observe(rm_terminal::reminder_inputs(snapshot, intake.connected()), now);

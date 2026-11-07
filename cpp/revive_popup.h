@@ -23,6 +23,8 @@ public:
     void setActions(std::function<void()> confirm_free, std::function<void()> pay);
     // 最近一条复活指令到哪一步了(等待回显/已确认/未确认),空串不显示。
     void setStatus(const QString& status);
+    // 终端窗口不在前台时 Y 键到不了终端(会被别的窗口或输入法拿走),框里写一句先点一下窗口。
+    void setWindowActive(bool active);
 
     QString titleText() const;
     QSize sizeHint() const override;
@@ -37,6 +39,7 @@ private:
 
     SelfCommandView view_;
     bool link_up_ = false;
+    bool window_active_ = true;
     QString status_;
     std::function<void()> confirm_free_;
     std::function<void()> pay_;
