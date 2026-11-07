@@ -15,6 +15,7 @@ namespace {
 constexpr std::uint32_t kBaseMaxHp = 10000;
 constexpr std::uint32_t kOutpostMaxHp = 1000;
 constexpr std::uint32_t kUnknownCode = 255;  // 认不出的编码,交给转换层按无效拒绝
+constexpr std::uint32_t kBuffExchangeAmmo = 6;  // Buff 类型 6:可兑换允许发弹量(协议 2.2.14)
 
 bool finite(double value) { return std::isfinite(value); }
 
@@ -115,7 +116,7 @@ const std::vector<std::string>& Decoder::topics() {
         "Event", "RobotStaticStatus", "RobotDynamicStatus", "RobotModuleStatus", "RobotPosition",
         "RobotRespawnStatus", "RadarInfoToClient", "RuneStatusSync", "TechCoreMotionStateSync",
         "DartSelectTargetStatusSync", "SentryStatusSync", "SentryCtrlResult", "RobotPathPlanInfo",
-        "MapClickInfo", "RobotPerformanceSelectionSync"};
+        "MapClickInfo", "RobotPerformanceSelectionSync", "Buff", "RobotInjuryStat"};
     return names;
 }
 
@@ -356,6 +357,32 @@ bool Decoder::accept(const std::string& topic, const std::string& bytes, Monoton
         if (x.has_can_free_respawn()) p.can_free = x.can_free_respawn();
         if (x.has_gold_cost_for_respawn()) p.gold_cost = x.gold_cost_for_respawn();
         if (x.has_can_pay_for_respawn()) p.can_pay = x.can_pay_for_respawn();
+        return store_.apply(p, self_, now);
+    }
+    if (topic == "RobotInjuryStat") {
+        rm::RobotInjuryStat x;
+        if (!parse(x, bytes)) return false;
+        inbound::RobotInjury p;
+        if (x.has_total_damage()) p.total = x.total_damage();
+        if (x.has_collision_damage()) p.collision = x.collision_damage();
+        if (x.has_small_projectile_damage()) p.small_projectile = x.small_projectile_damage();
+        if (x.has_large_projectile_damage()) p.large_projectile = x.large_projectile_damage();
+        if (x.has_dart_splash_damage()) p.dart_splash = x.dart_splash_damage();
+        if (x.has_module_offline_damage()) p.module_offline = x.module_offline_damage();
+        if (x.has_offline_damage()) p.offline = x.offline_damage();
+        if (x.has_penalty_damage()) p.penalty = x.penalty_damage();
+        if (x.has_server_kill_damage()) p.server_kill = x.server_kill_damage();
+        if (x.has_killer_id()) p.killer_id = x.killer_id();
+        return store_.apply(p, self_, now);
+    }
+    if (topic == "Buff") {
+        rm::Buff x;
+        if (!parse(x, bytes) || !x.has_buff_type()) return false;
+        // 别的车的增益、终端用不上的增益类型都是合法消息,收下不记。
+        if (x.has_robot_id() && x.robot_id() != 0 && x.robot_id() != self_.value) return true;
+        if (x.buff_type() != kBuffExchangeAmmo) return true;
+        inbound::RobotBuff p;
+        p.can_exchange_ammo = true;
         return store_.apply(p, self_, now);
     }
     if (topic == "RadarInfoToClient") {

@@ -171,5 +171,24 @@ bool convert(SentryFields<Field>& state, const inbound::SentryStatus& patch, Mon
     MERGE(powered, any_value);
     return ok;
 }
+bool convert(BuffFields<Field>& state, const inbound::RobotBuff& patch, MonotonicMs now) {
+    bool ok = true;
+    MERGE(can_exchange_ammo, any_value);
+    return ok;
+}
+bool convert(InjuryFields<Field>& state, const inbound::RobotInjury& patch, MonotonicMs now) {
+    bool ok = true;
+    MERGE(total, any_value);
+    MERGE(collision, any_value);
+    MERGE(small_projectile, any_value);
+    MERGE(large_projectile, any_value);
+    MERGE(dart_splash, any_value);
+    MERGE(module_offline, any_value);
+    MERGE(offline, any_value);
+    MERGE(penalty, any_value);
+    MERGE(server_kill, any_value);
+    MERGE(killer_id, any_value);
+    return ok;
+}
 #undef MERGE
 }

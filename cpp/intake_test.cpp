@@ -339,6 +339,35 @@ void self_robot_messages() {
     require(s.robots.size() == 1, "everything lands on the seat");
 }
 
+void buff_six_marks_the_exchange_point() {
+    Store store(500);
+    Decoder decoder(store, RobotId{3});
+    rm::Buff attack;
+    attack.set_robot_id(3);
+    attack.set_buff_type(1);
+    require(decoder.accept("Buff", attack.SerializeAsString(), 1), "an attack buff is a valid message");
+    rm::Buff teammate;
+    teammate.set_robot_id(4);
+    teammate.set_buff_type(6);
+    require(decoder.accept("Buff", teammate.SerializeAsString(), 2), "a teammate's buff is a valid message");
+    require(store.snapshot(2).robots.empty(), "only the seat's own type-6 buff is kept");
+    rm::Buff exchange;
+    exchange.set_robot_id(3);
+    exchange.set_buff_type(6);
+    require(decoder.accept("Buff", exchange.SerializeAsString(), 3), "own buff 6");
+    auto s = store.snapshot(3);
+    const auto& point = s.robots.at(RobotId{3}).buffs.can_exchange_ammo;
+    require(point.value == true && point.freshness == Freshness::Fresh, "standing on an exchange point");
+    s = store.snapshot(503);
+    require(s.robots.at(RobotId{3}).buffs.can_exchange_ammo.freshness == Freshness::Stale,
+            "no buff for a whole stale window: the robot left the point");
+    rm::Buff untyped;
+    untyped.set_robot_id(3);
+    require(!decoder.accept("Buff", untyped.SerializeAsString(), 504), "a buff without a type is rejected");
+    require(std::find(Decoder::topics().begin(), Decoder::topics().end(), "Buff") != Decoder::topics().end(),
+            "terminal subscribes Buff");
+}
+
 void performance_selection_sync() {
     Store store(500);
     Decoder decoder(store, RobotId{3});
@@ -442,6 +471,7 @@ int main() {
         radar_positions_in_both_encodings();
         sentry_position_only_for_own_sentry();
         self_robot_messages();
+        buff_six_marks_the_exchange_point();
         performance_selection_sync();
         commander_and_hero_messages();
         rejects_bad_input_without_touching_state();

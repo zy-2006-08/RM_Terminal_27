@@ -85,6 +85,7 @@ void Store::reset() {
 }
 void Store::resetRound() {
     state_.kills = KillTally{};
+    state_.dart_hits = DartTally{};
     enemy_fixed_dart_hits_ = 0;
     blind_until_.reset();
     blind_target_ = 0;
@@ -152,6 +153,10 @@ bool Store::apply(const inbound::Event& patch, MonotonicMs now) {
         if (*event.killer_faction == kRed) ++state_.kills.red;
         else ++state_.kills.blue;
     }
+    if (event.dart_hitter) {
+        if (*event.dart_hitter == kRed) ++state_.dart_hits.red;
+        else ++state_.dart_hits.blue;
+    }
     // 对方飞镖命中:按规则推算我方操作界面被遮挡到什么时候。连续命中时间叠加。
     if (event.dart_hitter && *event.dart_hitter != self) {
         const MonotonicMs duration = dart_blind_ms(event.dart_target, enemy_fixed_dart_hits_);
@@ -198,6 +203,14 @@ bool Store::apply(const inbound::RobotPosition& patch, std::optional<RobotId> so
 bool Store::apply(const inbound::RobotRespawnStatus& patch, std::optional<RobotId> source, MonotonicMs now) {
     std::lock_guard<std::mutex> lock(mutex_);
     return valid_source(source) && advance(now) && convert(state_.robots[*source].respawn, patch, now);
+}
+bool Store::apply(const inbound::RobotBuff& patch, std::optional<RobotId> source, MonotonicMs now) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return valid_source(source) && advance(now) && convert(state_.robots[*source].buffs, patch, now);
+}
+bool Store::apply(const inbound::RobotInjury& patch, std::optional<RobotId> source, MonotonicMs now) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return valid_source(source) && advance(now) && convert(state_.robots[*source].injury, patch, now);
 }
 bool Store::apply(const inbound::RadarSet& patch, MonotonicMs now) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -311,6 +324,8 @@ Snapshot Store::snapshot(MonotonicMs now) const {
         age(robot.modules, now, threshold_);
         age(robot.position, now, threshold_);
         age(robot.respawn, now, threshold_);
+        age(robot.buffs, now, threshold_);
+        age(robot.injury, now, threshold_);
     }
     age(copy.tech_core, now, threshold_);
     age(copy.dart, now, threshold_);

@@ -126,6 +126,20 @@ template<template<class> class F> struct RespawnFields {
     auto fields() { return std::tie(pending, total_progress, current_progress, can_free,
         gold_cost, can_pay); }
 };
+// Buff(2.2.14),只有自机。获得增益时发一次,之后 1Hz 一直发到失去增益;失去时服务器不另发,
+// 所以「现在还有没有」看最后一次收到是不是还在时效窗口里(Freshness)。终端只用类型 6「可兑换
+// 允许发弹量」:机器人站在补给区、己方基地增益点或前哨站增益点上(规则手册 5.4.2、5.6.4)。
+template<template<class> class F> struct BuffFields {
+    F<bool> can_exchange_ammo;
+    auto fields() { return std::tie(can_exchange_ammo); }
+};
+// RobotInjuryStat(2.2.8),1Hz,只有自机:这一条命里各种原因扣了多少血,复活后清零。
+template<template<class> class F> struct InjuryFields {
+    F<std::uint32_t> total, collision, small_projectile, large_projectile, dart_splash, module_offline,
+        offline, penalty, server_kill, killer_id;
+    auto fields() { return std::tie(total, collision, small_projectile, large_projectile, dart_splash,
+        module_offline, offline, penalty, server_kill, killer_id); }
+};
 // 我方操作界面被飞镖遮挡的状态。2027 协议没有这条消息:由 Store 按 Event 9(飞镖命中)
 // 和规则手册 5.7.3 的时长在本机推算,每次取快照时现算,见 store.cpp。
 template<template<class> class F> struct BlindFields {
@@ -192,6 +206,8 @@ struct RobotState {
     ModuleFields<Field> modules;
     PositionFields<Field> position;
     RespawnFields<Field> respawn;
+    BuffFields<Field> buffs;
+    InjuryFields<Field> injury;
 };
 
 // One robot as the tactical map needs it. `position` keeps the full Field
@@ -224,6 +240,11 @@ struct RobotHealth {
 
 // Event 1 在本机累计的击杀数。终端中途启动时从 0 开始数,每局清零。
 struct KillTally {
+    std::uint32_t red = 0;
+    std::uint32_t blue = 0;
+};
+// Event 9 在本机累计的飞镖命中次数,按命中方记。和击杀数一样从终端打开时数起,每局清零。
+struct DartTally {
     std::uint32_t red = 0;
     std::uint32_t blue = 0;
 };
@@ -269,6 +290,7 @@ struct Snapshot {
     std::vector<RobotHealth> robot_health;
     std::map<RobotId, RobotState> robots;
     KillTally kills;
+    DartTally dart_hits;
     TechCoreFields<Field> tech_core;
     DartFields<Field> dart;
     SentryFields<Field> sentry;

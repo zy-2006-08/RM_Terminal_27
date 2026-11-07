@@ -15,5 +15,7 @@ bool convert(RespawnFields<Field>& state, const inbound::RobotRespawnStatus& pat
 bool convert(TechCoreFields<Field>& state, const inbound::TechCoreStatus& patch, MonotonicMs now);
 bool convert(DartFields<Field>& state, const inbound::DartStatus& patch, MonotonicMs now);
 bool convert(SentryFields<Field>& state, const inbound::SentryStatus& patch, MonotonicMs now);
+bool convert(BuffFields<Field>& state, const inbound::RobotBuff& patch, MonotonicMs now);
+bool convert(InjuryFields<Field>& state, const inbound::RobotInjury& patch, MonotonicMs now);
 
 }
