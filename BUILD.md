@@ -188,13 +188,21 @@ The window has two resident modes and switches between them by itself. Info mode
 shows the tactical map as the primary area with video as a thumbnail; video mode
 gives the video feed the window and hides the map.
 
-The switch is driven by the blind window, never by an operator. The 2027 protocol has
-no blind message: the terminal starts the window itself when Event 9 reports an
-enemy dart hit, with the rules-manual durations (§5.7.3: 10/5/3/2 s for the 1st–4th
-hit on the outpost or a fixed base target this round, 2 s after that; 10 s for every
-random-moving or terminal-moving hit; consecutive hits add up). While no window is
-open, the reading is as fresh as the server stream (`GameStatus`), because a dead
-stream could hide a hit:
+The switch is driven by the blind window, never by an operator. Protocol V1.0.0 has
+no blind or occlusion field (a full-text search finds none); the only related message
+is Event 9 (dart hit: which side hit, which target; protocol p.57). The terminal
+starts the window itself when Event 9 reports an enemy hit, using the durations in
+rules §5.7.3 (p.111): 10/5/3/2 s for the 1st–4th hit on the outpost, the fixed or the
+random-fixed base target; 10 s for a random-moving or terminal-moving hit.
+
+What the code assumes beyond that text, none of it checked against a real server:
+the 1st–4th count is shared by those three targets and resets each round; a hit
+while a window is open extends it (the rules state the stacking only in the
+moving-target paragraph); a fifth fixed hit, which 4 darts a round cannot produce,
+would get 2 s; and the hit side receives Event 9 when its occlusion starts.
+
+While no window is open, the reading is as fresh as the server stream
+(`GameStatus`), because a dead stream could hide a hit:
 
 - Blind asserted (fresh reading, value true) enters video mode immediately. Losing
   the picture late is worse than entering early, so there is no entry delay.
@@ -356,7 +364,8 @@ periods (`mqtt_keepalive_s`, default 5 s).
 The self-check page (`自检` button) lists 席位 (未核对 until `RobotStaticStatus`
 arrives, then 席位正确, or a red 席位选错 naming both seats), the four links, 录像
 and 语音提醒,
-each 正常 / 注意 / 异常 / 未启用, and says `可以上场` only when nothing is 异常. It
+each 正常 / 注意 / 异常 / 未启用, and its verdict only states the result: `全部正常`, or
+`有 N 项异常`; whether to go on is left to the team. It
 opens by itself when the match is not yet running (no match data, 赛外, 准备 or
 自检), closes when the countdown starts, and stays closed for the rest of that
 phase once the operator closes it. While it is open the ordinary popups give way.
@@ -483,7 +492,11 @@ pane dropped and its cells given to a neighbour; an old built-in `quiet` scheme 
 untouched (its users go back to standard) and kept as a custom scheme when edited. Infantry and
 hero used to show the video inside 本车; a saved layout without a video cell whose 本车 is at
 least 5 rows tall gets its bottom 2 rows as the video pane, unless the scheme lists `video` in
-`hidden` (the editor records it there when the video pane is removed). `cpp/ui_profile_store.*` saves to `AppConfigLocation/ui_profiles.json`
+`hidden` (the editor records it there when the video pane is removed). The 本车 pane
+(`self_commands`) itself has since been removed: its actions are official-client keys (H, O/I,
+P, F, Y/F1), so a saved layout loads with that pane dropped and its cells given to a neighbour,
+like `big_control`. `SelfCommandPane` still exists as the hidden object that sends those
+commands (rate limits, echoes). `cpp/ui_profile_store.*` saves to `AppConfigLocation/ui_profiles.json`
 with `QSaveFile` after every change; an unreadable file is left untouched, the
 terminal runs on defaults, and the first save renames it to `ui_profiles.bad-N.json`.
 Unknown pane names, alert kinds and roles are dropped on load, missing built-ins are

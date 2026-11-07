@@ -43,12 +43,12 @@ up to 1920×1080. Top bar 106 px.
   working copy. Drop on another pane's edge = insert (that pane gives up the room); drop on its
   middle = swap; an edge that cannot take it swaps too. A library pane that cannot squeeze in
   replaces the pane (which goes back to the library); a pane dropped on the library is removed;
-  a pane dropped in the middle of a neighbour it cannot swap with (e.g. the video under 本车)
+  a pane dropped in the middle of a neighbour it cannot swap with (e.g. the video under the ally roster)
   goes on the far side of it, both keeping their size. Preview while dragging: cyan = what happens on
   release, red = nothing fits (the toast names the pane's minimum size). Seam handles between
   panes resize both sides. Gear opens details beside the pane; cross removes (any pane, one must
   stay); undo bar + Ctrl+Z. The library is one scrolling column, caption above a shot of the pane
-  at its usual shape, only panes not on screen, with sample data. Card headers keep their text in
+  drawn 4 cells wide so every shot has the same width, only panes not on screen, with sample data. Card headers keep their text in
   the editor, moved left of the gear and cross.
 
 ## 6. Settings
