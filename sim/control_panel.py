@@ -234,6 +234,18 @@ def toggle_auto() -> None:
 tk.Checkbutton(robot, text="随机掉血(关掉后手动设的血量不再变化)",
                variable=auto_hp, command=toggle_auto).pack(pady=(0, 4))
 
+# 车在补给区/己方基地增益点/前哨站增益点上才能非远程兑换(规则 5.4.2),服务器这时发 Buff 类型 6。
+exchange_point = tk.BooleanVar(value=True)
+
+
+def toggle_point() -> None:
+    on = exchange_point.get()
+    act(f"车{'开进' if on else '开出'}兑换点", "point", "1" if on else "0")
+
+
+tk.Checkbutton(robot, text="车在兑换点(补给区等,关掉 = 开出去,只能远程兑换)",
+               variable=exchange_point, command=toggle_point).pack(pady=(0, 4))
+
 zone = tk.LabelFrame(root, text="测试注入 · 阵地")
 zone.pack(fill="x", padx=8, pady=6)
 
@@ -505,6 +517,8 @@ def on_message(_client, _userdata, message) -> None:
                          ("performance", "combat", "self_ammo", "rune", "rune_chances", "km")}
         if None in (state["self"]["performance"], state["self"]["combat"]):
             state["self"] = None
+        if "exchange_point" in sim and exchange_point.get() != sim["exchange_point"]:
+            exchange_point.set(sim["exchange_point"])
         if SELF_ROBOT_ID not in state["hp"]:
             state["hp"][SELF_ROBOT_ID] = tuple(sim["self_hp"])
     elif message.topic == T_ROBOT_RESPAWN:

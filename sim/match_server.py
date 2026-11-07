@@ -27,6 +27,8 @@ from sim.constants import (
     T_ASSEMBLY_COMMAND,
     T_COMMON_COMMAND,
     T_CUSTOM_CONTROL,
+    T_BUFF,
+    T_INJURY,
     T_DART_COMMAND,
     T_DART_STATUS,
     T_EVENT,
@@ -91,6 +93,7 @@ CTRL_BUY = 0x25              # param = 口径 x10000 + 发数,非远程兑换允
 CTRL_PAY_REVIVE = 0x26       # 金币兑换立即复活(无参数)
 CTRL_CARD = 0x27             # param = 机器人 ID(0=自机),模拟检测到场地交互卡
 CTRL_MARK = 0x28             # param = 标记类型(1攻击 2防御 3警戒),模拟指挥手发一个地图标记
+CTRL_EXCHANGE_POINT = 0x29   # param = 1 车开进兑换点(补给区/基地增益点/前哨站增益点), 0 开出去
 _CTRL_NAMES = {
     CTRL_BEGIN: "开赛",
     CTRL_HOLD: "暂停",
@@ -116,6 +119,7 @@ _CTRL_NAMES = {
     CTRL_BUY: "兑换允许发弹量",
     CTRL_PAY_REVIVE: "金币兑换立即复活",
     CTRL_CARD: "模拟检测到场地交互卡",
+    CTRL_EXCHANGE_POINT: "车开进/开出兑换点",
 }
 
 # 阵地顺序与 GameStatus 的四个字段一一对应,写死顺序是因为控制指令按序号寻址。
@@ -257,6 +261,11 @@ _ROBOT_CLASS_NAMES = {1: "重装", 3: "步兵", 4: "步兵", 6: "空中", 7: "�
 def _new_dart_state() -> dict:
     return {"used": 0, "open_at": -1.0, "close_at": -1.0, "cooldown_until": -1.0,
             "hits": 0, "fixed_hits": 0, "chances": set(), "last_hit": {}}
+
+
+def _new_injury() -> dict:
+    return {"collision": 0, "small": 0, "large": 0, "dart": 0, "module": 0, "offline": 0, "penalty": 0,
+            "server": 0}
 
 
 def _new_respawn_state() -> dict:
@@ -405,6 +414,15 @@ class SimulatedMatch:
             self.launcher_ready = True
             self.ammo = 0
         self.team_ammo_bought = {17: 0, 42: 0}
+        # 自机累计已发弹量(RobotDynamicStatus.total_projectiles_fired),每局清零。
+        self.fired_total = 0
+        # RobotInjuryStat(2.2.8):这一条命按原因累计的扣血,复活后清零。模拟器里飞镖以外的掉血都记成
+        # 17mm 弹丸(随机掉血、控制台改血量)。
+        self.injury = _new_injury()
+        self._pending_dart = 0
+        # 车站在能非远程兑换的地方(补给区、己方基地增益点、前哨站增益点,规则手册 5.4.2)时,
+        # 服务器 1Hz 发 Buff 类型 6。默认站在上面,方便直接试兑换;控制台的开关模拟开出去。
+        self.at_exchange_point = True
         self.red_score = 0
         self.blue_score = 0
         self._locked_winner: int | None = None
@@ -689,6 +707,9 @@ class SimulatedMatch:
         fraction = rules.PAY_REVIVE_HP_FRACTION if paid else rules.REVIVE_HP_FRACTION
         maximum = self.max_hp if robot_id == SELF_ROBOT_ID else self.other_max_hp[robot_id]
         self._write_hp(robot_id, max(1, rules.round_half_up(maximum * fraction)))
+        if robot_id == SELF_ROBOT_ID:
+            self.injury = _new_injury()
+            self._pending_dart = 0
         duration = rules.PAY_REVIVE_WEAK_SEC if paid else rules.REVIVE_INVINCIBLE_SEC
         state.update(dead=False, progress=0.0, total=0, weak=True,
                      weak_until=now + duration, invincible_until=now + duration,
@@ -847,6 +868,11 @@ class SimulatedMatch:
         me = self.match_elapsed()
         if me is not None and self.hp < self._hp_seen:
             self._combat_at = me
+            lost = self._hp_seen - self.hp
+            dart = min(lost, self._pending_dart)
+            self._pending_dart -= dart
+            self.injury["dart"] += dart
+            self.injury["small"] += lost - dart
         self._hp_seen = self.hp
 
     def select_performance(self, shooter: int | None, chassis: int | None) -> str | None:
@@ -1206,6 +1232,7 @@ class SimulatedMatch:
                         and not self.is_invincible(SELF_ROBOT_ID)):
                     applied = min(self.hp, int(self.max_hp * fraction))
                     self.hp -= applied
+                    self._pending_dart += applied
                     self._deal_damage(True, applied)
                     if self.hp == 0:
                         self._sync_respawn(SELF_ROBOT_ID)
@@ -1226,7 +1253,7 @@ class SimulatedMatch:
         return None
 
     def buy_ammo(self, caliber: int, rounds: int) -> str | None:
-        """非远程兑换允许发弹量；模拟器假定机器人此时位于增益点。"""
+        """非远程兑换允许发弹量(5.4.2)：车要站在补给区、己方基地增益点或前哨站增益点上。"""
         if caliber not in _PELLET_DAMAGE:
             return "口径必须是 17 或 42"
         if self.match_elapsed() is None:
@@ -1237,6 +1264,8 @@ class SimulatedMatch:
             return "未安装发射机构"
         if caliber != self.caliber:
             return f"该机器人使用 {self.caliber}mm 发射机构"
+        if not self.at_exchange_point:
+            return "未在兑换点"
         cost = rules.ammo_exchange_cost(caliber, rounds, remote=False)
         if cost is None:
             unit = rules.AMMO_EXCHANGE[(caliber, False)][0]
@@ -1295,6 +1324,7 @@ class SimulatedMatch:
             return "射击热量超限"
 
         self.ammo -= fired
+        self.fired_total += fired
         self._combat_at = self.match_elapsed()
         total = min(hp, damage)
         self.other_hp[target] = hp - total
@@ -1309,6 +1339,12 @@ class SimulatedMatch:
         if self.other_hp[target] == 0:
             self._register_kill(target, SELF_ROBOT_ID)
         return None
+
+    def shooter_modules(self) -> tuple[int, int]:
+        """RobotModuleStatus 的 17mm、42mm 测速模块(2.2.12,0 离线 1 在线):装着哪种发射机构亮哪个。"""
+        if not self.launcher_ready:
+            return 0, 0
+        return (1, 0) if self.caliber == 17 else (0, 1)
 
     def set_module(self) -> str | None:
         """重装安装模块化 42mm 发射机构：600 HP、Q0=300、冷却 100/s。"""
@@ -1710,6 +1746,9 @@ class SimulatedMatch:
         self._heat_last = self.elapsed
         self.ammo = rules.SENTRY_INITIAL_AMMO if _SELF_LOCAL_ID == 7 else 0
         self.team_ammo_bought = {17: 0, 42: 0}
+        self.fired_total = 0
+        self.injury = _new_injury()
+        self._pending_dart = 0
         self.respawn_state = {
             robot_id: _new_respawn_state() for robot_id in self.respawn_state
         }
@@ -1990,6 +2029,11 @@ def main() -> int:
         match.rune_until = me + _RUNE_ACTIVATING_SEC
         print("[server] 我方开始激活能量机关")
 
+    def send_buff() -> None:
+        """2.2.14:站在兑换点上时 1Hz 发 Buff 类型 6「可兑换允许发弹量」,离开后不再发。"""
+        if match.at_exchange_point:
+            _publish(client, T_BUFF, pb.Buff(robot_id=SELF_ROBOT_ID, buff_type=6))
+
     def send_mark(client: mqtt.Client, kind: int) -> None:
         """模拟指挥手发一个标记:标在敌方重装身上,所有己方车(含哨兵)都收得到。"""
         enemy_hero = 101 if _SELF_FACTION == _FACTION_RED else 1
@@ -2178,6 +2222,11 @@ def main() -> int:
                 send_mark(client, param)
             else:
                 print(f"[server] 非法标记类型 {param}", file=sys.stderr)
+        elif cmd == CTRL_EXCHANGE_POINT:
+            match.at_exchange_point = param != 0
+            print(f"[server] 车{'开进' if match.at_exchange_point else '开出'}兑换点")
+            # 获得增益时当场发一次(2.2.14),不等下一个 1 秒。
+            send_buff()
 
     match.apply_control = apply_control
 
@@ -2259,18 +2308,28 @@ def main() -> int:
             last_projectile_fire_rate=29.4 + .4 * math.sin(match.elapsed),
             current_buffer_energy=int(max(0, 60 - 25 * abs(math.sin(match.elapsed * 1.1)))),
             current_experience=match.level * 100, experience_for_upgrade=100,
-            total_projectiles_fired=sum(match.team_ammo_bought.values()), remaining_ammo=match.ammo,
+            total_projectiles_fired=match.fired_total, remaining_ammo=match.ammo,
             is_out_of_combat=match.out_of_combat(),
             out_of_combat_countdown=match.out_of_combat_countdown(),
             can_remote_heal=match._remote_check() is None,
             can_remote_ammo=match._remote_check() is None and match.launcher_ready,
         ))
 
+    def send_injury() -> None:
+        hurt = match.injury
+        _publish(client, T_INJURY, pb.RobotInjuryStat(
+            total_damage=sum(hurt.values()), collision_damage=hurt["collision"],
+            small_projectile_damage=hurt["small"], large_projectile_damage=hurt["large"],
+            dart_splash_damage=hurt["dart"], module_offline_damage=hurt["module"],
+            offline_damage=hurt["offline"], penalty_damage=hurt["penalty"],
+            server_kill_damage=hurt["server"], killer_id=0))
+
     def send_module() -> None:
         rng = match.rng
+        small, big = match.shooter_modules()
         _publish(client, T_ROBOT_MODULE, pb.RobotModuleStatus(
             power_manager=1, main_controller=1, armor=1,
-            small_shooter=1, big_shooter=0,
+            small_shooter=small, big_shooter=big,
             video_transmission=1,
             capacitor=1 if rng.random() > 0.1 else 0,
             uwb=1, rfid=1, light_strip=1,
@@ -2494,6 +2553,7 @@ def main() -> int:
             "combat": [match.out_of_combat(), match.out_of_combat_countdown()],
             "respawn": list(match.respawn_status()[:4]),
             "self_ammo": match.ammo,
+            "exchange_point": match.at_exchange_point,
             "km": match.km_summary(),
         }))
 
@@ -2502,6 +2562,8 @@ def main() -> int:
         threading.Thread(target=loop, args=(1 / 5, send_game_status), daemon=True),
         threading.Thread(target=loop, args=(1 / 10, send_dynamic), daemon=True),
         threading.Thread(target=loop, args=(1.0, send_module), daemon=True),
+        threading.Thread(target=loop, args=(1.0, send_buff), daemon=True),
+        threading.Thread(target=loop, args=(1.0, send_injury), daemon=True),
         threading.Thread(target=loop, args=(1.0, send_position), daemon=True),
         threading.Thread(target=loop, args=(1.0, send_global_unit), daemon=True),
         threading.Thread(target=loop, args=(1.0, send_logistics), daemon=True),

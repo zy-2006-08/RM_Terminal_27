@@ -107,11 +107,54 @@ assert m.match_elapsed() == 185.0 and m.rune_chances() == 1, "3 分钟后换大�
 advance(m, 150)
 assert m.rune_chances() == 3
 
+# 非远程兑换要站在兑换点上(5.4.2);远程兑换不用。
+m = at_match_second(30)
+m.launcher_ready = True
+unit = rules.AMMO_EXCHANGE[(m.caliber, False)][0]
+assert m.at_exchange_point, "模拟器默认车站在兑换点上"
+m.at_exchange_point = False
+assert m.buy_ammo(m.caliber, unit) == "未在兑换点"
+assert m.ammo == 0
+m._combat_at = None
+assert m.remote_buy_ammo(rules.AMMO_EXCHANGE[(m.caliber, True)][0]) is None, "远程兑换不看兑换点"
+m.at_exchange_point = True
+assert m.buy_ammo(m.caliber, unit) is None and m.ammo == unit
+
+# 测速模块(2.2.12):装着哪种发射机构亮哪个;没装都是 0。
+m = at_match_second(30)
+m.launcher_ready, m.caliber = True, 17
+assert m.shooter_modules() == (1, 0)
+m.caliber = 42
+assert m.shooter_modules() == (0, 1)
+m.launcher_ready = False
+assert m.shooter_modules() == (0, 0)
+
+# 累计已发弹量只算自机打出去的,兑换不算。
+m = at_match_second(30)
+m.launcher_ready, m.caliber = True, 17
+assert m.buy_ammo(17, 50) is None and m.fired_total == 0, "兑换不是发射"
+
+# 这一条命的受伤统计(2.2.8):飞镖算飞镖溅射,别的掉血算 17mm 弹丸;复活后清零。
+m = at_match_second(40)
+m._hp_seen = m.hp
+m._write_hp(SELF_ROBOT_ID, m.hp - 30)
+m.track_combat()
+assert m.injury["small"] == 30 and m.injury["dart"] == 0, m.injury
+m._pending_dart = 20
+m._write_hp(SELF_ROBOT_ID, m.hp - 20)
+m.track_combat()
+assert m.injury["dart"] == 20 and m.injury["small"] == 30, m.injury
+m.set_hp(SELF_ROBOT_ID, 0)
+assert m.pay_revive() is None
+assert sum(m.injury.values()) == 0, "复活后清零"
+
 # 下一局清掉远程兑换的待到账和能量机关用掉的次数。
 m = at_match_second(60)
 m.remote_pending.append((61.0, "ammo", 100, m.deaths))
 m.rune_used["small"] = 1
+m.fired_total = 30
 m.start_next_round()
 assert m.remote_pending == [] and m.rune_used == {"small": 0, "big": 0}
+assert m.fired_total == 0, "累计已发弹量每局清零"
 
 print("terminal commands ok")

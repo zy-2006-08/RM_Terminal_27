@@ -22,6 +22,7 @@
     .venv/bin/python sim/match_control.py shoot 17 10       # 对锁定目标打 10 发 17mm
     .venv/bin/python sim/match_control.py module            # 重装安装 42mm 模块
     .venv/bin/python sim/match_control.py buy 17 100        # 花金币兑换 100 发 17mm
+    .venv/bin/python sim/match_control.py point 0           # 车开出兑换点(1 开进去),不在兑换点不能非远程兑换
     .venv/bin/python sim/match_control.py pay-revive        # 花金币立即复活自机
     .venv/bin/python sim/match_control.py confirm-revive    # 读条满后确认复活(替官方选手端点,发协议 CommonCommand 3)
     .venv/bin/python sim/match_control.py card              # 模拟自机刷场地交互卡解除虚弱
@@ -50,7 +51,7 @@ import rm_terminal_pb2 as pb
 from sim.constants import MQTT_PORT, SERVER_HOST, T_COMMON_COMMAND
 from sim.match_server import (
     CTRL_AUTO_HP, CTRL_BEGIN, CTRL_BLIND, CTRL_BLIND_CLEAR, CTRL_BUY, CTRL_CARD,
-    CTRL_CHECK, CTRL_COUNTDOWN, CTRL_DART_OPEN, CTRL_DART_SHOOT, CTRL_HOLD,
+    CTRL_CHECK, CTRL_COUNTDOWN, CTRL_DART_OPEN, CTRL_DART_SHOOT, CTRL_EXCHANGE_POINT, CTRL_HOLD,
     CTRL_MARK, CTRL_MODULE, CTRL_PAY_REVIVE, CTRL_PREP,
     CTRL_RESET, CTRL_RESUME, CTRL_SEEK, CTRL_SET_FORTRESS, CTRL_SET_HP,
     CTRL_SET_STRUCTURE_HP, CTRL_SET_ZONE, CTRL_SHOOT, CTRL_SPEED,
@@ -79,6 +80,7 @@ _ACTIONS = {
     "shoot": (CTRL_SHOOT, "对锁定目标射击"),
     "module": (CTRL_MODULE, "安装 42mm 模块"),
     "buy": (CTRL_BUY, "兑换允许发弹量"),
+    "point": (CTRL_EXCHANGE_POINT, "车开进/开出兑换点"),
     "pay-revive": (CTRL_PAY_REVIVE, "金币兑换立即复活"),
     # 这一条不是赛程控制:直接发协议的 cmd_type 3,和终端、官方选手端发的一模一样。
     "confirm-revive": (3, "确认复活"),
@@ -120,6 +122,11 @@ def main() -> int:
         except IndexError:
             print("auto 需要 0 或 1", file=sys.stderr)
             return 2
+    elif action == "point":
+        if len(args) < 2 or args[1] not in ("0", "1"):
+            print("point 需要 1(开进兑换点) 或 0(开出去)", file=sys.stderr)
+            return 2
+        param = int(args[1])
     elif action == "zone":
         try:
             zone, state = int(args[1]), int(args[2])
