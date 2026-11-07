@@ -66,18 +66,32 @@ void paint_gauge(QPainter& painter, const QRect& box, const QString& label, cons
                                     -24));
 }
 
+// 状态灯画成「圆点 + 字」,不画成按钮:画成按钮的样子,操作手会去点「可远程补血」。补血补弹按 H、O、I。
 void paint_pip(QPainter& painter, const QRect& box, const QString& text, std::optional<bool> on,
                const QColor& on_colour, double scale) {
-    QColor fill = theme::kTile;
-    if (on.has_value() && *on) {
-        fill = on_colour;
-        fill.setAlpha(60);
+    const bool lit = on.value_or(false);
+    const qreal d = std::max(6.0, 8.0 * scale);
+    const QRectF dot(box.left() + 3, box.center().y() + 0.5 - d / 2, d, d);
+    if (lit) {
+        QColor glow = on_colour;
+        glow.setAlpha(70);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(glow);
+        painter.drawEllipse(dot.adjusted(-2.5, -2.5, 2.5, 2.5));
+        painter.setBrush(on_colour);
+        painter.drawEllipse(dot);
+    } else {
+        painter.setPen(QPen(on.has_value() ? theme::kTextSecondary : theme::kTextMuted, 1.2));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawEllipse(dot.adjusted(0.6, 0.6, -0.6, -0.6));
     }
-    theme::paintGlass(painter, QRectF(box), 4, false, fill, on.has_value() ? Qt::transparent : theme::kRowBorder);
-    const QFont font = theme::labelPx(px(12, scale), QFont::Bold);
+    const QFont font = theme::labelPx(px(12, scale), lit ? QFont::DemiBold : QFont::Normal);
     painter.setFont(font);
-    painter.setPen(!on.has_value() ? theme::kTextMuted : (*on ? theme::kTextPrimary : theme::kTextSecondary));
-    painter.drawText(box, Qt::AlignCenter, QFontMetrics(font).elidedText(text, Qt::ElideRight, box.width() - 4));
+    painter.setPen(!on.has_value() ? theme::kTextMuted : (lit ? theme::kTextPrimary : theme::kTextSecondary));
+    const int text_left = static_cast<int>(std::ceil(dot.right())) + 6;
+    const QRect text_box(text_left, box.top(), box.right() - text_left, box.height());
+    painter.drawText(text_box, Qt::AlignLeft | Qt::AlignVCenter,
+                     QFontMetrics(font).elidedText(text, Qt::ElideRight, text_box.width()));
 }
 
 QString uint_text(std::optional<std::uint32_t> v) { return v ? QString::number(*v) : QStringLiteral("--"); }

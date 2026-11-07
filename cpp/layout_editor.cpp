@@ -40,7 +40,9 @@ constexpr int kTool = 24;
 constexpr int kRealSpacing = 8;
 constexpr int kTileCaption = 26;
 constexpr int kTileGap = 16;
-constexpr int kTileMaxHeight = 150;
+constexpr int kTileColumns = 4;
+constexpr int kTileMaxRows = 4;
+constexpr int kTileRenderWidth = 280;
 constexpr int kLibraryTop = 48;
 constexpr int kMaxUndo = 50;
 constexpr int kTipsWidth = 16 + 168 * 2 + 16;
@@ -561,31 +563,34 @@ QRect LayoutEditor::tileOnScreen(const Tile& tile) const {
     return tile.box.translated(view.left(), view.top() - library_scroll_);
 }
 
-// 缩略图按这块面板平时的大小画(像主界面上一样),再缩小放进组件库。「下一步」按 6 格宽画,8 格宽缩下来字太小。
+// 缩略图一律按 4 格宽画,宽度固定,缩进组件库后每张一样宽、字一样大(8 格宽的面板照原样缩,字小得看不清)。
+// 高是这块平时的宽高比折成 4 格宽时的格数,不少于它的最小高度;像素高按主界面一格的长宽比算。
 QSize LayoutEditor::paneRenderSize(PaneId pane) const {
     QSize units = pane_default_units(pane);
     for (const PaneSlot& slot : layout_profile(role_).cells)
         if (slot.pane == pane) units = slot.units().size();
-    if (pane == PaneId::Analysis) units = pane_default_units(pane);
-    if (pane == PaneId::NextStep) units = QSize(6, 2);
+    const int rows = std::clamp((units.height() * kTileColumns + units.width() - 1) / units.width(),
+                                pane_min_units(pane).height(), kTileMaxRows);
     const double pitch_x = (grid_in_window_.width() + kRealSpacing) / static_cast<double>(kGridColumns);
     const double pitch_y = (grid_in_window_.height() + kRealSpacing) / static_cast<double>(kGridRows);
-    return QSize(static_cast<int>(std::lround(units.width() * pitch_x - kRealSpacing)),
-                 static_cast<int>(std::lround(units.height() * pitch_y - kRealSpacing)));
+    const double real_w = kTileColumns * pitch_x - kRealSpacing;
+    const double real_h = rows * pitch_y - kRealSpacing;
+    const double aspect = real_w > 0 && real_h > 0 ? real_h / real_w : rows / 4.0 * 0.7;
+    return QSize(kTileRenderWidth, static_cast<int>(std::lround(kTileRenderWidth * aspect)));
 }
 
 void LayoutEditor::rebuildTiles() {
     std::vector<PaneId> missing;
     for (const PaneId pane : available_panes(role_))
         if (!cell(pane)) missing.push_back(pane);
-    // 一列:上面名字,下面缩略图(按面板本来的宽高比)。放不下就滚动。
+    // 一列:上面名字,下面缩略图(都和组件库一样宽)。放不下就滚动。
     const std::vector<Tile> before = tiles_;
     tiles_.clear();
     const int inner = library_.width() - 24;
     int y = 0;
     for (const PaneId pane : missing) {
         const QSize real = paneRenderSize(pane);
-        const QSize image = real.scaled(QSize(inner, kTileMaxHeight), Qt::KeepAspectRatio);
+        const QSize image(inner, static_cast<int>(std::lround(real.height() * inner / static_cast<double>(real.width()))));
         tiles_.push_back({pane, QRect(12, y, inner, kTileCaption + image.height()),
                           QRect(12, y + kTileCaption, image.width(), image.height())});
         y += kTileCaption + image.height() + kTileGap;
@@ -1229,11 +1234,21 @@ void LayoutEditor::paintEvent(QPaintEvent*) {
         painter.fillRect(image, QColor(0, 0, 0, 64));
         const auto found = tile_images_.find(tile.pane);
         if (found != tile_images_.end() && !found->second.isNull()) {
-            // 花名册这类从主画面上截下来的,宽高比可能和格子不一样:等比缩小,靠左上放。
-            const QSizeF fit = found->second.deviceIndependentSize().scaled(QSizeF(image.size()), Qt::KeepAspectRatio);
+            // 花名册这类从主画面上截下来的,大小跟着主界面:也按组件库的宽度缩,比格子高就只放上面一截,下沿渐隐。
+            const QPixmap& shot = found->second;
+            const double dpr = shot.devicePixelRatio();
+            const double k = image.width() / (shot.width() / dpr);
+            const double full = shot.height() / dpr * k;
+            const double shown = std::min<double>(image.height(), full);
             painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
-            painter.drawPixmap(QRectF(QPointF(image.topLeft()), fit), found->second,
-                               QRectF(QPointF(0, 0), found->second.size()));
+            painter.drawPixmap(QRectF(image.left(), image.top(), image.width(), shown), shot,
+                               QRectF(0, 0, shot.width(), shown / k * dpr));
+            if (full > image.height() + 1) {
+                QLinearGradient fade(0, image.bottom() - 24, 0, image.bottom() + 1);
+                fade.setColorAt(0, QColor(13, 20, 34, 0));
+                fade.setColorAt(1, QColor(13, 20, 34, 235));
+                painter.fillRect(QRect(image.left(), image.bottom() - 24, image.width(), 25), fade);
+            }
         }
         painter.restore();
     }
