@@ -19,7 +19,8 @@ enum class MarkTarget : std::uint32_t { Map = 1, EnemyRobot = 2 };              
 enum class MarkScope : std::uint32_t { Specific = 0, ExceptSentry = 1, IncludeSentry = 2 };  // -> is_send_all
 
 struct MarkDraft {
-    MarkScope scope = MarkScope::IncludeSentry;
+    // 默认不含哨兵:自动哨兵每收一条标记就要花 50 金(规则 5.7.2),转发要指挥手明确开启。
+    MarkScope scope = MarkScope::ExceptSentry;
     // 发送范围为「指定客户端」时的收件人,固定 7 个位置,用不到的填 0。
     std::array<std::uint32_t, 7> recipients{};
     MarkKind kind = MarkKind::Attack;

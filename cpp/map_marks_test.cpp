@@ -72,6 +72,25 @@ void encoding_keeps_mode_and_type_apart() {
           "an off-field point is not sent");
 }
 
+// 默认范围是「除哨兵」(is_send_all = 1):转发给哨兵要指挥手单独开那颗开关,
+// 自动哨兵每条标记都要花 50 金(规则 5.7.2)。
+void the_default_mark_skips_the_sentry() {
+    MarkDraft draft;
+    draft.x_m = 10;
+    draft.y_m = 5;
+    check(draft.scope == MarkScope::ExceptSentry, "a fresh draft defaults to 除哨兵");
+    rm::MapClickCmd message;
+    const MarkEncoding encoded = encode_map_click(draft, default_field_extent());
+    check(encoded.rejection == MarkRejection::None && message.ParseFromString(encoded.bytes),
+          "the default draft encodes");
+    check(message.is_send_all() == 1, "the default mark encodes is_send_all = 1");
+
+    draft.scope = MarkScope::IncludeSentry;
+    const MarkEncoding with_sentry = encode_map_click(draft, default_field_extent());
+    check(message.ParseFromString(with_sentry.bytes) && message.is_send_all() == 2,
+          "turning forwarding on encodes is_send_all = 2");
+}
+
 void marks_are_rate_limited() {
     MarkGate gate;
     check(gate.allow(1000), "the first mark goes");
@@ -105,6 +124,7 @@ int main() {
         pixels_and_metres_round_trip();
         letters_follow_the_official_client();
         encoding_keeps_mode_and_type_apart();
+        the_default_mark_skips_the_sentry();
         marks_are_rate_limited();
         marks_fade_and_expire();
     } catch (const std::exception& error) {

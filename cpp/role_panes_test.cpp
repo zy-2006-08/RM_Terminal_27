@@ -1,14 +1,20 @@
-#include "assembly_pane.h"
+#include "assembly_flow.h"
+#include "battle_analysis_pane.h"
 #include "dart_pane.h"
+#include "mark_toolbar.h"
+#include "next_step_pane.h"
 #include "revive_popup.h"
 #include "self_command_pane.h"
+#include "self_status_pane.h"
 #include "sentry_pane.h"
+#include "theme.h"
 
 #include "rm_terminal.pb.h"
 
 #include <QApplication>
 #include <QDir>
 #include <QLabel>
+#include <QImage>
 #include <QPixmap>
 #include <QPushButton>
 #include <QVBoxLayout>
@@ -50,29 +56,11 @@ Field<T> present(T value) {
     return field;
 }
 
-AssemblyView full_assembly() {
-    AssemblyView view;
-    view.maximum_difficulty = 4;
-    view.tech_level = 3;
-    view.modular_42mm = true;
-    view.basic_state = 2;
-    view.putin = true;
-    view.move = true;
-    view.rotate = false;
-    view.remain_time_step = 12;
-    view.remain_time_all = 48;
-    view.enemy_core_status = 2;
-    view.last_result = QStringLiteral("装配成功");
-    view.last_result_at = 5000;
-    return view;
-}
-
-DartView full_dart() {
+DartView dart_at(std::uint32_t gate, std::int32_t match_sec, std::uint32_t target = 4) {
     DartView view;
-    view.gate = 2;
-    view.target_id = 3;
-    view.event_lines = {QStringLiteral("我方飞镖命中敌方基地"),
-                        QStringLiteral("敌方飞镖闸门开启")};
+    view.gate = gate;
+    view.target_id = target;
+    view.match_sec = match_sec;
     return view;
 }
 
@@ -94,9 +82,15 @@ SentryView full_sentry() {
 template <class Pane>
 void settle(Pane& pane, int w, int h) {
     pane.resize(w, h);
-    pane.layout()->activate();
+    if (pane.layout()) pane.layout()->activate();
     pane.show();
     QApplication::processEvents();
+}
+
+QPushButton* button(QWidget& pane, const char* name) {
+    auto* found = pane.findChild<QPushButton*>(QString::fromLatin1(name));
+    if (!found) throw std::runtime_error(std::string("missing button ") + name);
+    return found;
 }
 
 QString artifact_dir() {
@@ -105,7 +99,7 @@ QString artifact_dir() {
     return dir;
 }
 
-void shoot(QWidget& widget, const QString& name, int w, int h) {
+void shoot(QWidget& widget, const QString& name, int w, int h, bool exact_size = false) {
     widget.resize(w, h);
     widget.layout()->activate();
     QApplication::processEvents();
@@ -113,6 +107,11 @@ void shoot(QWidget& widget, const QString& name, int w, int h) {
     const QString path =
         QStringLiteral("%1/%2-%3x%4.png").arg(artifact_dir(), name).arg(w).arg(h);
     check(!shot.isNull() && shot.save(path), "pane PNG saved");
+    // 飞镖和哨兵的图必须正好是要的尺寸。按钮文字一长,面板的最小宽度就能把卡片顶宽,
+    // 图比要求宽几十像素,而评审看的就是这张图 —— 让它当场失败,别让界面悄悄变宽。
+    if (exact_size)
+        check(shot.width() == w && shot.height() == h,
+              (name.toStdString() + " PNG is exactly the requested size").c_str());
     std::cout << "  wrote " << path.toStdString() << '\n';
 }
 
@@ -134,203 +133,201 @@ QWidget* carded(QWidget* pane, const QString& heading) {
     return box;
 }
 
-void assembly_shows_every_field_and_sends_once() {
-    AssemblyPane pane;
-    Capture capture;
-    pane.setView(full_assembly());
-    pane.setSender(capture.sender());
-    pane.setLinkUp(true);
-    pane.setArm(29.5, std::array<float, 6>{10.0F, -20.5F, 30.0F, 0.0F, 45.5F, -90.0F});
-    pane.tick(10000);
-    settle(pane, 420, 300);
-
-    check(pane.buttonsEnabled(), "assembly buttons are live when the link is up");
-    check(pane.statusText() == QStringLiteral("就绪"), "assembly reports ready");
-
-    auto* start = pane.findChild<QPushButton*>(QStringLiteral("assemblyStart"));
-    auto* confirm = pane.findChild<QPushButton*>(QStringLiteral("assemblyConfirm"));
-    auto* cancel = pane.findChild<QPushButton*>(QStringLiteral("assemblyCancel"));
-    auto* plus = pane.findChild<QPushButton*>(QStringLiteral("assemblyDifficultyUp"));
-    check(start && confirm && cancel && plus, "assembly buttons exist by name");
-    check(start->text().contains(QStringLiteral("难度 1")), "difficulty starts at 1");
-
-    plus->click();
-    plus->click();
-    check(pane.selectedDifficulty() == 3, "the selector walks up");
-    check(start->text().contains(QStringLiteral("难度 3")), "the button shows the selection");
-
-    start->click();
-    check(capture.sent.size() == 1, "one click sends exactly one command");
-    check(capture.sent[0].first == "AssemblyCommand", "assembly uses the message-name topic");
-    check(pane.statusText() == QStringLiteral("等待回显"), "sending waits for the echo");
-
-    // 限频:同一毫秒里的第二次点击必须被丢掉,不是排队。
-    confirm->click();
-    check(capture.sent.size() == 1, "a second click inside 100ms is dropped");
-    pane.tick(10100);
-    confirm->click();
-    check(capture.sent.size() == 2, "the next window lets a command through");
-
-    // 难度上限来自协议。+ 不能越过 maximum_difficulty,否则会发出被服务器拒绝的难度。
-    for (int i = 0; i < 6; ++i) plus->click();
-    check(pane.selectedDifficulty() == 4, "the selector stops at the protocol maximum");
-}
-
-void assembly_cancel_needs_a_full_second() {
-    AssemblyPane pane;
-    Capture capture;
-    pane.setView(full_assembly());
-    pane.setSender(capture.sender());
-    pane.setLinkUp(true);
-    settle(pane, 420, 300);
-    auto* cancel = pane.findChild<QPushButton*>(QStringLiteral("assemblyCancel"));
-
-    pane.tick(1000);
-    cancel->pressed();
-    pane.tick(1500);
-    cancel->released();
-    check(capture.sent.empty(), "releasing 取消装配 early sends nothing");
-
-    pane.tick(2000);
-    cancel->pressed();
-    pane.tick(3000);
-    cancel->released();
-    check(capture.sent.size() == 1, "holding 取消装配 a full second sends it");
-    rm::AssemblyCommand parsed;
-    check(parsed.ParseFromString(capture.sent[0].second) && parsed.operation() == 2,
-          "the held button sends operation 2");
-}
-
-void assembly_waiting_lines_name_their_source() {
-    AssemblyPane pane;
-    pane.setView(AssemblyView{});
-    pane.setLinkUp(false);
-    pane.tick(1000);
-    settle(pane, 420, 300);
-    check(!pane.buttonsEnabled(), "an empty view with no link keeps the buttons dead");
-    check(pane.statusText() == QStringLiteral("断线，指令不会发送"),
-          "link down says so in red");
-}
-
-void assembly_drops_clicks_while_the_link_is_down() {
-    AssemblyPane pane;
-    Capture capture;
-    pane.setView(full_assembly());
-    pane.setSender(capture.sender());
-    pane.setLinkUp(false);
-    pane.tick(1000);
-    settle(pane, 420, 300);
-
-    auto* start = pane.findChild<QPushButton*>(QStringLiteral("assemblyStart"));
-    check(!start->isEnabled(), "link down disables 开始兑换");
-    // 即使按钮被程序外的途径触发,发送路径本身也要拒绝,并且不排队补发。
-    start->click();
-    check(capture.sent.empty(), "clicks while the link is down are dropped");
-    pane.setLinkUp(true);
-    pane.tick(2000);
-    check(capture.sent.empty(), "nothing is replayed when the link returns");
-}
-
-void dart_gates_the_launch_button() {
+void dart_f_asks_and_y_opens_the_gate() {
     DartPane pane;
     Capture capture;
-    DartView view = full_dart();
-    view.gate = 0;
-    pane.setView(view);
     pane.setSender(capture.sender());
     pane.setLinkUp(true);
     pane.tick(1000);
-    settle(pane, 380, 300);
+    pane.setView(dart_at(0, 90, 1));
+    check(pane.prompt().step == DartStep::Ready, "a chance left and the gate shut: F is ready");
 
-    auto* launch = pane.findChild<QPushButton*>(QStringLiteral("dartLaunch"));
-    auto* open = pane.findChild<QPushButton*>(QStringLiteral("dartOpenGate"));
-    auto* target2 = pane.findChild<QPushButton*>(QStringLiteral("dartTarget2"));
-    check(launch && open && target2, "dart buttons exist by name");
-    check(!launch->isEnabled(), "确认发射 is dead while the gate is shut");
-    check(open->isEnabled() && target2->isEnabled(), "the other dart buttons are live");
+    pane.confirmOpen();
+    check(capture.sent.empty(), "Y without F sends nothing");
+    pane.requestOpen();
+    check(capture.sent.empty() && pane.prompt().step == DartStep::Asking, "F alone only asks");
+    pane.cancelOpen();
+    check(capture.sent.empty() && pane.prompt().step == DartStep::Ready, "N drops the question");
 
-    target2->click();
-    check(capture.sent.size() == 1 && capture.sent[0].first == "DartCommand",
-          "a target click sends DartCommand");
-    rm::DartCommand parsed;
-    check(parsed.ParseFromString(capture.sent[0].second) && parsed.target_id() == 2 &&
-              !parsed.launch_confirm(),
-          "选目标 carries the target without confirming a launch");
+    pane.requestOpen();
+    pane.confirmOpen();
+    rm::DartCommand opened;
+    check(capture.sent.size() == 1 && capture.sent[0].first == "DartCommand" &&
+              opened.ParseFromString(capture.sent[0].second) && opened.target_id() == 1 &&
+              opened.open() && !opened.launch_confirm(),
+          "F then Y opens the gate for the selected target");
 
-    view.gate = 2;
-    pane.setView(view);
-    pane.tick(2000);
-    check(launch->isEnabled(), "确认发射 opens once the gate reports 已开启");
+    pane.setView(dart_at(1, 91, 1));
+    check(pane.prompt().step == DartStep::Opening, "gate 1 reads as 闸门运行中");
+    pane.requestOpen();
+    check(pane.prompt().step == DartStep::Opening, "F does nothing while the gate moves");
 
-    launch->pressed();
-    pane.tick(2500);
-    launch->released();
-    check(capture.sent.size() == 1, "an early release never launches");
+    DartPane other;
+    Capture other_capture;
+    other.setSender(other_capture.sender());
+    other.setLinkUp(true);
+    other.setView(dart_at(0, 90, 1));
+    other.requestOpen();
+    other.setLinkUp(false);
+    other.setLinkUp(true);
+    other.confirmOpen();
+    check(other_capture.sent.empty(), "a dropped link forgets the question");
+}
 
-    pane.tick(3000);
-    launch->pressed();
-    pane.tick(4000);
-    launch->released();
-    check(capture.sent.size() == 2, "a full second launches");
+void dart_l_launches_once_the_gate_is_fully_open() {
+    DartPane pane;
+    Capture capture;
+    pane.setSender(capture.sender());
+    pane.setLinkUp(true);
+    pane.tick(1000);
+    pane.setView(dart_at(0, 90));
+    pane.launch();
+    check(capture.sent.empty(), "L does nothing while the gate is shut");
+    pane.setView(dart_at(1, 91));
+    pane.launch();
+    check(capture.sent.empty(), "L does nothing while the gate moves");
+
+    pane.setView(dart_at(2, 98));
+    check(pane.prompt().step == DartStep::Open && pane.prompt().seconds == 30,
+          "fully open: L ready, 30 s until the gate closes");
+    pane.setView(dart_at(2, 109));
+    check(pane.prompt().seconds == 19, "the close countdown follows match time");
+
+    pane.launch();
     rm::DartCommand launched;
-    check(launched.ParseFromString(capture.sent[1].second) && launched.launch_confirm() &&
-              launched.open(),
-          "the launch sets launch_confirm");
+    check(capture.sent.size() == 1 && launched.ParseFromString(capture.sent[0].second) &&
+              launched.target_id() == 4 && launched.open() && launched.launch_confirm(),
+          "one press of L sends launch_confirm, no hold");
 }
 
-void dart_echo_goes_unconfirmed_without_a_change() {
+void dart_j_cycles_targets_and_keeps_the_gate() {
     DartPane pane;
     Capture capture;
-    pane.setView(full_dart());
     pane.setSender(capture.sender());
     pane.setLinkUp(true);
     pane.tick(1000);
-    settle(pane, 380, 300);
+    pane.setView(dart_at(0, 90, 5));
 
-    pane.findChild<QPushButton*>(QStringLiteral("dartTarget1"))->click();
-    check(pane.statusText() == QStringLiteral("等待回显"), "a sent dart command waits");
+    pane.cycleTarget();
+    rm::DartCommand wrapped;
+    check(capture.sent.size() == 1 && wrapped.ParseFromString(capture.sent[0].second) &&
+              wrapped.target_id() == 1 && !wrapped.open() && !wrapped.launch_confirm(),
+          "J after 基地末端移动 wraps to 前哨站 with the gate left shut");
+
+    pane.setView(dart_at(2, 98, 1));
     pane.tick(2000);
-    check(pane.statusText() == QStringLiteral("等待回显"), "still waiting before 2s");
-    pane.tick(3000);
-    check(pane.statusText() == QStringLiteral("未确认"),
-          "no DartSelectTargetStatusSync change within 2s reads as 未确认");
-
-    DartView changed = full_dart();
-    changed.target_id = 1;
-    pane.setView(changed);
-    pane.tick(3100);
-    check(pane.statusText() == QStringLiteral("未确认"),
-          "a change after the timeout does not rewrite the verdict");
-
-    DartPane fresh;
-    Capture capture2;
-    fresh.setView(full_dart());
-    fresh.setSender(capture2.sender());
-    fresh.setLinkUp(true);
-    fresh.tick(1000);
-    settle(fresh, 380, 300);
-    fresh.findChild<QPushButton*>(QStringLiteral("dartTarget1"))->click();
-    DartView moved = full_dart();
-    moved.target_id = 1;
-    fresh.setView(moved);
-    fresh.tick(1500);
-    check(fresh.statusText() == QStringLiteral("已确认"), "a target change confirms the echo");
+    pane.cycleTarget();
+    rm::DartCommand kept;
+    check(capture.sent.size() == 2 && kept.ParseFromString(capture.sent[1].second) &&
+              kept.target_id() == 2 && kept.open() && !kept.launch_confirm(),
+          "J while the gate is open asks for the next target without closing the gate");
 }
 
-void dart_link_down_disables_everything() {
+void dart_counts_gate_chances_like_the_official_client() {
+    DartPane pane;
+    pane.setView(dart_at(0, 20));
+    check(pane.prompt().step == DartStep::NextChance && pane.prompt().seconds == 10,
+          "before 0:30: 10 s until the first chance");
+    pane.setView(dart_at(0, 30));
+    check(pane.prompt().step == DartStep::Ready, "0:30 gives the first chance");
+    pane.setView(dart_at(1, 31));
+    pane.setView(dart_at(2, 38));
+    pane.setView(dart_at(0, 68));
+    pane.setView(dart_at(0, 120));
+    check(pane.prompt().step == DartStep::NextChance && pane.prompt().seconds == 120,
+          "first chance used: 120 s until the 4:00 one");
+    pane.setView(dart_at(0, 245));
+    check(pane.prompt().step == DartStep::Ready, "4:00 gives the second chance");
+    pane.setView(dart_at(1, 246));
+    pane.setView(dart_at(2, 253));
+    pane.setView(dart_at(0, 283));
+    check(pane.prompt().step == DartStep::Exhausted, "both chances used: 已达上限");
+    pane.setView(dart_at(0, 5));
+    check(pane.prompt().step == DartStep::NextChance && pane.prompt().seconds == 25,
+          "match time going back means a new round: the count starts over");
+
+    DartPane saved;
+    saved.setView(dart_at(0, 250));
+    check(saved.prompt().step == DartStep::Ready, "unused chances add up");
+    saved.setView(dart_at(1, 251));
+    saved.setView(dart_at(2, 258));
+    saved.setView(dart_at(0, 288));
+    saved.setView(dart_at(0, 290));
+    check(saved.prompt().step == DartStep::Cooldown && saved.prompt().seconds == 13,
+          "a chance left after closing: 15 s cooldown first");
+    saved.setView(dart_at(0, 303));
+    check(saved.prompt().step == DartStep::Ready, "cooldown over: F is ready again");
+
+    DartPane outside;
+    DartView prep = dart_at(0, 0);
+    prep.match_sec.reset();
+    outside.setView(prep);
+    check(outside.prompt().step == DartStep::NextChance && !outside.prompt().seconds,
+          "outside a match there is no chance to open");
+    DartPane waiting;
+    check(waiting.prompt().step == DartStep::NoData, "no DartSelectTargetStatusSync yet: nothing to do");
+}
+
+void dart_stops_after_four_darts_a_round() {
+    Snapshot snapshot;
+    snapshot.dart_hits = DartTally{3, 1};
+    snapshot.self = RobotId{6};
+    check(dart_view(snapshot).hits == 3, "a red commander counts red dart hits");
+    snapshot.self = RobotId{106};
+    check(dart_view(snapshot).hits == 1, "a blue commander counts blue dart hits");
+    snapshot.self.reset();
+    check(dart_view(snapshot).hits == 0, "no seat, no count");
+
     DartPane pane;
     Capture capture;
-    pane.setView(full_dart());
+    pane.setSender(capture.sender());
+    pane.setLinkUp(true);
+    pane.tick(1000);
+    DartView open = dart_at(2, 100);
+    open.hits = 3;
+    pane.setView(open);
+    check(pane.prompt().step == DartStep::Open, "three darts hit: the fourth can still go");
+    pane.launch();
+    check(capture.sent.size() == 1, "L sends while a dart is left");
+
+    open.hits = 4;
+    pane.setView(open);
+    pane.tick(2000);
+    check(pane.prompt().step == DartStep::Spent, "four darts hit: used up even with the gate open");
+    pane.launch();
+    check(capture.sent.size() == 1, "L sends nothing once the four darts are used");
+
+    DartView later = dart_at(0, 250);
+    later.hits = 4;
+    pane.setView(later);
+    check(pane.prompt().step == DartStep::Spent, "the 4:00 chance is no use without darts");
+    pane.requestOpen();
+    pane.confirmOpen();
+    check(capture.sent.size() == 1, "F then Y sends nothing once the four darts are used");
+
+    pane.setView(dart_at(0, 40));
+    check(pane.prompt().step == DartStep::Ready, "a new round starts with four darts");
+
+    DartView settling = dart_at(0, 0);
+    settling.match_sec.reset();
+    settling.hits = 4;
+    pane.setView(settling);
+    check(pane.prompt().step == DartStep::NextChance, "outside the match the count blocks nothing");
+}
+
+void dart_link_down_drops_every_key() {
+    DartPane pane;
+    Capture capture;
     pane.setSender(capture.sender());
     pane.setLinkUp(false);
     pane.tick(1000);
-    settle(pane, 380, 300);
-    check(!pane.buttonsEnabled(), "dart buttons die with the link");
-    check(!pane.findChild<QPushButton*>(QStringLiteral("dartLaunch"))->isEnabled(),
-          "确认发射 dies with the link even with the gate open");
-    check(pane.statusText() == QStringLiteral("断线，指令不会发送"), "dart says the link is down");
-    pane.findChild<QPushButton*>(QStringLiteral("dartTarget5"))->click();
-    check(capture.sent.empty(), "dart clicks while down are dropped");
+    pane.setView(dart_at(2, 98));
+    pane.cycleTarget();
+    pane.launch();
+    pane.setView(dart_at(0, 300));
+    pane.requestOpen();
+    pane.confirmOpen();
+    check(capture.sent.empty(), "dart keys while the link is down are dropped");
 }
 
 void sentry_cools_down_posture_buttons_after_a_success() {
@@ -350,8 +347,10 @@ void sentry_cools_down_posture_buttons_after_a_success() {
     check(attack->isEnabled(), "posture buttons start live");
 
     defend->click();
+    check(capture.sent.empty(), "one click only arms the posture button");
+    defend->click();
     check(capture.sent.size() == 1 && capture.sent[0].first == "SentryCtrlCommand",
-          "a posture click sends SentryCtrlCommand");
+          "a second posture click sends SentryCtrlCommand");
     rm::SentryCtrlCommand parsed;
     check(parsed.ParseFromString(capture.sent[0].second) && parsed.command_id() == 8,
           "防御 sends command_id 8");
@@ -388,40 +387,142 @@ void sentry_cools_down_posture_buttons_after_a_success() {
           "a failed posture switch can be retried at once");
 
     SentryPane quiet;
-    check(quiet.lastResultText() == QStringLiteral("-- 等待 SentryCtrlResult"),
-          "no result yet names the message it waits for");
+    check(quiet.lastResultText().isEmpty(),
+          "no result yet draws nothing: the debug string is gone from the panel");
 }
 
-void sentry_gold_revive_needs_a_hold_and_reports_unconfirmed() {
+// 二次确认:所有花金币的哨兵指令都走同一套。单击只点亮按钮并报价,3 秒内再点同一颗才发。
+void sentry_spends_coins_only_on_a_second_click() {
     SentryPane pane;
     Capture capture;
     SentryView view = full_sentry();
     view.result.reset();
+    view.remaining_sec = 120;  // 打到 5:00,规则 5.7.2 的涨价都按这个算
+    view.automatic = true;
     pane.setView(view);
     pane.setSender(capture.sender());
     pane.setLinkUp(true);
     pane.tick(1000);
     settle(pane, 380, 360);
 
-    auto* gold = pane.findChild<QPushButton*>(QStringLiteral("sentryGoldRevive"));
-    gold->pressed();
-    pane.tick(1500);
-    gold->released();
-    check(capture.sent.empty(), "an early release never spends gold");
+    // 单击一律不发:四颗花钱的按钮都要守住这条。
+    for (const char* name : {"sentryAmmo", "sentryHeal", "sentryRevive", "sentryGoldRevive"}) {
+        SentryPane one;
+        Capture once;
+        one.setView(view);
+        one.setSender(once.sender());
+        one.setLinkUp(true);
+        one.tick(1000);
+        settle(one, 380, 360);
+        button(one, name)->click();
+        check(once.sent.empty(), (std::string("a single click on ") + name + " sends nothing").c_str());
+        check(one.armedCommand().has_value(), (std::string(name) + " is armed instead").c_str());
+    }
 
-    pane.tick(2000);
-    gold->pressed();
-    pane.tick(3000);
-    gold->released();
-    check(capture.sent.size() == 1, "holding a full second spends gold");
+    auto* ammo = button(pane, "sentryAmmo");
+    ammo->click();
+    check(capture.sent.empty() && pane.armedCommand() == std::optional<std::uint32_t>(3),
+          "远程补弹 arms on the first click");
+    ammo->click();
     rm::SentryCtrlCommand parsed;
-    check(parsed.ParseFromString(capture.sent[0].second) && parsed.command_id() == 6,
-          "花金币复活 sends command_id 6");
-    check(pane.statusText().contains(QStringLiteral("等待回显")), "the gold revive waits for a result");
+    check(capture.sent.size() == 1 && parsed.ParseFromString(capture.sent[0].second) &&
+              parsed.command_id() == 3,
+          "the second click on the same button sends exactly one 远程补弹");
+    check(!pane.armedCommand(), "sending clears the armed state");
 
-    pane.tick(5100);
-    check(pane.statusText().contains(QStringLiteral("未确认")),
+    // 超时作废:点亮后超过 3 秒,再点只是重新点亮,不发。
+    SentryPane stale;
+    Capture stale_capture;
+    stale.setView(view);
+    stale.setSender(stale_capture.sender());
+    stale.setLinkUp(true);
+    stale.tick(1000);
+    settle(stale, 380, 360);
+    button(stale, "sentryRevive")->click();
+    stale.tick(1000 + SentryPane::kArmedMs + 1);
+    check(!stale.armedCommand(), "an armed confirmation expires after the timeout");
+    button(stale, "sentryRevive")->click();
+    check(stale_capture.sent.empty(), "a click after the timeout only arms again, it does not send");
+
+    // 点别的按钮就作废:操作手改了主意,原来那颗不该还等着确认。
+    SentryPane switched;
+    Capture switched_capture;
+    switched.setView(view);
+    switched.setSender(switched_capture.sender());
+    switched.setLinkUp(true);
+    switched.tick(1000);
+    settle(switched, 380, 360);
+    button(switched, "sentryGoldRevive")->click();
+    button(switched, "sentryAmmo")->click();
+    check(switched.armedCommand() == std::optional<std::uint32_t>(3),
+          "clicking another button moves the armed state to it");
+    button(switched, "sentryGoldRevive")->click();
+    check(switched_capture.sent.empty(),
+          "the first button lost its arming, so a click on it sends nothing");
+
+    // 断线也作废,且回显照旧:发出去 2 秒没有 SentryCtrlResult 就是未确认。
+    SentryPane dropped;
+    Capture dropped_capture;
+    dropped.setView(view);
+    dropped.setSender(dropped_capture.sender());
+    dropped.setLinkUp(true);
+    dropped.tick(1000);
+    settle(dropped, 380, 360);
+    button(dropped, "sentryGoldRevive")->click();
+    dropped.setLinkUp(false);
+    check(!dropped.armedCommand(), "a dropped link cancels the armed confirmation");
+    dropped.setLinkUp(true);
+    button(dropped, "sentryGoldRevive")->click();
+    button(dropped, "sentryGoldRevive")->click();
+    check(dropped_capture.sent.size() == 1 && parsed.ParseFromString(dropped_capture.sent[0].second) &&
+              parsed.command_id() == 6,
+          "花金币复活 still sends command_id 6, now on two clicks instead of a hold");
+    check(dropped.statusText().contains(QStringLiteral("等待回显")),
+          "the gold revive waits for a result");
+    dropped.tick(1000 + 2100);
+    check(dropped.statusText().contains(QStringLiteral("未确认")),
           "no SentryCtrlResult within 2s reads as 未确认");
+}
+
+// 按钮上的价钱照 sentry_cost:打到 5:00、自动哨兵时姿态 50、确认复活 50、补弹 200、
+// 回血 200、花金币复活 470。赛外没有涨价依据,这两项不标价。
+void sentry_buttons_show_the_real_price() {
+    SentryPane pane;
+    Capture capture;
+    SentryView view = full_sentry();
+    view.remaining_sec = 120;
+    view.automatic = true;
+    pane.setView(view);
+    pane.setSender(capture.sender());
+    pane.setLinkUp(true);
+    pane.tick(1000);
+    settle(pane, 380, 360);
+
+    check(pane.priceOf(7) == std::optional<std::uint32_t>(50), "a posture switch costs 50");
+    check(pane.priceOf(5) == std::optional<std::uint32_t>(50), "确认复活 costs 50");
+    check(pane.priceOf(3) == std::optional<std::uint32_t>(200), "远程补弹 costs 200");
+    check(pane.priceOf(4) == std::optional<std::uint32_t>(200), "远程回血 costs 200 at 5:00 played");
+    check(pane.priceOf(6) == std::optional<std::uint32_t>(470), "花金币复活 costs 470 at 5:00 played");
+    check(button(pane, "sentryAmmo")->text().contains(QStringLiteral("200")),
+          "远程补弹 wears its 200 coin price");
+    check(button(pane, "sentryGoldRevive")->text().contains(QStringLiteral("470")),
+          "花金币复活 wears its 470 coin estimate");
+    check(button(pane, "sentryGoldRevive")->text().contains(QStringLiteral("≈")),
+          "a price that depends on match time is marked as an estimate");
+
+    // 半自动哨兵不收 50 干预费(规则 5.7.2)。
+    SentryView semi = view;
+    semi.automatic = false;
+    pane.setView(semi);
+    check(pane.priceOf(7) == std::optional<std::uint32_t>(0), "a semi-automatic posture switch is free");
+    check(pane.priceOf(3) == std::optional<std::uint32_t>(150), "semi-automatic 远程补弹 is just the 150");
+
+    // 赛外:回血和金币复活没有涨价依据,不标价。
+    SentryView outside = view;
+    outside.remaining_sec.reset();
+    pane.setView(outside);
+    check(!pane.priceOf(4) && !pane.priceOf(6), "outside the match the time-priced commands show no price");
+    check(pane.priceOf(7) == std::optional<std::uint32_t>(50), "the flat 50 fee still applies");
 }
 
 void sentry_reads_the_right_seat_for_each_faction() {
@@ -468,7 +569,7 @@ void builders_keep_missing_data_missing() {
     check(assembly.last_result.isEmpty(), "no Event 15 means no result line");
 
     const DartView dart = dart_view(empty);
-    check(!dart.gate && !dart.target_id && dart.event_lines.empty(),
+    check(!dart.gate && !dart.target_id && !dart.match_sec,
           "an empty snapshot leaves the dart view missing");
 
     Snapshot filled;
@@ -486,7 +587,8 @@ void builders_keep_missing_data_missing() {
     filled.events.push(EventRecord{15, 2, "装配失败：超时", 5000, kRed, std::nullopt});
     filled.dart.gate = present<std::uint32_t>(1);
     filled.dart.target_id = present<std::uint32_t>(4);
-    filled.events.push(EventRecord{9, 1, "我方飞镖命中敌方基地", 6000, kRed, std::nullopt});
+    filled.game.current_stage = present<std::uint32_t>(4);
+    filled.game.stage_elapsed_sec = present<std::int32_t>(95);
 
     const AssemblyView built = assembly_view(filled);
     check(built.maximum_difficulty == 4 && built.basic_state == 3, "tech core fields land");
@@ -500,23 +602,59 @@ void builders_keep_missing_data_missing() {
           "the newest Event 15 wins");
 
     const DartView built_dart = dart_view(filled);
-    check(built_dart.gate == 1 && built_dart.target_id == 4, "dart fields land");
-    check(built_dart.event_lines.size() == 1 &&
-              built_dart.event_lines[0] == QStringLiteral("我方飞镖命中敌方基地"),
-          "only Event 9/10 reach the dart panel");
+    check(built_dart.gate == 1 && built_dart.target_id == 4 && built_dart.match_sec == 95,
+          "dart fields land");
+    filled.game.current_stage = present<std::uint32_t>(5);
+    check(!dart_view(filled).match_sec, "match time only counts during the match");
+}
+
+// 320 宽的评审卡片里,面板拿到的身子只有 302 像素。面板的最小宽度一超过它,卡片就会
+// 被顶宽,截图比要求的尺寸宽,真界面里右边那一列也会挤到地图。
+void role_panes_fit_a_narrow_card() {
+    constexpr int kNarrowBody = 302;
+    DartPane dart;
+    dart.setView(dart_at(2, 98));
+    dart.setLinkUp(true);
+    dart.tick(1000);
+    settle(dart, 320, 240);
+    check(dart.minimumSizeHint().width() <= kNarrowBody,
+          "the dart pane fits a 302 px wide card body");
+
+    SentryPane sentry;
+    SentryView priced = full_sentry();
+    // 最贵的一档:金币复活 ≈470 金,按钮文字最长的时候也要装得下。
+    priced.remaining_sec = 120;
+    priced.automatic = true;
+    sentry.setView(priced);
+    sentry.setLinkUp(true);
+    sentry.tick(1000);
+    settle(sentry, 320, 240);
+    check(sentry.minimumSizeHint().width() <= kNarrowBody,
+          "the sentry pane fits a 302 px wide card body even with prices on the action buttons");
+
+    // 姿态按钮只写名字:单价在卡片标题右边说一次。
+    check(!button(sentry, "sentryPosture7")->text().contains(QStringLiteral("金")),
+          "a posture button shows its name only, no repeated fee");
+    check(sentry.headerText() == QStringLiteral("干预 50 金/次"),
+          "an automatic sentry names the intervention fee once, in the card header");
+    SentryView semi = priced;
+    semi.automatic = false;
+    sentry.setView(semi);
+    check(sentry.headerText() == QStringLiteral("半自动 · 不花金币"),
+          "a semi-automatic sentry says so in the header");
+
+    // 等数据时说人话,不报协议消息名。
+    SentryPane waiting;
+    waiting.setLinkUp(true);
+    waiting.setSender([](const char*, const std::string&) { return true; });
+    waiting.tick(1000);
+    check(waiting.statusText() == QStringLiteral("等待哨兵数据"),
+          "the waiting state is plain Chinese, not a protocol message name");
 }
 
 void panes_degrade_at_small_sizes() {
-    AssemblyPane assembly;
-    assembly.setView(full_assembly());
-    assembly.setLinkUp(true);
-    assembly.tick(1000);
-    settle(assembly, 320, 240);
-    check(assembly.height() == 240, "assembly accepts a 320x240 box");
-    check(!assembly.grab().isNull(), "assembly still paints at 320x240");
-
     DartPane dart;
-    dart.setView(full_dart());
+    dart.setView(dart_at(2, 98));
     dart.setLinkUp(true);
     dart.tick(1000);
     settle(dart, 320, 240);
@@ -528,6 +666,277 @@ void panes_degrade_at_small_sizes() {
     sentry.tick(1000);
     settle(sentry, 320, 240);
     check(!sentry.grab().isNull(), "sentry still paints at 320x240");
+}
+
+// 拖到任意尺寸都要铺满:把面板画到一张图上,量最上面一行和最下面一行有内容的像素。
+// 「有内容」= 和左上角那个像素(底色)差得够多的像素占这一行的 1% 以上。
+struct Ink {
+    int top = -1;
+    int bottom = -1;
+    int widest = 0;
+};
+
+Ink ink_rows(const QImage& shot) {
+    Ink ink;
+    const QRgb background = shot.pixel(0, 0);
+    for (int y = 0; y < shot.height(); ++y) {
+        int lit = 0;
+        for (int x = 0; x < shot.width(); ++x) {
+            const QRgb pixel = shot.pixel(x, y);
+            const int distance = std::abs(qRed(pixel) - qRed(background)) +
+                                 std::abs(qGreen(pixel) - qGreen(background)) +
+                                 std::abs(qBlue(pixel) - qBlue(background));
+            if (distance > 18) ++lit;
+        }
+        if (lit <= shot.width() / 100) continue;
+        if (ink.top < 0) ink.top = y;
+        ink.bottom = y;
+        ink.widest = std::max(ink.widest, lit);
+    }
+    return ink;
+}
+
+// 自己铺一张底再让面板画上去:不给父窗口的 QWidget 用 grab() 得到的底色是未初始化的,
+// 量出来的「有内容」会跟着上一次的内存变。底色取面板在界面里真正坐着的那块玻璃色。
+template <class Pane>
+QImage pane_shot(Pane& pane, int w, int h) {
+    pane.resize(w, h);
+    QApplication::processEvents();
+    QImage shot(w, h, QImage::Format_ARGB32);
+    shot.fill(QColor(22, 38, 58));
+    pane.render(&shot, QPoint(), QRegion(), QWidget::DrawChildren);
+    return shot;
+}
+
+RosterEntry self_status_entry() {
+    RosterEntry entry;
+    entry.id = RobotId{3};
+    entry.faction = 1;
+    entry.is_self = true;
+    entry.live = LiveState::Alive;
+    entry.hp = 200;
+    entry.max_hp = 200;
+    entry.level = 1;
+    entry.ammo = 0;
+    entry.bullet_speed = 29.0;
+    entry.economy = 800;
+    entry.heat = 0.0;
+    entry.heat_limit = 40;
+    entry.buffer_energy = 43;
+    entry.buffer_limit = 60;
+    entry.modules_online = 9;
+    entry.modules_total = 10;
+    entry.out_of_combat = true;
+    entry.can_remote_heal = true;
+    entry.can_remote_ammo = false;
+    entry.pending_respawn = false;
+    return entry;
+}
+
+std::vector<NextCard> next_cards(std::size_t count) {
+    std::vector<NextCard> cards;
+    NextCard rune;
+    rune.rule = NextRule::OpenRune;
+    rune.category = QStringLiteral("进攻");
+    rune.title = QStringLiteral("开小能量机关");
+    rune.reason = QStringLiteral("刚开放，长按 F 1 秒开启");
+    cards.push_back(rune);
+    NextCard ammo;
+    ammo.rule = NextRule::BuyAmmo;
+    ammo.category = QStringLiteral("补给");
+    ammo.title = QStringLiteral("兑换弹丸");
+    ammo.reason = QStringLiteral("只剩 0 发，50 金换 50 发");
+    cards.push_back(ammo);
+    NextCard base;
+    base.rule = NextRule::DefendBase;
+    base.category = QStringLiteral("防守");
+    base.title = QStringLiteral("回防我方基地");
+    base.reason = QStringLiteral("基地正在掉血，还剩 4660");
+    cards.push_back(base);
+    cards.resize(count);
+    return cards;
+}
+
+ZoneBoard analysis_board() {
+    ZoneBoard board;
+    board.zones[0] = ZoneStatus{QStringLiteral("红方基地区"), ZoneControl::RedTemporary, 4};
+    board.zones[1] = ZoneStatus{QStringLiteral("红方前哨区"), ZoneControl::RedFull, std::nullopt};
+    board.zones[2] = ZoneStatus{QStringLiteral("蓝方前哨区"), ZoneControl::BlueFull, std::nullopt};
+    board.zones[3] = ZoneStatus{QStringLiteral("蓝方基地区"), ZoneControl::Neutral, std::nullopt};
+    board.red_control_points = 186;
+    board.blue_control_points = 143;
+    board.red_logistics = 1.0;
+    board.blue_logistics = 0.83;
+    return board;
+}
+
+std::vector<AnalysisMetric> analysis_metrics() {
+    std::vector<AnalysisMetric> metrics;
+    AnalysisMetric economy;
+    economy.label = QStringLiteral("我方经济");
+    economy.self_value = 800;
+    economy.has_enemy = false;
+    economy.note = QStringLiteral("后勤 1.00");
+    metrics.push_back(economy);
+    AnalysisMetric damage;
+    damage.label = QStringLiteral("总伤害");
+    damage.self_value = 3860;
+    damage.enemy_value = 2940;
+    metrics.push_back(damage);
+    AnalysisMetric kills;
+    kills.label = QStringLiteral("击杀");
+    kills.self_value = 3;
+    kills.enemy_value = 2;
+    metrics.push_back(kills);
+    AnalysisMetric rune;
+    rune.label = QStringLiteral("我方能量机关");
+    rune.text_value = QStringLiteral("小机关激活");
+    rune.has_enemy = false;
+    metrics.push_back(rune);
+    return metrics;
+}
+
+// 共用的缩放助手:一个面板一个系数,拖大放大、拖小缩小,有上下限。
+void pane_scale_grows_and_shrinks_within_bounds() {
+    const QSizeF design(330, 190);
+    check(theme::paneScale(design, design) == 1.0, "the design size scales by exactly 1");
+    check(theme::paneScale(QSizeF(660, 380), design) == 2.0, "twice the design size scales by 2");
+    check(theme::paneScale(QSizeF(165, 95), design, 0.2) == 0.5, "half the design size scales by 0.5");
+    check(theme::paneScale(QSizeF(264, 152), design) == 0.8, "a smaller pane scales below 1");
+    // 宽高各算一遍取小的:窄的那一边决定能放多大,放大时才不会溢出。
+    check(theme::paneScale(QSizeF(3300, 380), design) == 2.0, "the smaller axis decides the scale");
+    check(theme::paneScale(QSizeF(9900, 9900), design) == theme::kMaxPaneScale,
+          "growth stops at the shared upper bound");
+    check(theme::paneScale(QSizeF(1, 1), design, 0.6) == 0.6, "shrinking stops at the requested floor");
+    check(theme::kMaxPaneScale >= 2.5, "panes may grow to at least 2.5x the design size");
+
+    const auto label = [](int px) { return theme::labelPx(px); };
+    const QString text = QStringLiteral("允许发弹量");
+    const int wide = theme::fitFontPx(text, 20, theme::kMinLabelPx, 1000, label);
+    check(wide == 20, "a box with room keeps the wanted size");
+    const int narrow = theme::fitFontPx(text, 20, theme::kMinLabelPx, 40, label);
+    check(narrow < 20 && narrow >= theme::kMinLabelPx, "a narrow box shrinks the font, never below the floor");
+    check(theme::fitFontPx(text, 20, theme::kMinLabelPx, 1, label) == theme::kMinLabelPx,
+          "an impossible box stops at the floor instead of vanishing");
+    check(theme::kMinLabelPx >= 11 && theme::kMinNumberPx >= 12, "labels floor at 11px and numbers at 12px");
+}
+
+// 本机状态:四段按设计高度的比例分走整块高度。以前整块在面板里居中,上面空一大片
+// (scale 封在 1.5、段间隔封在 36),1080x650 的格子里上下各空两百多像素。
+void self_status_fills_whatever_box_it_gets() {
+    SelfStatusPane pane;
+    pane.setEntry(self_status_entry());
+    pane.show();
+    int previous_height = 0;
+    for (const auto [w, h] : {std::pair{300, 150}, std::pair{340, 220}, std::pair{560, 420},
+                              std::pair{560, 960}, std::pair{1080, 650}, std::pair{1400, 260}}) {
+        const Ink ink = ink_rows(pane_shot(pane, w, h));
+        check(ink.top >= 0, "the self status pane paints something at every size");
+        // 最上面和最下面的内容都要贴着边:留的白边不超过高度的 5%,也不超过 24 像素。
+        const int slack = std::min(24, h / 20);
+        check(ink.top <= slack, "no blank band above the self status content");
+        check(h - 1 - ink.bottom <= slack, "no blank band below the self status content");
+        previous_height = h;
+    }
+    check(previous_height == 260, "every listed size was exercised");
+
+    // 字跟着长:同样的宽度,面板高一倍,本机名字那一行的字就更大(高度进内容,不进空白)。
+    const QImage small = pane_shot(pane, 560, 200);
+    const QImage large = pane_shot(pane, 560, 600);
+    check(ink_rows(large).widest > ink_rows(small).widest,
+          "a taller self status pane draws more ink per row, so its fonts grew");
+}
+
+// 战场数据分析:几块按权重分走整块高度。以前多出来的高度一半当间隔、一半上下居中,
+// 560x960 的格子里上下各空三百多像素,块里的字也不跟着变大。
+void battle_analysis_fills_whatever_box_it_gets() {
+    BattleAnalysisPane pane;
+    pane.setOwnFaction(1);
+    pane.setMetrics(analysis_metrics());
+    pane.setZoneBoard(analysis_board());
+    pane.setFortress(FortressStatus{0, 6});
+    pane.show();
+    for (const auto [w, h] : {std::pair{300, 150}, std::pair{340, 220}, std::pair{560, 420},
+                              std::pair{560, 960}, std::pair{1080, 650}, std::pair{1400, 260}}) {
+        const Ink ink = ink_rows(pane_shot(pane, w, h));
+        check(ink.top >= 0, "the analysis pane paints something at every size");
+        // 留一个固定的余量:内容区本身有 kPadY 的边距,最上面那一块是「一行字」,
+        // 字在自己那条带里上下居中,带比字高时上面自然有一点空。
+        // 要抓的是改之前那种「上下各空三百多像素」,所以 24 像素的余量仍然差一个数量级。
+        const int slack = std::max(24, h / 20);
+        check(ink.top <= slack, "no blank band above the analysis content");
+        check(h - 1 - ink.bottom <= slack, "no blank band below the analysis content");
+    }
+    // 最高那一档照旧是「完整」:铺满高度不该让它掉档,统计那一块还要在面板里。
+    pane.resize(560, 960);
+    check(pane.level() == BattleAnalysisPane::Level::Full, "a tall analysis pane still shows the full tier");
+    check(!pane.compact(), "a tall analysis pane keeps its stats inside the pane");
+    pane.resize(1400, 120);
+    check(pane.level() != BattleAnalysisPane::Level::Full, "a short analysis pane still drops to a smaller tier");
+
+    const QImage small = pane_shot(pane, 560, 200);
+    const QImage large = pane_shot(pane, 560, 600);
+    check(ink_rows(large).widest > ink_rows(small).widest,
+          "a taller analysis pane draws more ink per row, so its fonts grew");
+}
+
+// 下一步:只画真有的事,几件就分几份,一块空白都不留。以前不够三件时补虚线占位卡
+// (「暂时没有更要紧的事」),窄而高的格子里还把三张卡并排挤成细条,字下面空一大片。
+void next_step_fills_whatever_box_it_gets() {
+    NextStepPane pane;
+    pane.setCapacity(3);
+    pane.show();
+    for (std::size_t count : {std::size_t{1}, std::size_t{2}, std::size_t{3}}) {
+        pane.setCards(next_cards(count));
+        for (const auto [w, h] : {std::pair{300, 150}, std::pair{340, 220}, std::pair{560, 420},
+                                  std::pair{560, 960}, std::pair{1080, 650}, std::pair{1400, 260}}) {
+            const Ink ink = ink_rows(pane_shot(pane, w, h));
+            check(ink.top >= 0, "the next step pane paints something at every size");
+            // 卡片自己就是底色块,所以内容必须从第一行铺到最后一行。
+            check(ink.top <= 2, "the next step cards start at the top edge");
+            check(h - 1 - ink.bottom <= 2, "the next step cards reach the bottom edge");
+        }
+    }
+
+    // 形状决定排法:扁的并排,窄或高的竖着一行一张。
+    pane.setCards(next_cards(3));
+    pane.resize(1400, 260);
+    check(pane.sideBySide(3), "a wide pane puts three cards side by side");
+    pane.resize(560, 960);
+    check(!pane.sideBySide(3), "a tall pane stacks three cards as full-width rows");
+    pane.resize(300, 150);
+    check(!pane.sideBySide(3), "a narrow pane stacks instead of squeezing three columns");
+    pane.resize(1400, 260);
+    check(pane.sideBySide(1), "one card in a wide pane fills it as a single card");
+
+    // 容量仍然封顶:给四件也只画三件。
+    std::vector<NextCard> four = next_cards(3);
+    four.push_back(four.front());
+    pane.setCapacity(2);
+    pane.setCards(four);
+    check(pane.cards().size() == 4, "the pane keeps every card it was given");
+    const Ink capped = ink_rows(pane_shot(pane, 1400, 260));
+    check(capped.top <= 2, "a capped pane still fills its box");
+
+    // 没有要紧的事:那句话画大、居中,面板越大字越大。以前是一行小字贴在左边。
+    pane.setCards({});
+    const Ink empty_small = ink_rows(pane_shot(pane, 340, 220));
+    const Ink empty_large = ink_rows(pane_shot(pane, 1080, 650));
+    check(empty_small.top > 0 && empty_large.top > 0, "the empty line is centred, not pinned to the top");
+    check(empty_large.widest > empty_small.widest, "the empty line grows with the pane");
+    const int small_centre = (empty_small.top + empty_small.bottom) / 2;
+    const int large_centre = (empty_large.top + empty_large.bottom) / 2;
+    check(std::abs(small_centre - 220 / 2) <= 220 / 10, "the empty line sits in the middle of a small pane");
+    check(std::abs(large_centre - 650 / 2) <= 650 / 10, "the empty line sits in the middle of a large pane");
+
+    // 那句话的字号按面板大小只算一次:拖成别的大小必须重算,画出来和一块新建的面板一样。
+    const auto fresh_shot = [](int w, int h) {
+        NextStepPane fresh;
+        fresh.show();
+        return pane_shot(fresh, w, h);
+    };
+    check(pane_shot(pane, 1080, 650) == fresh_shot(1080, 650), "a resized empty pane draws like a fresh one");
+    check(pane_shot(pane, 340, 220) == fresh_shot(340, 220), "shrinking the empty pane back re-fits the line");
 }
 
 SelfCommandView infantry_in_match() {
@@ -551,12 +960,6 @@ SelfCommandView infantry_in_match() {
     view.shooter = 1;
     view.chassis = 1;
     return view;
-}
-
-QPushButton* button(QWidget& pane, const char* name) {
-    auto* found = pane.findChild<QPushButton*>(QString::fromLatin1(name));
-    if (!found) throw std::runtime_error(std::string("missing button ") + name);
-    return found;
 }
 
 rm::CommonCommand common(const std::pair<std::string, std::string>& sent) {
@@ -936,27 +1339,78 @@ void write_review_pngs() {
     check(popup_host.grab().save(popup_path), "revive popup PNG saved");
     std::cout << "  wrote " << popup_path.toStdString() << '\n';
 
-    auto* assembly = new AssemblyPane;
     Capture capture;
-    assembly->setView(full_assembly());
-    assembly->setSender(capture.sender());
-    assembly->setLinkUp(true);
-    assembly->setArm(30.0, std::array<float, 6>{12.5F, -34.0F, 78.5F, 0.0F, -15.0F, 92.5F});
-    assembly->tick(10000);
-    std::unique_ptr<QWidget> assembly_card(build(assembly, QStringLiteral("装配")));
-    assembly_card->show();
-    shoot(*assembly_card, QStringLiteral("assembly"), 420, 300);
-    shoot(*assembly_card, QStringLiteral("assembly"), 320, 240);
+    // 飞镖的几步各出一张:赛外、可开闸、闸门开着倒计时、本局用完。
+    const auto dart_card_for = [&](const DartView& first, const std::vector<DartView>& feed,
+                                   const QString& name) {
+        auto* pane = new DartPane;
+        pane->setSender(capture.sender());
+        pane->setLinkUp(true);
+        pane->tick(10000);
+        pane->setView(first);
+        for (const DartView& step : feed) pane->setView(step);
+        std::unique_ptr<QWidget> card(build(pane, QStringLiteral("飞镖")));
+        card->show();
+        shoot(*card, name, 380, 300, true);
+        return card;
+    };
+    DartView outside = dart_at(0, 0);
+    outside.match_sec.reset();
+    dart_card_for(outside, {}, QStringLiteral("dart-outside"));
+    dart_card_for(dart_at(0, 40), {}, QStringLiteral("dart-ready"));
+    DartView spent = dart_at(2, 100);
+    spent.hits = 4;
+    dart_card_for(spent, {}, QStringLiteral("dart-spent"));
 
     auto* dart = new DartPane;
-    dart->setView(full_dart());
     dart->setSender(capture.sender());
     dart->setLinkUp(true);
     dart->tick(10000);
+    for (const auto& [gate, sec] : {std::pair<std::uint32_t, std::int32_t>{1, 91}, {2, 98}, {2, 109}})
+        dart->setView(dart_at(gate, sec));
     std::unique_ptr<QWidget> dart_card(build(dart, QStringLiteral("飞镖")));
     dart_card->show();
-    shoot(*dart_card, QStringLiteral("dart"), 380, 300);
-    shoot(*dart_card, QStringLiteral("dart"), 320, 240);
+    shoot(*dart_card, QStringLiteral("dart"), 380, 300, true);
+    shoot(*dart_card, QStringLiteral("dart"), 320, 240, true);
+
+    // 哨兵:比赛中带价、武装一颗、冷却中,外加小尺寸那一档。
+    SentryView in_match = full_sentry();
+    in_match.remaining_sec = 120;
+    in_match.automatic = true;
+    in_match.result.reset();
+    const auto sentry_card_for = [&](const SentryView& view, const QString& name,
+                                     const std::function<void(SentryPane&)>& act = {}) {
+        auto* pane = new SentryPane;
+        pane->setView(view);
+        pane->setSender(capture.sender());
+        pane->setLinkUp(true);
+        pane->tick(10000);
+        std::unique_ptr<QWidget> card(build(pane, QStringLiteral("哨兵")));
+        card->show();
+        card->resize(380, 360);
+        card->layout()->activate();
+        QApplication::processEvents();
+        if (act) act(*pane);
+        shoot(*card, name, 380, 360, true);
+        return card;
+    };
+    sentry_card_for(in_match, QStringLiteral("sentry-in-match"));
+    sentry_card_for(in_match, QStringLiteral("sentry-armed"), [](SentryPane& pane) {
+        pane.findChild<QPushButton*>(QStringLiteral("sentryGoldRevive"))->click();
+    });
+    SentryView cooling = in_match;
+    cooling.result = SentryCtrlOutcome{8, 0, 9000};
+    {
+        auto* pane = new SentryPane;
+        pane->setView(cooling);
+        pane->setSender(capture.sender());
+        pane->setLinkUp(true);
+        // 成功只闪 4 秒,姿态冷却 5 秒:取中间这一段才看得到「姿态冷却 N 秒」。
+        pane->tick(13500);
+        std::unique_ptr<QWidget> card(build(pane, QStringLiteral("哨兵")));
+        card->show();
+        shoot(*card, QStringLiteral("sentry-cooling"), 380, 360, true);
+    }
 
     auto* sentry = new SentryPane;
     sentry->setView(full_sentry());
@@ -965,18 +1419,37 @@ void write_review_pngs() {
     sentry->tick(10000);
     std::unique_ptr<QWidget> sentry_card(build(sentry, QStringLiteral("哨兵")));
     sentry_card->show();
-    shoot(*sentry_card, QStringLiteral("sentry"), 380, 360);
-    shoot(*sentry_card, QStringLiteral("sentry"), 320, 240);
+    shoot(*sentry_card, QStringLiteral("sentry"), 380, 360, true);
+    shoot(*sentry_card, QStringLiteral("sentry"), 320, 240, true);
 
-    // 断线和空数据各出一张:这两种状态在赛前调试时最常见,也最容易画错。
-    auto* down = new AssemblyPane;
-    down->setView(AssemblyView{});
-    down->setLinkUp(false);
-    down->tick(1000);
-    std::unique_ptr<QWidget> down_card(build(down, QStringLiteral("装配")));
-    down_card->show();
-    shoot(*down_card, QStringLiteral("assembly-linkdown"), 420, 300);
+    // 标记工具条:默认、转发给哨兵开着、出错三张。放在地图卡片那样的深色底上量间距。
+    const auto toolbar_shot = [](const QString& name, const std::function<void(MarkToolbar&)>& act) {
+        auto* host = new QWidget;
+        host->setStyleSheet(QStringLiteral("background:#0b1120;"));
+        auto* column = new QVBoxLayout(host);
+        column->setContentsMargins(8, 8, 8, 8);
+        auto* bar = new MarkToolbar(host);
+        bar->setLinkUp(true);
+        column->addWidget(bar);
+        host->show();
+        host->resize(640, 70);
+        host->layout()->activate();
+        QApplication::processEvents();
+        if (act) act(*bar);
+        std::unique_ptr<QWidget> keep(host);
+        shoot(*host, name, 640, 70);
+    };
+    toolbar_shot(QStringLiteral("mark-toolbar"), {});
+    toolbar_shot(QStringLiteral("mark-toolbar-sentry-on"), [](MarkToolbar& bar) {
+        auto* toggle = bar.findChild<QPushButton*>(QStringLiteral("markSentry"));
+        toggle->click();
+        toggle->click();
+    });
+    toolbar_shot(QStringLiteral("mark-toolbar-error"), [](MarkToolbar& bar) {
+        bar.setStatus(mark_rejection_text(MarkRejection::TooSoon), true);
+    });
 
+    // 空数据出一张:这种状态在赛前调试时最常见,也最容易画错。
     auto* waiting = new SentryPane;
     waiting->setView(SentryView{});
     waiting->setLinkUp(true);
@@ -984,7 +1457,7 @@ void write_review_pngs() {
     waiting->tick(1000);
     std::unique_ptr<QWidget> waiting_card(build(waiting, QStringLiteral("哨兵")));
     waiting_card->show();
-    shoot(*waiting_card, QStringLiteral("sentry-waiting"), 380, 360);
+    shoot(*waiting_card, QStringLiteral("sentry-waiting"), 380, 360, true);
 }
 
 }  // namespace
@@ -992,18 +1465,23 @@ void write_review_pngs() {
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     try {
-        assembly_shows_every_field_and_sends_once();
-        assembly_cancel_needs_a_full_second();
-        assembly_waiting_lines_name_their_source();
-        assembly_drops_clicks_while_the_link_is_down();
-        dart_gates_the_launch_button();
-        dart_echo_goes_unconfirmed_without_a_change();
-        dart_link_down_disables_everything();
+        dart_f_asks_and_y_opens_the_gate();
+        dart_l_launches_once_the_gate_is_fully_open();
+        dart_j_cycles_targets_and_keeps_the_gate();
+        dart_counts_gate_chances_like_the_official_client();
+        dart_stops_after_four_darts_a_round();
+        dart_link_down_drops_every_key();
         sentry_cools_down_posture_buttons_after_a_success();
-        sentry_gold_revive_needs_a_hold_and_reports_unconfirmed();
+        sentry_spends_coins_only_on_a_second_click();
+        sentry_buttons_show_the_real_price();
         sentry_reads_the_right_seat_for_each_faction();
         builders_keep_missing_data_missing();
+        role_panes_fit_a_narrow_card();
         panes_degrade_at_small_sizes();
+        pane_scale_grows_and_shrinks_within_bounds();
+        self_status_fills_whatever_box_it_gets();
+        battle_analysis_fills_whatever_box_it_gets();
+        next_step_fills_whatever_box_it_gets();
         self_pane_sends_exchanges_with_the_right_caliber();
         self_pane_revive_follows_the_official_client();
         self_pane_rune_needs_a_hold_and_an_idle_rune();

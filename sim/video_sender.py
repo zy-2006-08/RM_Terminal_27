@@ -59,7 +59,17 @@ def split_access_units(stream: bytes) -> list[bytes]:
     return units
 
 
-def _follow_link_switch(link: dict) -> None:
+def start_at(frames: list[bytes], offset: int) -> list[bytes]:
+    """从第 offset 帧之后第一个带参数集（VPS）的帧开始循环，解码器不用等下一个关键帧。"""
+    if not frames or offset <= 0:
+        return frames
+    for index in range(offset % len(frames), len(frames)):
+        if b"\x00\x00\x00\x01\x40" in frames[index]:
+            return frames[index:] + frames[:index]
+    return frames
+
+
+def _follow_link_switch(link: dict, port: int) -> None:
     """跟随 sim/Link/video：off 时停发（帧序号照走），ok 时恢复。连不上 Broker 就一直发。"""
     import paho.mqtt.client as mqtt
 
@@ -71,7 +81,8 @@ def _follow_link_switch(link: dict) -> None:
             print(f"[video_sender] 图传{'恢复' if on else '停发'}", flush=True)
         link["on"] = on
 
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="sim-video-sender")
+    # 指挥手的图传墙要同时起几个发送端，客户端 ID 相同的话 Broker 会互相踢下线。
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"sim-video-sender-{port}")
     client.on_connect = lambda c, *_: c.subscribe(T_SIM_LINK_VIDEO)
     client.on_message = on_message
     while True:
@@ -93,6 +104,8 @@ def main() -> int:
     ap.add_argument("--jitter-ms", type=float, default=0.0, help="每包随机抖动上限")
     ap.add_argument("--no-link-control", action="store_true",
                     help="不听控制面板的「图传停 / 恢复」")
+    ap.add_argument("--offset", type=int, default=0,
+                    help="从第几帧开始放，几个发送端错开，指挥手的图传墙上每格画面才不一样")
     args = ap.parse_args()
 
     path = Path(args.file)
@@ -104,6 +117,7 @@ def main() -> int:
     if not frames:
         print("[video_sender] 未能从码流中切出任何帧", file=sys.stderr)
         return 1
+    frames = start_at(frames, args.offset)
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1 << 21)
@@ -116,7 +130,7 @@ def main() -> int:
 
     link = {"on": True}
     if not args.no_link_control:
-        threading.Thread(target=_follow_link_switch, args=(link,), daemon=True).start()
+        threading.Thread(target=_follow_link_switch, args=(link, args.port), daemon=True).start()
 
     frame_id = 0
     sent_packets = dropped = 0

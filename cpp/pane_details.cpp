@@ -182,17 +182,6 @@ PaneDetails::PaneDetails(UiProfileController* controller, QWidget* parent) : QFr
         row->addWidget(next_dwell_value_);
         l->addLayout(row);
     }
-    auto* order_title = new QLabel(QStringLiteral("先后顺序 · 按住一行上下拖，越靠上越先推荐"), this);
-    order_title->setProperty("heading", true);
-    l->addWidget(order_title);
-    next_order_ = new QListWidget(this);
-    next_order_->setObjectName(QStringLiteral("nextOrder"));
-    next_order_->setDragDropMode(QAbstractItemView::InternalMove);
-    next_order_->setDefaultDropAction(Qt::MoveAction);
-    next_order_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    next_order_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    next_order_->setFixedHeight(5 * 34);
-    l->addWidget(next_order_);
     add_page(this, root, &pages_, &l);  // Analysis
     analysis_mode_ = segments(this, l, QStringLiteral("显示内容"), {QStringLiteral("全部"), QStringLiteral("只看控制度")},
                               QStringLiteral("analysisMode"));
@@ -264,12 +253,6 @@ PaneDetails::PaneDetails(UiProfileController* controller, QWidget* parent) : QFr
     connect(next_dwell_, &QSlider::sliderReleased, this, [this] {
         const int value = next_dwell_->value();
         editOptions([value](UiOptions& options) { options.next_dwell_sec = value; });
-    });
-    // 拖完一行,按列表里的新顺序存。
-    connect(next_order_->model(), &QAbstractItemModel::rowsMoved, this, [this] {
-        QStringList order;
-        for (int row = 0; row < next_order_->count(); ++row) order << next_order_->item(row)->data(Qt::UserRole).toString();
-        editOptions([order](UiOptions& options) { options.next_order = order; });
     });
     connect(analysis_mode_, &QButtonGroup::idClicked, this,
             [this](int id) { editOptions([id](UiOptions& options) { options.analysis_control_only = id == 1; }); });
@@ -343,17 +326,6 @@ void PaneDetails::refresh() {
     next_dwell_value_->setText(QStringLiteral("%1 秒").arg(options.next_dwell_sec));
     analysis_mode_->button(options.analysis_control_only ? 1 : 0)->setChecked(true);
     own_video_->setChecked(!scheme.hidden.count(PaneId::Video));
-    std::vector<NextGroup> order;
-    for (const QString& key : options.next_order)
-        if (const auto group = next_group_from_key(key)) order.push_back(*group);
-    if (order.empty()) order = default_next_order();
-    next_order_->clear();
-    for (std::size_t n = 0; n < order.size(); ++n) {
-        auto* item = new QListWidgetItem(
-            QStringLiteral("%1    %2    %3").arg(n + 1).arg(next_group_name(order[n]), next_group_hint(order[n])), next_order_);
-        item->setData(Qt::UserRole, next_group_key(order[n]));
-        item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable | Qt::ItemIsDragEnabled);
-    }
     for (auto& [kind, box] : alert_kinds_) {
         const QSignalBlocker blocker(box);
         const bool by_config = config_disabled_.contains(kind);

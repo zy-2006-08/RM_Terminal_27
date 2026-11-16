@@ -6,8 +6,10 @@
 #include <QPainterPath>
 #include <QRectF>
 #include <QSize>
+#include <QSizeF>
 #include <QString>
 #include <cstdint>
+#include <functional>
 
 class QPainter;
 
@@ -85,6 +87,24 @@ void ensureFonts();
 // 按像素指定字号,效果图里的尺寸都是像素。weight 用 QFont::Weight 的数值(500、600…)。
 QFont numericPx(int pixel_size, int weight = QFont::DemiBold);
 QFont labelPx(int pixel_size, int weight = QFont::Medium);
+
+// 字号的下限。缩到这里还放不下就该少画一行,而不是继续缩成看不清的字。
+inline constexpr int kMinLabelPx = 11;
+inline constexpr int kMinNumberPx = 12;
+// 放大的上限。再大字就压过面板标题,面板看起来不像同一套界面了。
+inline constexpr qreal kMaxPaneScale = 2.5;
+
+// 一块面板只有一个缩放系数:实际尺寸 ÷ 设计尺寸,宽高各算一遍取小的那个 —— 放大时
+// 窄的那一边才不会溢出。操作手把面板拖大就放大、拖小就缩小,字号、块高、间距都乘它。
+qreal paneScale(const QSizeF& actual, const QSizeF& design, qreal minimum = 0.7,
+                qreal maximum = kMaxPaneScale);
+// 设计稿上的像素值乘上系数,四舍五入,至少 minimum 像素。
+int scaledPx(qreal design_px, qreal scale, int minimum = 1);
+
+// 字号从 wanted 往下缩到这段文字画得进 width 为止,最低 floor_px。先缩字、再由调用方
+// 决定省略:省略号是最后一招,一句话被切掉一半比小一号的字难读得多。
+int fitFontPx(const QString& text, int wanted_px, int floor_px, qreal width,
+              const std::function<QFont(int)>& make_font);
 // 旧接口:按点数指定。保留给还没改到的面板。
 QFont numericFont(int point_size, bool bold = false);
 QFont labelFont(int point_size, bool bold = false);

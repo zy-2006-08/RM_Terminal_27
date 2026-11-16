@@ -4,8 +4,10 @@
 
 #include <QString>
 #include <QStringList>
+#include <QVariantMap>
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 namespace rm_terminal {
 
@@ -40,6 +42,70 @@ GameResult resolve_game_result(const GameResultInputs& inputs);
 QString game_result_frame_dir(GameResult result);
 
 QString game_result_title(GameResult result);
+
+// QML 侧的配色键:"red" / "blue" / "draw",没有结果时空串。传字符串而不是枚举值,
+// 是为了让 QML 不必知道 C++ 枚举的整数取值。
+QString game_result_outcome(GameResult result);
+
+// 结束原因的中文说法。协议 end_reason:1 基地摧毁 2 控制度 3 总伤害 4 总剩余血量
+// 5 平局 6 异常终止 7 主裁判定;非结算阶段为 255。
+//
+// 措辞必须跟着 winner 走,因为同一个编码对两方说的是相反的事:编码 1 是「有一方
+// 基地被击毁」,按规则手册 5.8 第 1 条,获胜方是基地剩余血量高的那方,也就是**败方**
+// 基地被击毁 —— 直接写「红方基地被击毁」而不看 winner,有一半的局会说反。
+//
+// 返回空串表示「说不出来」:编码缺失、是 255 这个非结算占位值、超出已定义范围,
+// 或者编码与 winner 自相矛盾(平局却报了分胜负的编码)。调用方据此整行不画 ——
+// 结算屏上一句编造的理由比没有理由糟得多。
+QString game_result_reason(GameResult result, const Field<std::uint32_t>& end_reason);
+
+// 结算面板里的一行对比项。红蓝两侧分开存,缺失(nullopt)与真实的 0 必须可分:
+// 0 是「没打出伤害」,缺失是「服务器没给这一帧」,画成同一根空条会被读成前者。
+struct SettlementRow {
+    QString label;
+    std::optional<std::int64_t> red;
+    std::optional<std::int64_t> blue;
+    // 非空时代替数字显示(能量机关是状态而不是数)。
+    QString red_text;
+    QString blue_text;
+    // 条长的归一化分母。0 表示「没有量程」,由两侧较大值自己定标。
+    std::int64_t scale = 0;
+    // qrc 路径,空 = 这一行不配图标。
+    QString icon;
+};
+
+// 侧栏里的一台机器人。协议没有逐台伤害统计,所以侧栏只讲剩余血量。
+struct SettlementRobot {
+    std::uint32_t id = 0;      // 协议编号(蓝方 +100)
+    std::uint32_t number = 0;  // 显示编号 1–7
+    QString cls;               // 重装 / 工程 / 步兵 / 空中 / 哨兵
+    std::optional<std::uint32_t> hp;
+    std::optional<std::uint32_t> max_hp;
+};
+
+struct SettlementModel {
+    GameResult result = GameResult::None;
+    QString title;
+    QString reason;
+    std::optional<std::uint32_t> round;
+    std::optional<std::uint32_t> total_rounds;
+    std::optional<std::uint32_t> red_score;
+    std::optional<std::uint32_t> blue_score;
+    // 本局比赛用时。协议在结算阶段只给**结算阶段**自己的 stage_elapsed_sec,
+    // 拿它当比赛时长会把「结算开始 3 秒」显示成「比赛打了 3 秒」,所以这里一直是
+    // nullopt,界面显示「--」。等协议补上比赛阶段用时再接。
+    std::optional<std::int32_t> duration_sec;
+    std::vector<SettlementRow> rows;
+    std::vector<SettlementRobot> red_robots;
+    std::vector<SettlementRobot> blue_robots;
+};
+
+// 结算面板的全部数据。只读快照,不猜任何数:每个 Field 非 Valid 一律落成 nullopt。
+SettlementModel settlement_model(const Snapshot& snapshot);
+
+// 喂给 QML 根对象的那一份。缺失用 hasX=false 表达而不是用 0 顶替 ——
+// QML 侧据此画「--」。
+QVariantMap settlement_variant(const SettlementModel& model);
 
 // 按序号排出目录里真实存在的帧,返回可直接喂给 QML Image.source 的 URL。
 //

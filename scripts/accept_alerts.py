@@ -55,10 +55,11 @@ def main() -> int:
     run_dir = Path(tempfile.mkdtemp(prefix="rm-accept-alerts."))
     log_path = run_dir / "terminal.log"
     conf = run_dir / "terminal.conf"
-    conf.write_text(f"mqtt_port={MQTT_PORT}\nlog_destination={log_path}\nself_robot_id=3\n"
+    # 指挥手席位:飞镖闸门只提醒指挥手,能量机关不提醒重装,只有这个席位每种提醒都有。
+    conf.write_text(f"mqtt_port={MQTT_PORT}\nlog_destination={log_path}\nself_robot_id=6\n"
                     f"speech_dir={run_dir / 'no-voice'}\n",
                     encoding="utf-8")
-    env = dict(os.environ, RM_SELF_ID="3", QT_QPA_PLATFORM="offscreen",
+    env = dict(os.environ, RM_SELF_ID="6", QT_QPA_PLATFORM="offscreen",
                RM_PREP_SEC="3", RM_CHECK_SEC="1", RM_COUNTDOWN_SEC="1")
     procs: list[subprocess.Popen] = []
 

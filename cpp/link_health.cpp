@@ -93,6 +93,21 @@ LinkStatus video_status(const VideoSample& sample) {
                 QStringLiteral("%1没画面").arg(seconds_text(*sample.silent_ms)), hint);
 }
 
+LinkStatus wall_status(const std::vector<WallLinkSample>& feeds) {
+    if (feeds.empty()) return make(LinkLevel::Off, QString(), QStringLiteral("未启用"));
+    QStringList missing;
+    for (const WallLinkSample& feed : feeds)
+        if (!feed.online) missing << feed.label;
+    if (missing.isEmpty())
+        return make(LinkLevel::Ok, QString(), QStringLiteral("%1 路队友图传都有画面").arg(feeds.size()));
+    if (missing.size() == static_cast<qsizetype>(feeds.size()))
+        return make(LinkLevel::Down, QStringLiteral("无画面"), QStringLiteral("队友终端都没转发过来"),
+                    QStringLiteral("检查组网网线，和地面终端配置里的 video_relay_host"));
+    return make(LinkLevel::Warn, QStringLiteral("缺 %1 路").arg(missing.size()),
+                missing.join(QStringLiteral("、")) + QStringLiteral(" 没画面"),
+                QStringLiteral("检查那台终端的组网网线和配置里的 video_relay_host"));
+}
+
 LinkStatus controller_status(const ControllerSample& sample) {
     if (!sample.configured)
         return make(LinkLevel::Off, QString(),

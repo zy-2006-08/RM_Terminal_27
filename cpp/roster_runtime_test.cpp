@@ -9,9 +9,11 @@
 #include <QQuickItem>
 #include <QTimer>
 #include <algorithm>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
+#include <vector>
 
 using namespace rm_terminal;
 
@@ -78,6 +80,80 @@ void boundaries() {
     }
 }
 
+// 花名册的行把面板的高度均分,不留空白:以前行高封在 104、行间距封在 12,余量留在
+// 面板底部,四行的花名册在高面板里下面空掉一大半(570x1040 的格子里空四百多像素)。
+void rows_share_the_whole_height() {
+    RosterPanel panel(true);
+    panel.setFactionKnown(true, false);
+    std::vector<RosterEntry> entries;
+    for (const std::uint32_t id : {1u, 3u, 4u, 7u}) {
+        RosterEntry entry;
+        entry.id = RobotId{id};
+        entry.faction = 1;
+        entry.live = LiveState::Alive;
+        entry.hp = 200;
+        entry.max_hp = 200;
+        entry.is_self = id == 3;
+        entries.push_back(entry);
+    }
+    panel.setEntries(entries);
+    panel.show();
+    wait(30);
+
+    QQuickItem* root = panel.rootObject();
+    check(root != nullptr, "the roster panel root object exists");
+    const auto rows = [&] {
+        std::vector<QQuickItem*> found;
+        const std::function<void(QQuickItem*)> walk = [&](QQuickItem* item) {
+            if (item->metaObject()->indexOfProperty("lowHealthAlert") >= 0) {
+                found.push_back(item);
+                return;
+            }
+            for (QQuickItem* child : item->childItems()) walk(child);
+        };
+        walk(root);
+        return found;
+    };
+
+    double previous_row_height = 0;
+    for (const auto [w, h] : {std::pair{300, 150}, std::pair{560, 420}, std::pair{570, 1040}}) {
+        panel.resize(w, h);
+        QCoreApplication::processEvents();
+        wait(30);
+        const std::vector<QQuickItem*> found = rows();
+        check(found.size() == entries.size(), "every robot still gets a row");
+        // 四行加上三道间隔要填满面板的内容区(Panel.qml 的 body:上边 48、四周 8)。
+        const double body = h - 48 - 8;
+        double covered = 0;
+        double bottom = 0;
+        for (QQuickItem* row : found) {
+            covered += row->height();
+            bottom = std::max(bottom, row->y() + row->height());
+        }
+        check(covered >= body * 0.85, "the rows between them cover almost the whole body height");
+        check(bottom >= body - 2, "the last row reaches the bottom of the body, leaving no blank band");
+        // 面板越高,每行越高:余量进行高,不进底部的空白。
+        check(found.front()->height() > previous_row_height, "a taller panel gives every row more height");
+        previous_row_height = found.front()->height();
+    }
+    // 行高不再封在 104:1040 高的面板里四行每行都比 104 高。
+    check(previous_row_height > 104, "row height is no longer capped at the old 104 pixels");
+
+    // 字跟着行高长,上限 2.5 倍,且由宽度兜住不溢出。
+    panel.resize(570, 1040);
+    QCoreApplication::processEvents();
+    wait(30);
+    const std::vector<QQuickItem*> tall = rows();
+    const double scale = tall.front()->property("fk").toDouble();
+    check(scale > 1.25, "fonts grow past the old 1.25 ceiling when the row is tall");
+    check(scale <= 2.5, "font growth stops at 2.5x");
+    panel.resize(240, 1040);
+    QCoreApplication::processEvents();
+    wait(30);
+    const double narrow = rows().front()->property("fk").toDouble();
+    check(narrow < scale, "a narrow panel shrinks the fonts even though the rows are just as tall");
+}
+
 void updates_and_rendering() {
     RosterPanel panel(false);
     panel.resize(300, 160);
@@ -142,6 +218,7 @@ int main(int argc, char** argv) {
     qInstallMessageHandler(messages);
     try {
         boundaries();
+        rows_share_the_whole_height();
         updates_and_rendering();
         check(!qml_error, "no QML load or runtime warnings occurred");
     } catch (const std::exception& e) {

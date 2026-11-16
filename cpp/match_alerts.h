@@ -1,6 +1,7 @@
 #pragma once
 
 #include "domain.h"
+#include "seat.h"
 
 #include <QString>
 #include <QStringList>
@@ -61,6 +62,8 @@ std::vector<TimelineMark> match_timeline();
 
 struct MatchAlertSettings {
     std::uint32_t self_faction = 1;  // 1 红 2 蓝
+    // 能量机关只有步兵能开(规则手册 5.6.3),不提醒重装;飞镖闸门由指挥手开(5.7.3),只提醒指挥手。
+    Role role = Role::Infantry;
     int control_gap = 30;
     QStringList disabled;
 };

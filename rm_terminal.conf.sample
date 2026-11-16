@@ -69,6 +69,15 @@ map_mark_ms=30000
 display_fullscreen=false
 #display_screen=HDMI-1
 
+# Commander video wall. The commander has no video of its own; each ground seat
+# (1/3/4) forwards every video UDP packet unchanged to video_relay_host, the
+# commander terminal's IPv4 address on the team network (rule 3.3.1 allows the
+# custom terminals in the operator room to be wired together). Unset = no relay.
+# The commander listens on video_wall_port + robot number (1 hero, 3 and 4
+# infantry); ground seats send to the same port, so the whole team uses one value.
+#video_relay_host=10.27.0.6
+video_wall_port=3340
+
 # Custom controller (small arm) serial port. Leave unset on seats without one;
 # the 控制器 light then shows 未启用. Prefer /dev/serial/by-id/... over
 # /dev/ttyUSB0: the number can change when the cable is replugged. On Linux the

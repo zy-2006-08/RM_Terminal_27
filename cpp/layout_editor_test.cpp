@@ -144,12 +144,29 @@ void one_page_settings() {
     editor.undo();
     settle();
 
-    // 边上插不下(花名册只有 4 列,插地图要 4 + 3 列):两块换位置。
+    // 左边插不下(花名册只有 4 列,插地图要 4 + 3 列):原样不动,说清楚为什么,不偷偷换成换位置。
     const QRect roster = box(PaneId::AllyRoster);
+    const QRect map_at_start = saved(profiles, PaneId::Map);
     drag(&editor, box(PaneId::Map).center(), QPoint(roster.left() + 8, roster.center().y()));
     settle();
+    check(saved(profiles, PaneId::Map) == map_at_start && saved(profiles, PaneId::AllyRoster) == QRect(0, 0, 4, 7) &&
+              editor.toastText().contains(QStringLiteral("放不下")),
+          "an edge drop that cannot fit changes nothing instead of silently swapping");
+    // 拖到它中间:两块换位置。
+    drag(&editor, box(PaneId::Map).center(), roster.center());
+    settle();
     check(saved(profiles, PaneId::Map) == QRect(0, 0, 4, 7) && saved(profiles, PaneId::AllyRoster) == QRect(4, 4, 8, 5),
-          "an edge drop that cannot fit swaps the two panes instead");
+          "dropping in the middle of the roster swaps the two panes");
+    editor.undo();
+    settle();
+    // 拖到上面三分之一:放在它上面,它让出上面一块。
+    const QRect analysis_box = box(PaneId::Analysis);
+    drag(&editor, box(PaneId::Events).center(),
+         QPoint(analysis_box.center().x(), analysis_box.top() + analysis_box.height() / 6));
+    settle();
+    check(saved(profiles, PaneId::Events).top() == 0 && saved(profiles, PaneId::Analysis).top() > 0 &&
+              tiles_the_grid(editor.cells()),
+          "dropping on the top third puts the pane above");
     editor.undo();
     settle();
 
@@ -198,15 +215,34 @@ void one_page_settings() {
     check(saved(profiles, PaneId::Events) == QRect(12, 4, 4, 5) && saved(profiles, PaneId::Video) == QRect(0, 7, 4, 2),
           "undo brings the panes back from the library");
 
-    // 组件库来的放不下就替换,换下来的回到组件库。图传只有 4 × 2,再分不出一块来。
+    // 组件库来的放到一块的中间:整个替换,换下来的回到组件库。
     drag(&editor, centre(PaneId::SelfStatus), box(PaneId::Video).center());
     settle();
     check(saved(profiles, PaneId::SelfStatus) == QRect(0, 7, 4, 2) && saved(profiles, PaneId::Video).isNull() &&
               !editor.tileRect(PaneId::Video).isNull() && editor.toastText().contains(QStringLiteral("换下来了")),
-          "a library pane that cannot squeeze in replaces the pane under it");
+          "a library pane dropped in the middle replaces the pane under it");
     editor.undo();
     settle();
     check(saved(profiles, PaneId::Video) == QRect(0, 7, 4, 2), "undo puts the replaced pane back");
+    // 大的一块也能整个替换(以前只能分上下):下一步拖到地图正中间,地图回组件库。
+    const QRect map_place = saved(profiles, PaneId::Map);
+    drag(&editor, centre(PaneId::NextStep), box(PaneId::Map).center());
+    settle();
+    check(saved(profiles, PaneId::NextStep) == map_place && saved(profiles, PaneId::Map).isNull() &&
+              !editor.tileRect(PaneId::Map).isNull(),
+          "a library pane dropped in the middle of a big pane takes all of it");
+    editor.undo();
+    settle();
+    check(saved(profiles, PaneId::Map) == map_place, "undo brings the big pane back");
+    // 组件库来的放到上面三分之一:放在它上面。
+    drag(&editor, centre(PaneId::NextStep),
+         QPoint(box(PaneId::Map).center().x(), box(PaneId::Map).top() + box(PaneId::Map).height() / 6));
+    settle();
+    check(saved(profiles, PaneId::NextStep).top() == map_place.top() && saved(profiles, PaneId::Map).top() > map_place.top() &&
+              saved(profiles, PaneId::Map).bottom() == map_place.bottom(),
+          "a library pane dropped on the top third goes above the pane");
+    editor.undo();
+    settle();
 
     // 「本车」删掉了:画面里没有,组件库里也没有。
     check(saved(profiles, PaneId::SelfCommands).isNull() && editor.tileRect(PaneId::SelfCommands).isNull(),

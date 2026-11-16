@@ -167,21 +167,21 @@ void zone_codes_map_to_four_slots() {
     snapshot.game.red_base_zone_progress = present<std::int32_t>(-4);
 
     const ZoneBoard board = zone_board(snapshot);
-    check(board.zones[0].name == QStringLiteral("红方前哨区"), "slot 0 is the red outpost");
-    check(board.zones[1].name == QStringLiteral("蓝方前哨区"), "slot 1 is the blue outpost");
-    check(board.zones[2].name == QStringLiteral("红方基地区"), "slot 2 is the red base");
+    check(board.zones[0].name == QStringLiteral("红方基地区"), "slot 0 is the red base");
+    check(board.zones[1].name == QStringLiteral("红方前哨区"), "slot 1 is the red outpost");
+    check(board.zones[2].name == QStringLiteral("蓝方前哨区"), "slot 2 is the blue outpost");
     check(board.zones[3].name == QStringLiteral("蓝方基地区"), "slot 3 is the blue base");
-    check(board.zones[0].control == ZoneControl::RedFull, "code 2 is red full control");
-    check(board.zones[1].control == ZoneControl::Neutral, "code 0 is uncontrolled");
-    check(board.zones[2].control == ZoneControl::BlueTemporary, "code 3 is blue temporary");
+    check(board.zones[0].control == ZoneControl::BlueTemporary, "code 3 is blue temporary");
+    check(board.zones[1].control == ZoneControl::RedFull, "code 2 is red full control");
+    check(board.zones[2].control == ZoneControl::Neutral, "code 0 is uncontrolled");
     check(board.zones[3].control == ZoneControl::BlueFull, "code 4 is blue full control");
-    check(zone_status_text(board.zones[2]) == QStringLiteral("红方基地区 蓝方临时（蓝方推进 4s）"),
+    check(zone_status_text(board.zones[0]) == QStringLiteral("红方基地区 蓝方临时（蓝方推进 4s）"),
           "a pushing zone shows who is pushing");
-    check(zone_status_text(board.zones[0]) == QStringLiteral("红方前哨区 红方完全"),
+    check(zone_status_text(board.zones[1]) == QStringLiteral("红方前哨区 红方完全"),
           "a quiet zone shows only its control");
-    check(zone_status_brief_text(board.zones[2]) == QStringLiteral("红基地 蓝临时 蓝推4s"),
+    check(zone_status_brief_text(board.zones[0]) == QStringLiteral("红基地 蓝临时 蓝推4s"),
           "the brief form keeps who controls and who pushes");
-    check(zone_status_brief_text(board.zones[1]) == QStringLiteral("蓝前哨 未控"),
+    check(zone_status_brief_text(board.zones[2]) == QStringLiteral("蓝前哨 未控"),
           "the brief form of an uncontrolled zone");
 }
 
@@ -189,8 +189,8 @@ void absent_zone_stays_unknown() {
     Snapshot snapshot;
     snapshot.game.red_outpost_zone = present<std::uint32_t>(0);
     const ZoneBoard board = zone_board(snapshot);
-    check(board.zones[0].control == ZoneControl::Neutral, "present zero is neutral");
-    check(board.zones[1].control == ZoneControl::Unknown, "absent zone is unknown");
+    check(board.zones[1].control == ZoneControl::Neutral, "present zero is neutral");
+    check(board.zones[0].control == ZoneControl::Unknown, "absent zone is unknown");
     check(zone_control_text(ZoneControl::Unknown) == QStringLiteral("--"),
           "unknown zone renders as placeholder, not uncontrolled");
 }

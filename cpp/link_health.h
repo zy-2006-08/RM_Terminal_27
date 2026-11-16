@@ -63,9 +63,16 @@ struct ControllerSample {
     double feedback_per_s = 0;
 };
 
+// 指挥手没有自己的图传,「图传」灯看的是图传墙:队友终端转发过来的每一路有没有画面。
+struct WallLinkSample {
+    QString label;
+    bool online = false;
+};
+
 LinkStatus referee_status(const RefereeSample& sample);
 LinkStatus car_status(const CarSample& sample);
 LinkStatus video_status(const VideoSample& sample);
+LinkStatus wall_status(const std::vector<WallLinkSample>& feeds);
 LinkStatus controller_status(const ControllerSample& sample);
 
 struct LinkReport {

@@ -88,6 +88,25 @@ void video_and_controller_states() {
           "the relayed feedback rate is shown");
 }
 
+void the_commander_light_follows_the_wall() {
+    using rm_terminal::WallLinkSample;
+    check(rm_terminal::wall_status({}).level == LinkLevel::Off, "no wall is off");
+    std::vector<WallLinkSample> feeds{{QStringLiteral("1 号 · 重装"), true},
+                                      {QStringLiteral("3 号 · 步兵"), true},
+                                      {QStringLiteral("4 号 · 步兵"), true}};
+    const auto all = rm_terminal::wall_status(feeds);
+    check(all.level == LinkLevel::Ok && all.summary.isEmpty(), "every feed live is ok");
+    feeds[2].online = false;
+    const auto one = rm_terminal::wall_status(feeds);
+    check(one.level == LinkLevel::Warn && one.summary == QStringLiteral("缺 1 路"), "a missing feed is a warning");
+    check(one.detail.contains(QStringLiteral("4 号 · 步兵")) && !one.detail.contains(QStringLiteral("3 号")),
+          "the warning names only the missing robot");
+    for (WallLinkSample& feed : feeds) feed.online = false;
+    const auto none = rm_terminal::wall_status(feeds);
+    check(none.level == LinkLevel::Down && none.hint.contains(QStringLiteral("video_relay_host")),
+          "no feed at all is down and points at the relay setting");
+}
+
 void silence_restarts_at_reconnect() {
     check(!rm_terminal::silence(std::nullopt, std::nullopt, 5000).has_value(),
           "nothing yet is not a duration");
@@ -150,6 +169,7 @@ int main() {
     referee_distinguishes_down_from_silent();
     car_points_at_the_real_cause();
     video_and_controller_states();
+    the_commander_light_follows_the_wall();
     silence_restarts_at_reconnect();
     rate_meter_settles_per_second();
     self_check_counts_only_failures();

@@ -455,16 +455,33 @@ QPushButton* LayoutEditor::schemeButton(const QString& id) const {
     return nullptr;
 }
 
-DropSide LayoutEditor::sideAt(const QRect& box, const QPoint& pixel) const {
-    const double fx = (pixel.x() - box.left()) / static_cast<double>(std::max(1, box.width()));
+namespace {
+// 左右两条窄边的宽度:一块的六分之一左右,窄面板也留得出能指中的宽度,宽面板不占太多。
+int side_strip(int width) { return std::clamp(width / 6, 28, 110); }
+}  // namespace
+
+LayoutEditor::DropZone LayoutEditor::zoneAt(const QRect& box, const QPoint& pixel) const {
+    const int strip = side_strip(box.width());
+    if (pixel.x() < box.left() + strip) return DropZone::Left;
+    if (pixel.x() > box.right() - strip) return DropZone::Right;
     const double fy = (pixel.y() - box.top()) / static_cast<double>(std::max(1, box.height()));
-    if (fx > 0.25 && fx < 0.75 && fy > 0.25 && fy < 0.75) return DropSide::Center;
-    const double left = fx, right = 1 - fx, top = fy, bottom = 1 - fy;
-    const double nearest = std::min({left, right, top, bottom});
-    if (nearest == left) return DropSide::Left;
-    if (nearest == right) return DropSide::Right;
-    if (nearest == top) return DropSide::Top;
-    return DropSide::Bottom;
+    if (fy < 1.0 / 3.0) return DropZone::Top;
+    if (fy > 2.0 / 3.0) return DropZone::Bottom;
+    return DropZone::Middle;
+}
+
+QRect LayoutEditor::zoneRect(const QRect& box, DropZone zone) const {
+    const int strip = side_strip(box.width());
+    const int third = box.height() / 3;
+    const QRect column(box.left() + strip, box.top(), box.width() - 2 * strip, box.height());
+    switch (zone) {
+    case DropZone::Left: return QRect(box.left(), box.top(), strip, box.height());
+    case DropZone::Right: return QRect(box.right() + 1 - strip, box.top(), strip, box.height());
+    case DropZone::Top: return QRect(column.left(), box.top(), column.width(), third);
+    case DropZone::Bottom: return QRect(column.left(), box.bottom() + 1 - third, column.width(), third);
+    case DropZone::Middle: break;
+    }
+    return QRect(column.left(), box.top() + third, column.width(), box.height() - 2 * third);
 }
 
 void LayoutEditor::placeStrip() {
@@ -916,8 +933,7 @@ void LayoutEditor::updateDrag() {
     const auto under = paneAt(drag_.mouse);
     if (!under || (drag_.kind == DragKind::Move && *under == drag_.pane)) return;
     drag_.target = under;
-    const QRect units = cell(*under)->units();
-    drag_.side = sideAt(unitToCanvas(units), drag_.mouse);
+    drag_.zone = zoneAt(unitToCanvas(cell(*under)->units()), drag_.mouse);
     // 图传拖到「本车」上:放回本车里,变回下面的小窗。
     if (drag_.pane == PaneId::Video && *under == PaneId::SelfCommands &&
         embedded_host(layout_profile(role_), PaneId::Video).has_value()) {
@@ -925,32 +941,28 @@ void LayoutEditor::updateDrag() {
         drag_.result = layout_remove(working_.cells, PaneId::Video);
         return;
     }
-    // 能插就插;插不下,画面里的就换位置,组件库来的就替换掉那一块。
-    const auto attempt = [&](DropAction action, std::optional<std::vector<PaneSlot>> cells) {
-        if (drag_.result || !cells) return;
-        drag_.result = std::move(cells);
-        drag_.action = action;
-    };
-    const DropSide longer = units.width() >= units.height() ? DropSide::Right : DropSide::Bottom;
-    if (drag_.side != DropSide::Center)
-        attempt(DropAction::Insert, layout_drop(working_.cells, drag_.pane, *under, drag_.side));
-    if (drag_.kind == DragKind::Move)
-        attempt(DropAction::Swap, layout_drop(working_.cells, drag_.pane, *under, DropSide::Center));
-    if (drag_.side == DropSide::Center) {
-        // 放在正中间又换不了:先插到离原来位置远的那一边(上下挨着的两块就是调个先后),再试长的那边和别的边。
-        std::vector<DropSide> order;
+    // 每个区只做写在上面的那一件事:上下左右是分一块出来,中间是整个占掉(组件库来的把它换回
+    // 组件库,画面里的两块换位置)。放不下就标红说明,不偷偷换成别的做法。
+    DropAction action = DropAction::Insert;
+    std::optional<std::vector<PaneSlot>> cells;
+    switch (drag_.zone) {
+    case DropZone::Top: cells = layout_drop(working_.cells, drag_.pane, *under, DropSide::Top); break;
+    case DropZone::Bottom: cells = layout_drop(working_.cells, drag_.pane, *under, DropSide::Bottom); break;
+    case DropZone::Left: cells = layout_drop(working_.cells, drag_.pane, *under, DropSide::Left); break;
+    case DropZone::Right: cells = layout_drop(working_.cells, drag_.pane, *under, DropSide::Right); break;
+    case DropZone::Middle:
         if (drag_.kind == DragKind::Move) {
-            const QRect from = cell(drag_.pane)->units();
-            if (from.top() > units.bottom()) order.push_back(DropSide::Top);
-            else if (from.bottom() < units.top()) order.push_back(DropSide::Bottom);
-            else if (from.left() > units.right()) order.push_back(DropSide::Left);
-            else if (from.right() < units.left()) order.push_back(DropSide::Right);
+            action = DropAction::Swap;
+            cells = layout_drop(working_.cells, drag_.pane, *under, DropSide::Center);
+        } else {
+            action = DropAction::Replace;
+            cells = layout_replace(working_.cells, drag_.pane, *under);
         }
-        for (const DropSide side : {longer, DropSide::Right, DropSide::Bottom, DropSide::Left, DropSide::Top})
-            if (std::find(order.begin(), order.end(), side) == order.end()) order.push_back(side);
-        for (const DropSide side : order) attempt(DropAction::Insert, layout_drop(working_.cells, drag_.pane, *under, side));
+        break;
     }
-    if (drag_.kind == DragKind::Add) attempt(DropAction::Replace, layout_replace(working_.cells, drag_.pane, *under));
+    if (!cells) return;
+    drag_.result = std::move(cells);
+    drag_.action = action;
 }
 
 // 放不下时说是哪一块太大:拖的这块本身放得进那一块,卡住的就是那一块挪不过去。
@@ -1162,7 +1174,7 @@ void LayoutEditor::paintEvent(QPaintEvent*) {
         const struct {
             int kind;
             QString text;
-        } tips[] = {{0, QStringLiteral("拖面板：换位置")}, {1, QStringLiteral("拖缝隙：改大小")},
+        } tips[] = {{0, QStringLiteral("拖面板：上下左右或换位")}, {1, QStringLiteral("拖缝隙：改大小")},
                     {2, QStringLiteral("删掉，能撤销")}, {3, QStringLiteral("调这一块的细项")}};
         const int col_w = 168;
         const int x0 = width() - 16 - col_w * 2;
@@ -1373,8 +1385,19 @@ void LayoutEditor::paintEvent(QPaintEvent*) {
         };
         // 字最后画,压在跟着鼠标的那一块上面,拖到正中间时也看得见「两块换位置」。
         std::vector<std::function<void()>> labels;
+        std::vector<QRect> label_boxes;
         const auto label = [&](const QRect& box, const QString& big, const QString& small, const QColor& ink) {
-            labels.push_back([=, &fitted] {
+            // 按字的实际宽度占位(不是整块宽):左右两侧的小提示只在真跟字重叠时才让开。
+            const int text_w = std::min(box.width() - 12,
+                                        std::max(QFontMetrics(theme::labelPx(18, QFont::Bold)).horizontalAdvance(big),
+                                                 QFontMetrics(theme::labelPx(13)).horizontalAdvance(small)) + 24);
+            const QRect plate(box.center().x() - text_w / 2, box.center().y() - 30, text_w, small.isEmpty() ? 34 : 60);
+            label_boxes.push_back(plate);
+            labels.push_back([=, &fitted, &painter] {
+                // 半透明深底:字压在跟着鼠标的缩略图上也看得清。
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(QColor(6, 12, 22, 200));
+                painter.drawRoundedRect(plate, 6, 6);
                 fitted(QRect(box.left() + 6, box.center().y() - 26, box.width() - 12, 26), big, 18, 12, QFont::Bold, ink);
                 if (!small.isEmpty())
                     fitted(QRect(box.left() + 6, box.center().y() + 4, box.width() - 12, 22), small, 13, 11,
@@ -1464,6 +1487,49 @@ void LayoutEditor::paintEvent(QPaintEvent*) {
                 mark(target_box, false);
                 label(target_box, QStringLiteral("放不下"), dropProblem(), theme::kDangerText);
                 break;
+            }
+            // 这一块分成的区:虚线分开,指着的区按上面画出松手后的样子,别的区各写一行小字,
+            // 让人知道还能放哪。小字跟结果的大字撞上就不写。
+            if (drag_.action != DropAction::Embed) {
+                const int strip = side_strip(target_box.width());
+                const int third = target_box.height() / 3;
+                painter.setPen(QPen(QColor(196, 233, 251, 120), 1, Qt::DashLine));
+                painter.drawLine(target_box.left() + strip, target_box.top() + 4, target_box.left() + strip,
+                                 target_box.bottom() - 4);
+                painter.drawLine(target_box.right() + 1 - strip, target_box.top() + 4, target_box.right() + 1 - strip,
+                                 target_box.bottom() - 4);
+                for (const int y : {target_box.top() + third, target_box.bottom() + 1 - third})
+                    painter.drawLine(target_box.left() + strip + 4, y, target_box.right() - strip - 4, y);
+                const QFont font = theme::labelPx(12, QFont::DemiBold);
+                const QFontMetrics metrics(font);
+                const struct {
+                    DropZone zone;
+                    QString text;
+                    QString narrow;
+                } zones[] = {{DropZone::Top, QStringLiteral("放上面"), QString()},
+                             {DropZone::Bottom, QStringLiteral("放下面"), QString()},
+                             {DropZone::Middle,
+                              drag_.kind == DragKind::Move ? QStringLiteral("两块换位置") : QStringLiteral("整个替换"),
+                              QString()},
+                             {DropZone::Left, QStringLiteral("放左边"), QStringLiteral("左")},
+                             {DropZone::Right, QStringLiteral("放右边"), QStringLiteral("右")}};
+                for (const auto& zone : zones) {
+                    if (zone.zone == drag_.zone) continue;
+                    const QRect area = zoneRect(target_box, zone.zone);
+                    QString text = zone.text;
+                    if (metrics.horizontalAdvance(text) + 14 > area.width() - 4) text = zone.narrow;
+                    if (text.isEmpty() || metrics.horizontalAdvance(text) + 14 > area.width() - 4 || area.height() < 26)
+                        continue;
+                    QRect pill(0, 0, metrics.horizontalAdvance(text) + 14, 22);
+                    pill.moveCenter(area.center());
+                    if (std::any_of(label_boxes.begin(), label_boxes.end(),
+                                    [&](const QRect& taken) { return taken.intersects(pill); }))
+                        continue;
+                    theme::paintGlass(painter, QRectF(pill), 4, false, QColor(6, 12, 22, 200), theme::kRowBorder);
+                    painter.setFont(font);
+                    painter.setPen(theme::kTextBright);
+                    painter.drawText(pill, Qt::AlignCenter, text);
+                }
             }
         }
         // 跟着鼠标的那一块。

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "assembly_flow.h"
 #include "purchase.h"
 
 #include <QObject>
@@ -39,6 +40,8 @@ private:
 
 // H 键远程兑换框,屏幕底部正中。三项:回血 Ctrl+1、17mm Ctrl+2、42mm Ctrl+3,能买的亮、
 // 不能买的灰并写原因。关着时如果有兑换结果(「已兑换，6 秒后生效」「到账」),只露出底下那条。
+// 重装的框:上面多一排装配难度(1–4 选、Enter 开始),下面只有回血 Ctrl+1 和 42mm Ctrl+3,
+// 重装没有 17mm 发射机构(规则手册表 3-3)。
 class RemoteExchangePopup final : public QWidget {
     Q_OBJECT
 public:
@@ -50,9 +53,18 @@ public:
     bool isOpen() const { return open_; }
     void setStatus(const QString& status, bool problem);
     void setChoose(std::function<void(int index)> choose);
+    // 重装:装配难度那一排。row.shown = false 时是步兵的框。
+    void setAssembly(const AssemblyRow& row);
+    const AssemblyRow& assembly() const { return assembly_; }
+    void setAssemblyActions(std::function<void(std::uint32_t level)> choose, std::function<void()> start);
+    // 这一项在框里有没有(重装的框里没有 17mm)。
+    bool hasItem(int index) const;
     QString barText() const;
     QString tileText(int index) const;
     QRect tileRect(int index) const;
+    // 重装框里 1–4 级的键帽和「Enter 开始」。没开着或不是重装时为空。
+    QRect levelRect(std::uint32_t level) const;
+    QRect startRect() const;
     QSize sizeHint() const override;
 
 protected:
@@ -61,12 +73,16 @@ protected:
 
 private:
     void refresh();
+    void paintAssembly(QPainter& painter);
 
     std::array<PurchaseOffer, 3> offers_;
     bool open_ = false;
     QString status_;
     bool problem_ = false;
     std::function<void(int)> choose_;
+    AssemblyRow assembly_;
+    std::function<void(std::uint32_t)> choose_level_;
+    std::function<void()> start_assembly_;
 };
 
 // O/I 键补给区补弹面板,屏幕正中。照官方:「已有/可兑换允许发弹量 50/100」,下面一排
@@ -122,6 +138,9 @@ public:
 
     void toggleRemote();
     void toggleSupply(Caliber caliber);
+    // 重装:框里装配难度那一排和它的鼠标点击。
+    void setAssemblyRow(const AssemblyRow& row);
+    void setAssemblyActions(std::function<void(std::uint32_t level)> choose, std::function<void()> start);
     // Ctrl+1/2/3 → 0/1/2。远程兑换框开着、那一项能买时弹确认框。
     bool chooseRemote(int index);
     // Y / N。确认框开着时处理并返回 true;没开着返回 false,Y 交给复活。
@@ -148,6 +167,8 @@ public:
 Q_SIGNALS:
     // 补弹面板要用鼠标点:开着时主程序暂停键鼠控制,关掉后接着控制。
     void supplyOpenChanged(bool open);
+    // H 框开关。重装的 1–4、Enter 只在框开着时归终端,关着时不拦这几个键。
+    void remoteOpenChanged(bool open);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -157,6 +178,7 @@ private:
 
     void open(const PurchaseOffer& offer, Source source);
     void setSupplyOpen(bool open);
+    void setRemoteOpen(bool open);
     void flash(const QString& text);
     void refresh();
     void place();

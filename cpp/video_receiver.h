@@ -49,6 +49,7 @@ public:
     bool online() const { return online_; }
     QString state() const { return state_; }
     qint64 decodedFrames() const { return decoded_frames_; }
+    quint64 packetsReceived() const { return reassembler_.stats().packets_received; }
     // 距离上一帧解出来过了多久;还没解出过任何一帧时为 -1。
     qint64 msSinceLastFrame() const { return last_frame_ < 0 ? -1 : clock_.elapsed() - last_frame_; }
 private:

@@ -48,8 +48,6 @@ struct UiOptions {
     int next_size = 1;       // 卡片大小,0 紧凑 1 标准 2 大
     bool next_voice = true;  // 第 1 件换了就念出来
     int next_dwell_sec = 3;  // 每张至少停几秒,1~10
-    // 五组的先后(next_group_key 的名字),空 = 默认 保命 → 守家 → 抓机会 → 补给 → 抢分。
-    QStringList next_order;
 
     bool operator==(const UiOptions& other) const;
     bool operator!=(const UiOptions& other) const { return !(*this == other); }

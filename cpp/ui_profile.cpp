@@ -51,7 +51,6 @@ QJsonObject options_to_json(const UiOptions& options) {
     out.insert(QStringLiteral("next_size"), options.next_size);
     out.insert(QStringLiteral("next_voice"), options.next_voice);
     out.insert(QStringLiteral("next_dwell_sec"), options.next_dwell_sec);
-    out.insert(QStringLiteral("next_order"), QJsonArray::fromStringList(options.next_order));
     return out;
 }
 
@@ -85,14 +84,6 @@ std::optional<UiOptions> options_from_json(const QJsonObject& object) {
         if (!value.isDouble()) return std::nullopt;
         *target = value.toInt();
     }
-    const auto order = object.value(QStringLiteral("next_order"));
-    if (!order.isUndefined()) {
-        if (!order.isArray()) return std::nullopt;
-        for (const auto item : order.toArray()) {
-            if (!item.isString()) return std::nullopt;
-            options.next_order.append(item.toString());
-        }
-    }
     const auto muted = object.value(QStringLiteral("alerts_muted"));
     if (!muted.isUndefined()) {
         if (!muted.isArray()) return std::nullopt;
@@ -114,7 +105,7 @@ bool UiOptions::operator==(const UiOptions& other) const {
            analysis_control_only == other.analysis_control_only &&
            alerts_muted == other.alerts_muted && next_mode == other.next_mode && next_count == other.next_count &&
            next_size == other.next_size && next_voice == other.next_voice &&
-           next_dwell_sec == other.next_dwell_sec && next_order == other.next_order;
+           next_dwell_sec == other.next_dwell_sec;
 }
 
 // 每一块都能关(操作手自己定)。界面设置页里只拦一件事:画面里至少留一块。
@@ -170,17 +161,14 @@ std::vector<UiScheme> builtin_schemes(Role role) {
     UiScheme minimal = make_scheme(QStringLiteral("minimal"), QStringLiteral("极简"));
     minimal.hidden = {PaneId::Events, PaneId::Video, PaneId::NextStep};
     // 图传为主(效果图 8):官方选手端被遮挡时用。图传占右上 12 × 6 格(1440 × 900 下接近 16:9),
-    // 左列 我方 / 敌方 / 地图,下排 战场数据分析(重装左边还有装配)。
+    // 左列 我方 / 敌方 / 地图,下排 战场数据分析。
     UiScheme video = make_scheme(QStringLiteral("video"), QStringLiteral("图传为主"));
     const auto cell = [](PaneId pane, int column, int row, int width, int height) {
         return PaneSlot{pane, row, column, height, width};
     };
     video.cells = {cell(PaneId::AllyRoster, 0, 0, 4, 3), cell(PaneId::EnemyRoster, 0, 3, 4, 3),
-                   cell(PaneId::Map, 0, 6, 4, 3), cell(PaneId::Video, 4, 0, 12, 6)};
-    if (role == Role::Hero)
-        video.cells.insert(video.cells.end(), {cell(PaneId::Assembly, 4, 6, 4, 3), cell(PaneId::Analysis, 8, 6, 8, 3)});
-    else
-        video.cells.push_back(cell(PaneId::Analysis, 4, 6, 12, 3));
+                   cell(PaneId::Map, 0, 6, 4, 3), cell(PaneId::Video, 4, 0, 12, 6),
+                   cell(PaneId::Analysis, 4, 6, 12, 3)};
     std::vector<UiScheme> out{standard, minimal};
     if (in_profile(role, PaneId::NextStep)) out.insert(out.begin() + 1, novice);
     if (role != Role::Commander) out.push_back(video);
@@ -289,13 +277,6 @@ void normalize(RoleSetup* setup, Role role) {
         options.next_count = std::clamp(options.next_count, 1, 3);
         options.next_size = std::clamp(options.next_size, 0, 2);
         options.next_dwell_sec = std::clamp(options.next_dwell_sec, 1, 10);
-        QStringList order;
-        for (const QString& key : options.next_order)
-            if (next_group_from_key(key) && !order.contains(key)) order << key;
-        if (!order.isEmpty())
-            for (const NextGroup group : default_next_order())
-                if (!order.contains(next_group_key(group))) order << next_group_key(group);
-        options.next_order = order;
         const std::optional<UiScheme> builtin = builtin_scheme(role, scheme.id);
         if (is_builtin_scheme(scheme.id) && !builtin) continue;
         // 这一版没有的面板(比如去掉的「控制度（大号）」)先拿掉,空出来的旁边补上;

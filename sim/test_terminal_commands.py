@@ -148,6 +148,33 @@ m.set_hp(SELF_ROBOT_ID, 0)
 assert m.pay_revive() is None
 assert sum(m.injury.values()) == 0, "复活后清零"
 
+# 重装的 42mm(规则 5.7.1):有安装权限才装得上;装上能买弹,打出一发验证弹才算成功安装(Event 16)。
+if ms._SELF_LOCAL_ID == 1:
+    m = at_match_second(60)
+    assert m.set_module().startswith("还没有安装权限"), "60 秒、没装成三级:还不能装"
+    assert not m.launcher_ready and m.shooter_modules() == (0, 0)
+    m.tech_level[ms._SELF_FACTION] = 3
+    m.events.clear()
+    assert m.set_module() is None and m.launcher_ready and not m.launcher_verified
+    assert m.shooter_modules() == (0, 1), "装上后 42mm 测速模块在线,终端放开 42mm 兑换"
+    assert (16, "") not in m.events, "只装上不发 Event 16"
+    assert m.max_hp == 400, "成功安装前还是开局 400 血"
+    assert m.buy_ammo(42, 2) is None and m.ammo == 2, "装上就能买 42mm"
+    assert m.verify_launcher() is None
+    assert m.launcher_verified and (16, "") in m.events and m.ammo == 1, "验证弹扣 1 发,发 Event 16"
+    assert m.max_hp == 600 and m.hp == 600, "成功安装后上限 600(表 5-16)"
+    assert not m.out_of_combat(), "打出验证弹就不算脱战"
+    assert m.verify_launcher() is not None and m.set_module() is not None, "已经装好了,不能再装、再验"
+
+    m = at_match_second(301)
+    assert m.set_module() is None
+    m.events.clear()
+    assert m.shoot(42, 1) is None and m.launcher_verified and (16, "") in m.events, \
+        "没点「打验证弹」直接射击:第一发就是验证弹"
+    assert "超发" in m.note, "允许发弹量 0 时打出验证弹,提醒算超发"
+    m.start_next_round()
+    assert not m.launcher_ready and not m.launcher_verified and m.max_hp == 400, "下一局重新装"
+
 # 下一局清掉远程兑换的待到账和能量机关用掉的次数。
 m = at_match_second(60)
 m.remote_pending.append((61.0, "ammo", 100, m.deaths))
@@ -156,5 +183,12 @@ m.fired_total = 30
 m.start_next_round()
 assert m.remote_pending == [] and m.rune_used == {"small": 0, "big": 0}
 assert m.fired_total == 0, "累计已发弹量每局清零"
+
+# 指挥手的哨兵指令按总价扣钱，和终端按钮上写的一样(规则 5.7.2、表 5-7)。
+assert ms.sentry_command_cost(7, 100, True) == 50 and ms.sentry_command_cost(7, 100, False) == 0
+assert ms.sentry_command_cost(3, 0, True) == 200, "远程 100 发 150 + 干预费 50"
+assert ms.sentry_command_cost(4, 300, True) == 200, "5:00 远程回血 50 + 100 + 50"
+assert ms.sentry_command_cost(6, 300, True) == 470, "5:00 立即复活 5×80 + 1 级×20 + 50"
+assert ms.sentry_command_cost(5, 300, False) == 0, "半自动哨兵确认复活不花钱"
 
 print("terminal commands ok")

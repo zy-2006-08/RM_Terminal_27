@@ -81,6 +81,10 @@ public:
     // − / + 这种只放一个符号的方块按钮。
     void setSquare(bool square);
     void setTextColour(const QColor& colour);
+    // 字号跟着按钮高度走。0 = 按 Kind 用固定字号(其余面板都是这个,外观不变)。
+    // 指挥手的飞镖/哨兵/标记三处按高度算字号,2560 的大格子里才不是一行小字。
+    void setTextPx(int px);
+    int textPx() const { return text_px_; }
 
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
@@ -103,6 +107,7 @@ private:
     bool glow_ = false;
     bool square_ = false;
     bool hovered_ = false;
+    int text_px_ = 0;
 };
 
 // 状态条上只用来看的小牌子:席位、链路灯、录制。可以在文字前画一道阵营色斜竖条。
@@ -147,8 +152,8 @@ private:
     double aspect_;
 };
 
-// 地图上方的提醒横幅:整条发光底、大字,底下一道细线表示还剩多久消失。
-// 不接收鼠标,盖在地图上不挡点击。
+// 顶栏下方的提醒横幅:整条发光底、大字,底下一道细线表示还剩多久消失。
+// 不接收鼠标,盖在面板上不挡点击。
 class GlowBanner : public QWidget {
     Q_OBJECT
 public:
@@ -157,7 +162,7 @@ public:
     explicit GlowBanner(QWidget* parent = nullptr);
     void show(const QString& text, Tone tone, double remaining);
     QString text() const { return text_; }
-    // 横幅的自然高度:66。
+    // 横幅的最小高度:66。窗口更高时 Dashboard 把它拉高,字号按高度算。
     static constexpr int kHeight = 66;
 
 protected:

@@ -67,6 +67,12 @@ struct Config {
     // 屏幕名(QScreen::name(),启动日志里会列出来),空 = 主屏。
     bool display_fullscreen = false;
     QString display_screen;
+    // 指挥手没有图传,看的是队友终端转发过来的(规则 3.3.1:操作间里的自定义终端可以有线互连通信)。
+    // video_relay_host:地面席位(1/3/4)把收到的图传原样转发到这个 IPv4 地址,填指挥手终端在组网
+    // 网口上的地址;空 = 不转发。video_wall_port:指挥手按 video_wall_port + 车号收(1 重装,3、4 步兵),
+    // 地面席位也按这个端口发,全队写同一个值。
+    QString video_relay_host;
+    int video_wall_port = 3340;
 };
 
 // 事件提醒种类在配置里的名字。与 match_alerts.cpp 的 alert_kind_name 一一对应,
@@ -89,5 +95,8 @@ bool parse_log_level(const QString& name, LogLevel* out);
 
 // 9600 到 921600 之间的标准波特率。控制器固件用 115200。
 bool valid_controller_baud(int baud);
+
+// 点分十进制的 IPv4 地址,例如 10.27.0.6。转发图传不查域名:比赛中查不到也不该等。
+bool valid_ipv4(const QString& text);
 
 }

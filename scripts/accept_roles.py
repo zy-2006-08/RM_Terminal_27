@@ -241,17 +241,26 @@ def hero(binary: Path, python: str) -> None:
         record(wait_until(lambda: run.has(r"event=match_event id=15 .*装配已主动退出"), 5),
                "开始兑换后取消:Event 15 原因 6「装配已主动退出」")
         run.send("AssemblyCommand", pb.AssemblyCommand(operation=0, difficulty=1))
-        time.sleep(9.6)   # 模拟的科技核心每 3 秒走一步,三步走完才能确认
+        time.sleep(6.6)   # 模拟的科技核心 3 秒到位,一级再 3 秒做完放入,之后才能确认
         run.send("AssemblyCommand", pb.AssemblyCommand(operation=1, difficulty=1))
         record(wait_until(lambda: run.has(r"event=match_event id=15 .*装配成功"), 5),
-               "放入、平移、旋转走完后确认:Event 15「装配成功」")
+               "一级做完放入后确认:Event 15「装配成功」")
         run.control("module")
+        record(wait_until(lambda: run.server_has(r"安装失败: 还没有安装权限"), 5),
+               "没装成三级、没到解锁时间:装不上 42mm 发射机构(规则 5.7.1)")
+        run.control("seek", "301")
+        run.control("module")
+        record(wait_until(lambda: run.server_has(r"重装装上 42mm 发射机构,还差验证弹"), 5)
+               and not run.has(r"event=match_event id=16 "),
+               "比赛第 301 秒装上 42mm 发射机构:还没打验证弹,不发 Event 16")
+        run.control("verify")
         record(wait_until(lambda: run.has(r"event=match_event id=16 "), 5),
-               "安装模块化 42mm 发射机构:Event 16")
+               "打出验证弹才算成功安装:Event 16")
         run.send("CommonCommand", pb.CommonCommand(cmd_type=2, param=5))
         record(wait_until(lambda: run.has(r"event=self_supply economy=\d+ ammo=5 "), 5)
                and run.server_has(r"终端指令 兑换 42mm x5 成功"),
                "重装兑换 5 发 42mm:允许发弹量 5,终端收到")
+        time.sleep(6.5)   # 打出验证弹就不算脱战,6 秒后才能远程兑换
         run.send("CommonCommand", pb.CommonCommand(cmd_type=5, param=10))
         record(wait_until(lambda: run.has(r"event=self_supply economy=\d+ ammo=15 "), 9),
                "重装远程兑换 10 发 42mm:6 秒后到账 15")

@@ -109,30 +109,45 @@ void base_hp_comes_from_the_base_fields() {
           "both bases carry their maximum");
 }
 
-void outpost_badge_follows_the_controlling_side() {
+// 规则手册 5.6.1、表 5-21:前哨站只有被打掉、重建时才换主人,牌子按主人上色。
+void outpost_badge_follows_the_owner() {
     Snapshot snapshot = full_field_snapshot();
+    snapshot.game.red_outpost_hp = present<std::uint32_t>(1000);
+    snapshot.game.blue_outpost_hp = present<std::uint32_t>(1000);
+    snapshot.game.red_outpost_zone = present<std::uint32_t>(3);
+    snapshot.game.blue_outpost_zone = present<std::uint32_t>(1);
+    const TopBarModel standing = top_bar_model(snapshot);
+    check(!standing.red.outpost_owned_by_blue,
+          "blue standing 5 s on a living red outpost is only temporary control: still red");
+    check(standing.blue.outpost_owned_by_blue,
+          "red standing 5 s on a living blue outpost is only temporary control: still blue");
+
+    snapshot.game.red_outpost_hp = present<std::uint32_t>(0);
+    snapshot.game.red_outpost_zone = present<std::uint32_t>(1);
+    const TopBarModel destroyed = top_bar_model(snapshot);
+    check(!destroyed.red.outpost_owned_by_blue,
+          "a destroyed red outpost under red temporary control is still red's");
+
+    snapshot.game.red_outpost_hp = present<std::uint32_t>(500);
     snapshot.game.red_outpost_zone = present<std::uint32_t>(4);
-    snapshot.game.blue_outpost_zone = present<std::uint32_t>(3);
-    const TopBarModel blue = top_bar_model(snapshot);
-    check(blue.red.outpost_controlled_by_blue,
-          "blue full control turns the red outpost badge blue");
-    check(blue.blue.outpost_controlled_by_blue,
-          "blue temporary control keeps the blue outpost badge blue");
+    const TopBarModel rebuilt = top_bar_model(snapshot);
+    check(rebuilt.red.outpost_owned_by_blue, "blue full control means it was rebuilt as blue's");
+
+    snapshot.game.red_outpost_zone = present<std::uint32_t>(1);
+    const TopBarModel retaking = top_bar_model(snapshot);
+    check(retaking.red.outpost_owned_by_blue,
+          "red standing on the rebuilt outpost does not take it back yet");
 
     snapshot.game.red_outpost_zone = present<std::uint32_t>(2);
-    snapshot.game.blue_outpost_zone = present<std::uint32_t>(1);
-    const TopBarModel red = top_bar_model(snapshot);
-    check(!red.red.outpost_controlled_by_blue,
-          "red full control keeps the red outpost badge red");
-    check(!red.blue.outpost_controlled_by_blue,
-          "red temporary control turns the blue outpost badge red");
+    const TopBarModel retaken = top_bar_model(snapshot);
+    check(!retaken.red.outpost_owned_by_blue, "red full control again means it was rebuilt as red's");
 
     snapshot.game.red_outpost_zone = present<std::uint32_t>(0);
     snapshot.game.blue_outpost_zone = Field<std::uint32_t>{};
     const TopBarModel fallback = top_bar_model(snapshot);
-    check(!fallback.red.outpost_controlled_by_blue,
+    check(!fallback.red.outpost_owned_by_blue,
           "a neutral red outpost falls back to the red badge");
-    check(fallback.blue.outpost_controlled_by_blue,
+    check(fallback.blue.outpost_owned_by_blue,
           "missing blue outpost data falls back to the blue badge");
 }
 
@@ -239,7 +254,7 @@ int main() {
         blue_ids_are_displayed_without_the_internal_offset();
         an_absent_robot_is_a_placeholder_not_a_healthy_one();
         base_hp_comes_from_the_base_fields();
-        outpost_badge_follows_the_controlling_side();
+        outpost_badge_follows_the_owner();
         a_missing_base_hp_is_reported_as_missing();
         score_and_clock_read_from_the_protocol();
         an_empty_snapshot_states_that_nothing_is_known();

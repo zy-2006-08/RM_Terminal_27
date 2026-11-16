@@ -22,12 +22,13 @@ const LayoutProfile& layout_profile(Role role) {
          at(PaneId::EnemyRoster, 12, 0, 4, 4), at(PaneId::Video, 0, 7, 4, 2), at(PaneId::Map, 4, 4, 8, 5),
          at(PaneId::Events, 12, 4, 4, 5)},
         {}};
-    // 重装:和步兵一样,右下角多一块装配,战场事件挪到装配下面。
+    // 重装:和步兵一样。装配不占面板(装配是拿真的自定义控制器做的):按 H 在框里选难度,装配中
+    // 屏幕下方正中显示进度。存过的方案里有「装配」的,打开时由旁边的面板补上。
     static const LayoutProfile hero{
         Role::Hero,
         {at(PaneId::AllyRoster, 0, 0, 4, 7), at(PaneId::NextStep, 4, 0, 8, 2), at(PaneId::Analysis, 4, 2, 8, 2),
          at(PaneId::EnemyRoster, 12, 0, 4, 4), at(PaneId::Video, 0, 7, 4, 2), at(PaneId::Map, 4, 4, 8, 5),
-         at(PaneId::Assembly, 12, 4, 4, 3), at(PaneId::Events, 12, 7, 4, 2)},
+         at(PaneId::Events, 12, 4, 4, 5)},
         {}};
     // 指挥手:左列 我方 / 敌方花名册 / 战场事件,中间地图(带标记工具条)和战场数据分析,
     // 右列 飞镖 / 哨兵 / 图传。哨兵按钮最多,给它四格高。指挥手看全局,地图保持最大。

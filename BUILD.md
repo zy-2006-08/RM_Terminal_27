@@ -74,6 +74,8 @@ required to change them. Copy `rm_terminal.conf.sample` and edit it.
 | `map_mark_ms` | `30000` | How long a map mark (sent or received) stays on the map; the last 5 s fade |
 | `display_fullscreen` | `false` | Fullscreen on start (hero and commander seats with the official 1080p monitor) |
 | `display_screen` | (primary) | Screen name for `display_fullscreen`; the `screens` log record lists the names |
+| `video_relay_host` | (unset) | Ground seats only: forward every video packet unchanged to this IPv4 address (the commander terminal on the team network). Unset = no relay |
+| `video_wall_port` | `3340` | Commander video wall: robot N's feed arrives on `video_wall_port + N` (1, 3, 4). At most 65531, and none of the three may equal `udp_port` |
 
 Every integer key rejects zero and negatives except `blind_stale_fallback_ms`,
 which accepts `0` to mean "never fall back to video just because blind telemetry
@@ -398,13 +400,15 @@ whether or not the machine has a voice.
 | `outpost` | our outpost zone becomes enemy temporary control; again when it becomes enemy full control | once per change |
 | `control` | enemy control points lead by `alert_control_gap` | once; re-armed after the gap falls below half |
 | `fortress` | the enemy starts activating our fortress (10 s of activation open our base armour) | once per activation |
-| `dart` | 10 s before and at the dart gate chances (0:30, 4:00) | once per point |
-| `energy` | small energy chances (0:00, 1:30), large (3:00, 4:15, 5:30) | once per point |
+| `dart` | 10 s before and at the dart gate chances (0:30, 4:00); commander seat only | once per point |
+| `energy` | small energy chances (0:00, 1:30), large (3:00, 4:15, 5:30); not on the heavy seat | once per point |
 | `low_hp` | an enemy robot drops to 25% HP or below | once per robot until it recovers above 50% or dies |
 | `base` | our base HP drops | at most once per 10 s, and the map flashes our half for 3 s |
 
 The times are match elapsed seconds from the 2027 rules manual V1.0.0 (§5.6.3
-energy, §5.7.3 dart). Timeline points only fire within 5 s of being crossed, so
+energy, §5.7.3 dart). `MatchAlertSettings::role` comes from the seat: only infantry
+operators can open the energy mechanism and only the commander runs the dart, so the
+heavy seat gets neither and infantry gets no dart alerts. Timeline points only fire within 5 s of being crossed, so
 joining mid-match or jumping the clock never replays old ones. Zones, control points
 and base HP come from `GlobalUnitStatus`, the fortress timer from
 `GlobalSpecialMechanism`.
@@ -468,7 +472,7 @@ the seat label, top bar, alerts, popups, the video page) are the same for all th
 | Role | Seat | Info page |
 | --- | --- | --- |
 | 步兵 infantry | 3, 4 | ally roster / map / enemy roster; events / battle analysis / video |
-| 重装 hero | 1 | the map spans two columns; events / battle analysis / 装配 / video |
+| 重装 hero | 1 | same grid as infantry; no 装配 pane (assembly is driven from the H box, see below) |
 | 指挥手 commander | 6 (the aerial seat, rules table 3-1) | both rosters stacked left, map over two rows with the mark toolbar, 飞镖 and 哨兵 right; events / battle analysis / video |
 
 Operators can personalise the info page (`界面设置` in the status bar opens the one-page
@@ -505,13 +509,36 @@ settings lock while a fresh stage reads 比赛中 and unlock on the next fresh n
 stage. Export/import moves one operator between computers. `ui_profile` log records
 carry `state=loaded|missing|invalid|set_aside|save_failed|operator|imported`.
 
-Role panes (`cpp/assembly_pane.*`, `cpp/dart_pane.*`, `cpp/sentry_pane.*`) show
+Role panes (`cpp/dart_pane.*`, `cpp/sentry_pane.*`) show
 `--` and name the message they wait for when data is missing. Their buttons send
-`AssemblyCommand`, `DartCommand` and `SentryCtrlCommand` at most 10 times a second,
+`DartCommand` and `SentryCtrlCommand` at most 10 times a second,
 are disabled while MQTT is down (clicks are dropped, never queued), and need a 1 s
-hold for 确认发射, 花金币复活 and 取消装配. Each send waits for the server's answer
-(`SentryCtrlResult`, a `DartSelectTargetStatusSync` change, Event 15) and shows
-未确认 after 2 s without one. The commander's map is clickable: open ground marks a
+hold for 确认发射 and 花金币复活. Each send waits for the server's answer
+(`SentryCtrlResult`, a `DartSelectTargetStatusSync` change) and shows
+未确认 after 2 s without one.
+
+The heavy has no assembly pane: the energy unit is assembled with the real custom
+controller, and the terminal only sends `AssemblyCommand` (start with a difficulty,
+confirm, cancel), following the 2026 official client (界面手册 pages 14–15).
+`cpp/assembly_flow.*` holds it: `AssemblyState` is the key logic (pure, tested in
+`assembly_flow_test`), `AssemblyProgress` the strip at the bottom centre, `AssemblyFlow`
+the glue to the sender. The heavy's H box (`RemoteExchangePopup` with an `AssemblyRow`)
+adds a difficulty row above 回血 (Ctrl+1) and 42mm (Ctrl+3) and drops 17mm (the heavy
+only has a 42mm launcher, rules table 3-3). 1–4 pick a level and Enter starts only while
+the box is open; L cancels only while an assembly started from this terminal is on.
+Selectable levels are `TechCoreMotionStateSync.maximum_difficulty_level` capped at
+`GlobalLogisticsStatus.tech_level + 1` (rule 5.4.3). The terminal never learns whether
+the robot stands in the assembly zone (that bit only goes to the robot in 0x0209), so
+after Enter it waits 3.5 s for `basic_state` to leave 1 and otherwise says the start
+was refused. Only a start from this terminal counts: the core also moves when the
+other side assembles level 4. Steps per level follow table 5-10 (1: 放入, 2: + 平移,
+3/4: + 旋转); Y sends confirm only when they are all reported done (rule 5.4.3 locks
+confirm for 1 s after a premature one) and is left to the revive popup while dead;
+H is refused while an assembly is on, so Y cannot buy anything by mistake. Event 15
+ends the assembly (level 1 success, 0 for code 6 主动退出, 2 for failures); a failure
+stays up with L lit until the core is back at its initial pose. Event 14 shows the
+buffer countdown from `remain_time_step`. `assembly_command` log records carry
+`operation`, `difficulty` and `state=sent|not_sent`. The commander's map is clickable: open ground marks a
 position, an enemy robot marks that robot (`MapClickCmd`, 0.5 s minimum interval,
 custom letters C–L, N, O, Q–Z only). Every seat draws received `MapClickInfo` marks;
 the commander also sees the sentry's planned path (`RobotPathPlanInfo`).

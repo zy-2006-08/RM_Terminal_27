@@ -147,6 +147,34 @@ void store_keeps_every_triggered_event() {
           "texts are written from the seat's point of view");
 }
 
+// 规则手册 5.6.1:前哨站打掉重建后换主人。Event 2 的参数只说是哪一侧那座,
+// 「我方 / 敌方」要按击毁前它归谁写,血量当场记成 0。
+void store_names_the_owner_of_a_destroyed_outpost() {
+    Store store(10, 20);
+    store.setSelf(RobotId{3});
+    inbound::GameStatus game;
+    game.red_outpost_zone = 4;   // 红方一侧的前哨阵地被蓝方完全控制:那座前哨站已重建成蓝方的
+    game.red_outpost_hp = 500;
+    game.red_outpost_max_hp = 1000;
+    check(store.apply(game, 0), "captured outpost state accepted");
+    inbound::Event destroyed;
+    destroyed.event_id = 2;
+    destroyed.param = "11";
+    check(store.apply(destroyed, 1), "outpost destroyed event accepted");
+    auto snapshot = store.snapshot(1);
+    check(snapshot.events.recent(1)[0].text.find("敌方前哨站被击毁") != std::string::npos,
+          "red destroying the blue-owned outpost on its own side is an enemy outpost");
+    check(snapshot.events.recent(1)[0].faction == kBlue, "the banner is the owner's side");
+    check(snapshot.game.red_outpost_hp.value == 0u, "a destroyed outpost reads 0 hp at once");
+
+    Store fresh(10, 20);
+    fresh.setSelf(RobotId{3});
+    check(fresh.apply(destroyed, 0), "outpost event without prior state accepted");
+    snapshot = fresh.snapshot(0);
+    check(snapshot.events.recent(1)[0].text == "我方前哨站被击毁",
+          "without zone data the R outpost is red's, as at the start");
+}
+
 // Task 5 acceptance: a field aging into Stale must log once per TRANSITION, not
 // once per snapshot. The GUI inspects on a 250ms timer, so per-snapshot logging
 // would bury every other event under thousands of duplicates during a stall.
@@ -375,6 +403,7 @@ int main() {
         event_history_discards_oldest_when_full();
         event_history_empty_returns_nothing();
         store_keeps_every_triggered_event();
+        store_names_the_owner_of_a_destroyed_outpost();
         store_replaces_and_sorts_radar_robots();
         store_keeps_authoritative_self_position();
         store_carries_base_hp_through_conversion();

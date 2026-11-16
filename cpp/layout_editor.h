@@ -82,6 +82,8 @@ private:
     enum class DragKind { None, Move, Add, Seam };
     // 松手以后会怎样:插进去、换位置、替换、放回「本车」里、拿掉(拖回组件库)、放不下。
     enum class DropAction { None, Insert, Swap, Replace, Embed, Remove };
+    // 拖到另一块上时那一块分成的区:上、中、下三等分,左右两边各一条窄边。
+    enum class DropZone { Top, Middle, Bottom, Left, Right };
     struct Drag {
         DragKind kind = DragKind::None;
         PaneId pane = PaneId::Map;
@@ -89,7 +91,7 @@ private:
         QPoint mouse;
         bool moved = false;
         std::optional<PaneId> target;
-        DropSide side = DropSide::Center;
+        DropZone zone = DropZone::Middle;
         DropAction action = DropAction::None;
         std::optional<std::vector<PaneSlot>> result;
         Seam seam;
@@ -144,7 +146,8 @@ private:
     const PaneSlot* cell(PaneId pane) const;
     std::optional<PaneId> paneAt(const QPoint& pixel) const;
     QPointF unitPos(const QPoint& pixel) const;
-    DropSide sideAt(const QRect& box, const QPoint& pixel) const;
+    DropZone zoneAt(const QRect& box, const QPoint& pixel) const;
+    QRect zoneRect(const QRect& box, DropZone zone) const;
     QRect seamRect(const Seam& seam) const;
     bool videoCell() const;
     bool hasDetails(PaneId pane) const;

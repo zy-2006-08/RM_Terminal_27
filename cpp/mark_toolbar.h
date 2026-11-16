@@ -3,10 +3,12 @@
 #include "map_marks.h"
 
 #include <QWidget>
+#include <array>
 
 class QButtonGroup;
-class QComboBox;
 class QLabel;
+class QPushButton;
+class QResizeEvent;
 
 namespace rm_terminal {
 
@@ -22,12 +24,31 @@ public:
     void setLinkUp(bool up);
     QString statusText() const;
 
+    // 照官方选手端的「发送地图标记」:默认不转发给哨兵(规则 5.7.2 每条要花钱),
+    // 开启要二次确认并看到单价,关闭不用确认。
+    void setSentryAutomatic(bool automatic);
+    bool sentryForwarding() const { return forward_sentry_; }
+    bool sentryArmed() const { return arm_sentry_; }
+
+protected:
+    void resizeEvent(QResizeEvent* event) override;
+
 private:
+    void dressSentry();
+    void clickSentry();
+
     QButtonGroup* kinds_;
-    QComboBox* letter_;
-    QComboBox* scope_;
+    QButtonGroup* scopes_;
+    QPushButton* letter_;
+    QPushButton* sentry_;
     QLabel* status_;
     bool link_up_ = false;
+    bool automatic_ = true;
+    bool forward_sentry_ = false;
+    bool arm_sentry_ = false;
+    std::uint32_t letter_index_ = 0;
+    int chip_height_ = 0;
+    int chip_px_ = 0;
 };
 
 }  // namespace rm_terminal

@@ -1,11 +1,13 @@
 #include "role_commands.h"
 
+#include "next_step.h"
 #include "rm_terminal.pb.h"
 #include "theme.h"
 
 #include <QPainter>
 
 #include <algorithm>
+#include <cmath>
 
 namespace rm_terminal {
 
@@ -29,6 +31,30 @@ std::string encode_sentry(std::uint32_t command_id) {
     message.set_command_id(command_id);
     return message.SerializeAsString();
 }
+
+std::optional<std::uint32_t> sentry_cost(std::uint32_t command_id, std::optional<std::int32_t> remaining_sec,
+                                         bool automatic) {
+    constexpr std::uint32_t kRemoteAmmoPrice = 150;
+    constexpr std::uint32_t kSentryLevel = 1;
+    const std::uint32_t fee = sentry_mark_cost(automatic);
+    if (command_id >= 7 && command_id <= 12) return fee;
+    switch (command_id) {
+        case 3: return kRemoteAmmoPrice + fee;
+        case 4:
+            if (!remaining_sec) return std::nullopt;
+            return remote_heal_cost(*remaining_sec) + fee;
+        case 5: return fee;
+        case 6: {
+            if (!remaining_sec) return std::nullopt;
+            const double elapsed = 420.0 - std::clamp(*remaining_sec, 0, 420);
+            const auto minutes = static_cast<std::uint32_t>(std::ceil(elapsed / 60.0 - 1e-9));
+            return minutes * 80 + kSentryLevel * 20 + fee;
+        }
+        default: return std::nullopt;
+    }
+}
+
+std::uint32_t sentry_mark_cost(bool automatic) { return automatic ? 50u : 0u; }
 
 std::string encode_common(std::uint32_t cmd_type, std::uint32_t param) {
     rm::CommonCommand message;

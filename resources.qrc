@@ -74,6 +74,13 @@
     <file alias="images/resultpanel/abnormal_termination_zh/termination_Zh (28).png">resources/images/resultpanel/abnormal_termination_zh/termination_Zh (28).png</file>
     <file alias="qml/PopupOverlay.qml">qml/PopupOverlay.qml</file>
     <file alias="qml/VictoryOverlay.qml">qml/VictoryOverlay.qml</file>
+    <file alias="qml/VictoryBurst.qml">qml/VictoryBurst.qml</file>
+    <file alias="qml/VictoryBadge.qml">qml/VictoryBadge.qml</file>
+    <file alias="qml/VictoryTitle.qml">qml/VictoryTitle.qml</file>
+    <file alias="qml/SettlementPanel.qml">qml/SettlementPanel.qml</file>
+    <file alias="qml/SettlementRow.qml">qml/SettlementRow.qml</file>
+    <file alias="qml/RobotColumn.qml">qml/RobotColumn.qml</file>
+    <file alias="qml/victory_easing.js">qml/victory_easing.js</file>
     <file alias="qml/qmldir">qml/qmldir</file>
     <file alias="qml/Theme.qml">qml/Theme.qml</file>
     <file alias="qml/RosterPanel.qml">qml/RosterPanel.qml</file>

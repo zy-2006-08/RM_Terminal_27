@@ -371,6 +371,44 @@ void controller_and_keepalive_keys(const QTemporaryDir& dir) {
     }
 }
 
+void video_wall_keys(const QTemporaryDir& dir) {
+    rm_terminal::Config defaults;
+    QString error;
+    check(rm_terminal::load_config(dir.filePath(QStringLiteral("absent.conf")), &defaults, &error),
+          "defaults load");
+    check(defaults.video_relay_host.isEmpty(), "no relay by default");
+    check(defaults.video_wall_port == 3340, "default video_wall_port");
+
+    const QString path = dir.filePath(QStringLiteral("wall.conf"));
+    check(write_file(path, QStringLiteral("video_wall_port=4340\nvideo_relay_host=10.27.0.6\n")),
+          "write wall config");
+    rm_terminal::Config cfg;
+    check(rm_terminal::load_config(path, &cfg, &error), "wall config loads");
+    check(cfg.video_relay_host == QLatin1String("10.27.0.6"), "override video_relay_host");
+    check(cfg.video_wall_port == 4340, "override video_wall_port");
+
+    check(rm_terminal::valid_ipv4(QStringLiteral("192.168.12.1")) && rm_terminal::valid_ipv4(QStringLiteral("0.0.0.0")),
+          "dotted IPv4 addresses are accepted");
+    for (const char* bad : {"commander.local", "10.27.0", "10.27.0.256", "10.27.0.+6", "10.27..6", "10.27.0.6.1",
+                            "1234.1.1.1"})
+        check(!rm_terminal::valid_ipv4(QString::fromLatin1(bad)), bad);
+
+    struct Bad { const char* body; const char* key; const char* name; };
+    const Bad bad[] = {
+        {"video_relay_host=commander.local\n", "video_relay_host", "a host name is rejected"},
+        {"video_wall_port=65532\n", "video_wall_port", "robot 4's wall port must fit in 16 bits"},
+        {"video_wall_port=0\n", "video_wall_port", "zero wall port rejected"},
+        {"udp_port=3343\n", "video_wall_port", "a wall port on udp_port is rejected"},
+        {"video_wall_port=3330\nudp_port=3334\n", "video_wall_port", "the clash is found whichever key comes first"},
+    };
+    for (const Bad& item : bad) {
+        check(write_file(path, QString::fromLatin1(item.body)), item.name);
+        error.clear();
+        check(!rm_terminal::load_config(path, &cfg, &error), item.name);
+        check(error.contains(QLatin1String(item.key)), item.name);
+    }
+}
+
 }
 
 int main(int argc, char* argv[]) {
@@ -394,6 +432,7 @@ int main(int argc, char* argv[]) {
     log_level_names_round_trip();
     self_robot_id_validation();
     controller_and_keepalive_keys(dir);
+    video_wall_keys(dir);
 
     if (failures != 0) {
         fprintf(stderr, "config_test: %d check(s) failed\n", failures);

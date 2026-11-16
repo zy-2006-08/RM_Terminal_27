@@ -67,7 +67,6 @@ private:
     QCheckBox* next_voice_ = nullptr;
     QSlider* next_dwell_ = nullptr;
     QLabel* next_dwell_value_ = nullptr;
-    QListWidget* next_order_ = nullptr;
     QButtonGroup* analysis_mode_ = nullptr;
     QCheckBox* own_video_ = nullptr;
     QPushButton* video_back_ = nullptr;

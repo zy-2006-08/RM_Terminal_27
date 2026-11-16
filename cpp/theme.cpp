@@ -1,6 +1,7 @@
 #include "theme.h"
 
 #include <QFontDatabase>
+#include <QFontMetricsF>
 #include <QLinearGradient>
 #include <QMutex>
 #include <QMutexLocker>
@@ -103,6 +104,24 @@ QFont labelPx(int pixel_size, int weight) {
     font.setPixelSize(std::max(1, pixel_size));
     font.setWeight(static_cast<QFont::Weight>(weight));
     return font;
+}
+
+qreal paneScale(const QSizeF& actual, const QSizeF& design, qreal minimum, qreal maximum) {
+    if (design.width() <= 0 || design.height() <= 0) return 1.0;
+    const qreal by_width = actual.width() / design.width();
+    const qreal by_height = actual.height() / design.height();
+    return std::clamp(std::min(by_width, by_height), minimum, maximum);
+}
+
+int scaledPx(qreal design_px, qreal scale, int minimum) {
+    return std::max(minimum, static_cast<int>(std::lround(design_px * scale)));
+}
+
+int fitFontPx(const QString& text, int wanted_px, int floor_px, qreal width,
+              const std::function<QFont(int)>& make_font) {
+    int size = std::max(wanted_px, floor_px);
+    while (size > floor_px && QFontMetricsF(make_font(size)).horizontalAdvance(text) > width) --size;
+    return size;
 }
 
 QFont numericFont(int point_size, bool bold) {

@@ -83,6 +83,18 @@ bool valid_controller_baud(int baud) {
     return false;
 }
 
+bool valid_ipv4(const QString& text) {
+    const QStringList parts = text.split(QLatin1Char('.'));
+    if (parts.size() != 4) return false;
+    for (const QString& part : parts) {
+        if (part.isEmpty() || part.size() > 3) return false;
+        for (const QChar c : part)
+            if (c < QLatin1Char('0') || c > QLatin1Char('9')) return false;
+        if (part.toInt() > 255) return false;
+    }
+    return true;
+}
+
 bool load_config(const QString& path, Config* config, QString* error) {
     *config = Config{};
     QFile file(path);
@@ -191,10 +203,38 @@ bool load_config(const QString& path, Config* config, QString* error) {
                 }
                 return false;
             }
+        } else if (key == QLatin1String("video_relay_host")) {
+            if (!valid_ipv4(value)) {
+                if (error) {
+                    *error = QStringLiteral("line %1: invalid video_relay_host=%2; expected an IPv4 "
+                                            "address such as 10.27.0.6").arg(line).arg(value);
+                }
+                return false;
+            }
+            config->video_relay_host = value;
+        } else if (key == QLatin1String("video_wall_port")) {
+            if (!parse_integer(value, key, line, &config->video_wall_port, error)) return false;
+            if (config->video_wall_port > 65531) {
+                if (error) {
+                    *error = QStringLiteral("line %1: invalid video_wall_port=%2; expected at most "
+                                            "65531 (robot 4 listens on video_wall_port + 4)")
+                                 .arg(line).arg(value);
+                }
+                return false;
+            }
         } else {
             if (error) *error = QStringLiteral("line %1: unknown key %2").arg(line).arg(key);
             return false;
         }
+    }
+    // 指挥手的主图传口和图传墙的三个口在同一台电脑上,撞了谁都收不到。两个键可能写在任意一行,读完再查。
+    for (const int robot : {1, 3, 4}) {
+        if (config->video_wall_port + robot != config->udp_port) continue;
+        if (error) {
+            *error = QStringLiteral("invalid video_wall_port=%1; video_wall_port + %2 is udp_port %3")
+                         .arg(config->video_wall_port).arg(robot).arg(config->udp_port);
+        }
+        return false;
     }
     return true;
 }

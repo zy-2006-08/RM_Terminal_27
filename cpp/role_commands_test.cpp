@@ -62,6 +62,23 @@ void sentry_round_trips_every_command_id() {
     }
 }
 
+void sentry_costs_follow_the_rules() {
+    check(sentry_cost(7, 400, true) == 50u && sentry_cost(12, std::nullopt, true) == 50u,
+          "a posture switch costs the 50 intervention fee");
+    check(sentry_cost(9, 400, false) == 0u, "a semi-automatic sentry switches for free");
+    check(sentry_cost(5, 400, true) == 50u, "a free revive still costs the fee");
+    check(sentry_cost(3, std::nullopt, true) == 200u && sentry_cost(3, 100, false) == 150u,
+          "remote 100 rounds: 150, plus 50 for an automatic sentry");
+    check(sentry_cost(4, 420, true) == 100u, "remote heal at the start: 50 + 0 + 50");
+    check(sentry_cost(4, 120, true) == 200u, "remote heal at 5:00 played: 50 + 100 + 50");
+    check(!sentry_cost(4, std::nullopt, true), "no match time, no heal price");
+    check(sentry_cost(6, 120, true) == 470u, "gold revive at 5:00 played: 5 x 80 + 20 + 50");
+    check(sentry_cost(6, 420, false) == 20u, "gold revive at the start, semi-automatic: 20");
+    check(!sentry_cost(1, 300, true), "supply-point ammo has no amount in the protocol");
+    check(sentry_mark_cost(true) == 50u && sentry_mark_cost(false) == 0u,
+          "a mark forwarded to an automatic sentry costs 50");
+}
+
 void common_round_trips_every_type() {
     for (std::uint32_t type = 1; type <= 6; ++type) {
         for (std::uint32_t param : {0u, 1u, 10u, 100u, 1000u}) {
@@ -199,6 +216,7 @@ int main() {
         assembly_round_trips_every_operation();
         dart_round_trips_every_target();
         sentry_round_trips_every_command_id();
+        sentry_costs_follow_the_rules();
         common_round_trips_every_type();
         performance_writes_shooter_and_chassis_only();
         rune_activate_is_one();

@@ -27,6 +27,14 @@ constexpr int kTileHeight = 116;
 constexpr int kTileGap = 10;
 constexpr int kBarHeight = 38;
 constexpr int kBottomMargin = 24;
+// 重装框上面那一排:「装配难度 [1 一级] … [4 四级]  [Enter 开始]」,下面一到两行写选中那级的收益。
+constexpr int kLevelRowHeight = 34;
+constexpr int kLevelNoteHeight = 36;
+constexpr int kAssemblyHeight = kLevelRowHeight + 4 + kLevelNoteHeight;
+constexpr int kAssemblyLabelWidth = 58;
+constexpr int kLevelCapWidth = 64;
+constexpr int kLevelGap = 6;
+constexpr int kStartCapWidth = 92;
 
 constexpr int kSupplyWidth = 540;
 constexpr int kSupplyHeight = 254;
@@ -143,6 +151,36 @@ void RemoteExchangePopup::setStatus(const QString& status, bool problem) {
 
 void RemoteExchangePopup::setChoose(std::function<void(int index)> choose) { choose_ = std::move(choose); }
 
+void RemoteExchangePopup::setAssembly(const AssemblyRow& row) {
+    if (row == assembly_) return;
+    const bool resized = row.shown != assembly_.shown;
+    assembly_ = row;
+    if (resized) updateGeometry();
+    update();
+}
+
+void RemoteExchangePopup::setAssemblyActions(std::function<void(std::uint32_t level)> choose,
+                                             std::function<void()> start) {
+    choose_level_ = std::move(choose);
+    start_assembly_ = std::move(start);
+}
+
+bool RemoteExchangePopup::hasItem(int index) const {
+    if (index < 0 || index > 2) return false;
+    return !assembly_.shown || index != 1;
+}
+
+QRect RemoteExchangePopup::levelRect(std::uint32_t level) const {
+    if (!open_ || !assembly_.shown || level < 1 || level > 4) return QRect();
+    const int x = kPad + kAssemblyLabelWidth + static_cast<int>(level - 1) * (kLevelCapWidth + kLevelGap);
+    return QRect(x, kPad, kLevelCapWidth, kLevelRowHeight);
+}
+
+QRect RemoteExchangePopup::startRect() const {
+    if (!open_ || !assembly_.shown) return QRect();
+    return QRect(width() - kPad - kStartCapWidth, kPad, kStartCapWidth, kLevelRowHeight);
+}
+
 void RemoteExchangePopup::refresh() {
     const bool show = open_ || !status_.isEmpty();
     updateGeometry();
@@ -155,7 +193,7 @@ QString RemoteExchangePopup::barText() const {
     if (!status_.isEmpty()) return status_;
     if (!open_) return QString();
     if (std::any_of(offers_.begin(), offers_.end(), [](const PurchaseOffer& offer) { return offer.available; }))
-        return QStringLiteral("按 H 关闭远程兑换面板");
+        return assembly_.shown ? QStringLiteral("按 H 关闭") : QStringLiteral("按 H 关闭远程兑换面板");
     // 都买不了:先说本车这种弹丸为什么买不了,再说回血。
     const Caliber own = offers_[0].caliber;
     const PurchaseOffer& ammo = own == Caliber::Small ? offers_[1] : offers_[2];
@@ -172,13 +210,21 @@ QString RemoteExchangePopup::tileText(int index) const {
 }
 
 QRect RemoteExchangePopup::tileRect(int index) const {
-    if (!open_ || index < 0 || index > 2) return QRect();
+    if (!open_ || !hasItem(index)) return QRect();
+    if (assembly_.shown) {
+        // 重装:回血、42mm 两格,放在装配那一排下面。
+        const int tile_width = (width() - kPad * 2 - kTileGap) / 2;
+        const int column = index == 0 ? 0 : 1;
+        return QRect(kPad + column * (tile_width + kTileGap), kPad + kAssemblyHeight + kTileGap, tile_width,
+                     kTileHeight);
+    }
     const int tile_width = (width() - kPad * 2 - kTileGap * 2) / 3;
     return QRect(kPad + index * (tile_width + kTileGap), kPad, tile_width, kTileHeight);
 }
 
 QSize RemoteExchangePopup::sizeHint() const {
-    if (open_) return QSize(kRemoteWidth, kPad + kTileHeight + kTileGap + kBarHeight + kPad);
+    const int assembly = assembly_.shown ? kAssemblyHeight + kTileGap : 0;
+    if (open_) return QSize(kRemoteWidth, kPad + assembly + kTileHeight + kTileGap + kBarHeight + kPad);
     return QSize(kRemoteWidth, kBarHeight + 16);
 }
 
@@ -188,11 +234,13 @@ void RemoteExchangePopup::paintEvent(QPaintEvent*) {
     theme::paintGlass(painter, QRectF(rect()).adjusted(1, 1, -1, -1), 10, false, theme::kOverlay,
                       theme::kBorderBright, true);
     if (open_) {
+        if (assembly_.shown) paintAssembly(painter);
         const std::array<QString, 3> titles{QStringLiteral("回血"), QStringLiteral("17mm 弹丸"),
                                             QStringLiteral("42mm 弹丸")};
         const std::array<QString, 3> marks{QStringLiteral("+"), QStringLiteral("17"), QStringLiteral("42")};
         const std::array<QColor, 3> inks{theme::kOkText, theme::kCyan, theme::kWarn};
         for (int index = 0; index < 3; ++index) {
+            if (!hasItem(index)) continue;
             const auto slot = static_cast<std::size_t>(index);
             const QRectF tile = tileRect(index);
             const bool lit = offers_[slot].available;
@@ -225,10 +273,47 @@ void RemoteExchangePopup::paintEvent(QPaintEvent*) {
                      painter.fontMetrics().elidedText(barText(), Qt::ElideRight, static_cast<int>(bar.width()) - 16));
 }
 
+void RemoteExchangePopup::paintAssembly(QPainter& painter) {
+    painter.setFont(theme::labelPx(13, QFont::DemiBold));
+    painter.setPen(assembly_.blocked ? theme::kTextMuted : theme::kTextPrimary);
+    painter.drawText(QRectF(kPad, kPad, kAssemblyLabelWidth, kLevelRowHeight), Qt::AlignLeft | Qt::AlignVCenter,
+                     QStringLiteral("装配难度"));
+    for (std::uint32_t level = 1; level <= 4; ++level) {
+        const QRectF box = levelRect(level);
+        const bool can = assembly_.selectable[level - 1];
+        const bool picked = assembly_.selected == level;
+        theme::paintGlass(painter, box, 3, false,
+                          picked ? theme::kAccentBg : (can ? theme::kChip : QColor(255, 255, 255, 8)),
+                          picked ? theme::kCyan : (can ? theme::kBorder : theme::kRowBorder));
+        painter.setFont(theme::labelPx(13, picked ? QFont::Bold : QFont::DemiBold));
+        painter.setPen(picked ? theme::kAccentText : (can ? theme::kTextPrimary : theme::kTextMuted));
+        painter.drawText(box, Qt::AlignCenter, QStringLiteral("%1 %2").arg(level).arg(assembly_level_name(level)));
+    }
+    paint_keycap(painter, startRect(), QStringLiteral("Enter 开始"), !assembly_.blocked && assembly_.selected);
+    const QRectF note(kPad, kPad + kLevelRowHeight + 4, width() - kPad * 2, kLevelNoteHeight);
+    painter.setFont(theme::labelPx(12));
+    painter.setPen(assembly_.blocked ? theme::kWarn : theme::kTextSecondary);
+    painter.drawText(note, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextWordWrap, assembly_.note);
+}
+
 void RemoteExchangePopup::mouseReleaseEvent(QMouseEvent* event) {
-    if (!open_ || event->button() != Qt::LeftButton || !choose_) return;
+    if (!open_ || event->button() != Qt::LeftButton) return;
+    const QPoint at = event->position().toPoint();
+    if (assembly_.shown) {
+        for (std::uint32_t level = 1; level <= 4; ++level) {
+            if (levelRect(level).contains(at)) {
+                if (choose_level_) choose_level_(level);
+                return;
+            }
+        }
+        if (startRect().contains(at)) {
+            if (start_assembly_) start_assembly_();
+            return;
+        }
+    }
+    if (!choose_) return;
     for (int index = 0; index < 3; ++index) {
-        if (tileRect(index).contains(event->position().toPoint())) {
+        if (tileRect(index).contains(at)) {
             choose_(index);
             return;
         }
@@ -415,14 +500,23 @@ void PurchaseFlow::update(const SelfCommandView& view, bool link_up, MonotonicMs
 
 void PurchaseFlow::toggleRemote() {
     if (remote_->isOpen()) {
-        remote_->setOpen(false);
+        setRemoteOpen(false);
         if (source_ == Source::Remote) confirm_->hide();
     } else {
         setSupplyOpen(false);
         if (source_ == Source::Supply) confirm_->hide();
-        remote_->setOpen(true);
+        setRemoteOpen(true);
     }
     refresh();
+}
+
+void PurchaseFlow::setAssemblyRow(const AssemblyRow& row) {
+    remote_->setAssembly(row);
+    place();
+}
+
+void PurchaseFlow::setAssemblyActions(std::function<void(std::uint32_t level)> choose, std::function<void()> start) {
+    remote_->setAssemblyActions(std::move(choose), std::move(start));
 }
 
 void PurchaseFlow::toggleSupply(Caliber caliber) {
@@ -432,7 +526,7 @@ void PurchaseFlow::toggleSupply(Caliber caliber) {
     } else if (view_.dead.value_or(false)) {
         flash(QStringLiteral("阵亡，复活后才能兑换"));
     } else {
-        remote_->setOpen(false);
+        setRemoteOpen(false);
         if (source_ != Source::Pane) confirm_->hide();
         supply_->setCaliber(caliber);
         setSupplyOpen(true);
@@ -441,7 +535,7 @@ void PurchaseFlow::toggleSupply(Caliber caliber) {
 }
 
 bool PurchaseFlow::chooseRemote(int index) {
-    if (!remote_->isOpen() || confirmOpen() || index < 0 || index > 2) return false;
+    if (!remote_->isOpen() || confirmOpen() || !remote_->hasItem(index)) return false;
     const PurchaseOffer offer = remote_->offers()[static_cast<std::size_t>(index)];
     if (!offer.available) return false;
     open(offer, Source::Remote);
@@ -474,7 +568,7 @@ void PurchaseFlow::ask(PurchaseKind kind, std::uint32_t rounds) {
 }
 
 void PurchaseFlow::closeAll() {
-    remote_->setOpen(false);
+    setRemoteOpen(false);
     setSupplyOpen(false);
     confirm_->hide();
     refresh();
@@ -507,6 +601,12 @@ void PurchaseFlow::open(const PurchaseOffer& offer, Source source) {
     confirm_->show();
     place();
     confirm_->raise();
+}
+
+void PurchaseFlow::setRemoteOpen(bool open) {
+    if (remote_->isOpen() == open) return;
+    remote_->setOpen(open);
+    Q_EMIT remoteOpenChanged(open);
 }
 
 void PurchaseFlow::setSupplyOpen(bool open) {

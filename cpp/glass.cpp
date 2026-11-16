@@ -185,6 +185,14 @@ void GlassButton::setSquare(bool square) {
     update();
 }
 
+void GlassButton::setTextPx(int px) {
+    const int wanted = std::max(0, px);
+    if (text_px_ == wanted) return;
+    text_px_ = wanted;
+    updateGeometry();
+    update();
+}
+
 void GlassButton::setTextColour(const QColor& colour) {
     if (text_colour_ == colour) return;
     text_colour_ = colour;
@@ -192,6 +200,7 @@ void GlassButton::setTextColour(const QColor& colour) {
 }
 
 QFont GlassButton::labelFont() const {
+    if (text_px_ > 0) return theme::labelPx(text_px_, QFont::Bold);
     switch (kind_) {
     case Kind::Chip: return theme::labelPx(13, QFont::Medium);
     case Kind::Accent: return theme::labelPx(14, QFont::Bold);
@@ -201,6 +210,8 @@ QFont GlassButton::labelFont() const {
 }
 
 QFont GlassButton::numberFont() const {
+    // 和标签同号:按钮上「远程补弹 200 金」的数字比汉字大一号看着就歪。
+    if (text_px_ > 0) return theme::numericPx(text_px_, QFont::Bold);
     if (square_) return theme::numericPx(20, QFont::Medium);
     if (kind_ == Kind::Chip) return theme::numericPx(14, QFont::DemiBold);
     return theme::numericPx(16, QFont::DemiBold);
@@ -251,8 +262,9 @@ void GlassButton::paintEvent(QPaintEvent*) {
         }
         break;
     case Kind::Chip:
+        // 青色边框:状态条上能点的按钮和只能看的状态块(席位、链路灯、REC)一眼分得开。
         fill = hovered_ && enabled ? QColor(26, 40, 64, 190) : theme::kChip;
-        stroke = theme::kRowBorder;
+        stroke = hovered_ && enabled ? theme::kCyan : theme::kCyanDim;
         break;
     case Kind::Accent:
         fill = isDown() ? QColor(30, 70, 104, 230) : theme::kAccentBg;
@@ -470,7 +482,7 @@ void GlowBanner::paintEvent(QPaintEvent*) {
         painter.fillRect(QRectF(w * 0.08, y, w * 0.84, 1), edge);
     }
 
-    QFont font = theme::labelPx(h >= 60 ? 30 : 22, QFont::Bold);
+    QFont font = theme::labelPx(std::max(22, qRound(h * 0.45)), QFont::Bold);
     font.setLetterSpacing(QFont::AbsoluteSpacing, 2);
     const QFontMetricsF metrics(font);
     const qreal text_width = std::min(metrics.horizontalAdvance(text_), w - 80);

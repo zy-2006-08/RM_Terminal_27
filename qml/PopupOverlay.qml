@@ -16,6 +16,15 @@ Item {
     property string detail: ""
     property int countdownSec: -1
     property bool shown: false
+    // 窗口比 1600×900 大时整张卡片和字一起放大(和顶栏同一个倍数)。
+    property real uiScale: 1.0
+    // 赛前卡片:C++ 算好卡片、上面一段(倒计时和标题)和每个大按钮的位置,QML 只照着画;
+    // 点击由叠在同一位置的透明按钮接(这一层不接鼠标)。cardRect 宽为 0 时用普通弹窗的样子。
+    property rect cardRect: Qt.rect(0, 0, 0, 0)
+    property rect headingRect: Qt.rect(0, 0, 0, 0)
+    property var buttons: []
+    property int hovered: -1
+    readonly property bool hasCard: cardRect.width > 0
 
     visible: shown
 
@@ -47,9 +56,10 @@ Item {
 
     Item {
         id: dialog
-        width: Math.min(root.width - 120, 650)
-        height: 250
-        anchors.centerIn: parent
+        width: root.hasCard ? root.cardRect.width : Math.min(root.width - 120, 650 * root.uiScale)
+        height: root.hasCard ? root.cardRect.height : 250 * root.uiScale
+        x: root.hasCard ? root.cardRect.x : (root.width - width) / 2
+        y: root.hasCard ? root.cardRect.y : (root.height - height) / 2
 
         Image {
             id: frameImage
@@ -69,10 +79,24 @@ Item {
             z: -1
         }
 
-        ColumnLayout {
+        // 赛前卡片大,边框切图中间只有六成不透明,底下面板的字会透上来和按钮抢眼:垫一层深色。
+        Rectangle {
             anchors.fill: parent
-            anchors.margins: 26
-            spacing: 10
+            anchors.leftMargin: parent.width * 0.04
+            anchors.rightMargin: parent.width * 0.04
+            anchors.topMargin: 4 * root.uiScale
+            anchors.bottomMargin: 4 * root.uiScale
+            color: "#F5080D15"
+            visible: root.hasCard
+            z: -1
+        }
+
+        ColumnLayout {
+            x: root.hasCard ? root.headingRect.x : 26 * root.uiScale
+            y: root.hasCard ? root.headingRect.y : 26 * root.uiScale
+            width: root.hasCard ? root.headingRect.width : parent.width - 52 * root.uiScale
+            height: root.hasCard ? root.headingRect.height : parent.height - 52 * root.uiScale
+            spacing: 10 * root.uiScale
 
             Item { Layout.fillHeight: true }
 
@@ -88,7 +112,7 @@ Item {
                 }
                 color: root.accent
                 font.family: Theme.numericFamily
-                font.pixelSize: 40
+                font.pixelSize: Math.round(40 * root.uiScale)
                 font.bold: true
             }
 
@@ -97,7 +121,7 @@ Item {
                 text: root.title
                 color: Theme.textPrimary
                 font.family: Theme.titleFamily
-                font.pixelSize: 26
+                font.pixelSize: Math.round(26 * root.uiScale)
                 font.bold: true
                 font.letterSpacing: Theme.titleSpacing
             }
@@ -109,7 +133,7 @@ Item {
                 text: root.detail
                 color: Theme.textSecondary
                 font.family: Theme.labelFamily
-                font.pixelSize: 15
+                font.pixelSize: Math.round(15 * root.uiScale)
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
             }
@@ -118,9 +142,9 @@ Item {
             // 这是唯一一种「屏幕在骗你」的状态,值得额外一层视觉强调。
             Item {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 44
-                Layout.leftMargin: 40
-                Layout.rightMargin: 40
+                Layout.preferredHeight: 44 * root.uiScale
+                Layout.leftMargin: 40 * root.uiScale
+                Layout.rightMargin: 40 * root.uiScale
                 visible: root.linkFault
 
                 Image {
@@ -144,12 +168,77 @@ Item {
                     text: "数值为最后一次有效值"
                     color: "#FF8080"
                     font.family: Theme.labelFamily
-                    font.pixelSize: 15
+                    font.pixelSize: Math.round(15 * root.uiScale)
                     font.bold: true
                 }
             }
 
             Item { Layout.fillHeight: true }
+        }
+    }
+
+    // 赛前卡片下半截的大按钮:第一行是名字和快捷键,第二行是现在的设置。鼠标指着的那个亮起来。
+    Repeater {
+        model: root.hasCard ? root.buttons : []
+        delegate: Item {
+            id: button
+            required property var modelData
+            readonly property bool hot: root.hovered === modelData.key
+            x: modelData.x
+            y: modelData.y
+            width: modelData.w
+            height: modelData.h
+
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: -4 * root.uiScale
+                radius: 10 * root.uiScale
+                color: "transparent"
+                border.color: Theme.cyan
+                border.width: 3 * root.uiScale
+                opacity: button.hot ? 0.45 : 0
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                radius: 7 * root.uiScale
+                border.color: button.hot ? Theme.cyan : Qt.rgba(142 / 255, 210 / 255, 242 / 255, 0.6)
+                border.width: Math.max(2, 2 * root.uiScale)
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: button.hot ? "#2E5A80" : "#1E3A58" }
+                    GradientStop { position: 1.0; color: button.hot ? "#1F4264" : "#142840" }
+                }
+            }
+
+            Column {
+                anchors.centerIn: parent
+                width: parent.width - 20 * root.uiScale
+                spacing: 4 * root.uiScale
+
+                Text {
+                    width: parent.width
+                    horizontalAlignment: Text.AlignHCenter
+                    text: modelData.title
+                    color: "#FFFFFF"
+                    font.family: Theme.labelFamily
+                    font.pixelSize: Math.round(18 * root.uiScale)
+                    font.bold: true
+                    fontSizeMode: Text.HorizontalFit
+                    minimumPixelSize: 12
+                }
+
+                Text {
+                    width: parent.width
+                    horizontalAlignment: Text.AlignHCenter
+                    text: modelData.value
+                    color: modelData.warn ? Theme.warn : Theme.accentText
+                    font.family: Theme.labelFamily
+                    font.pixelSize: Math.round(14 * root.uiScale)
+                    font.weight: modelData.warn ? Font.Bold : Font.Medium
+                    fontSizeMode: Text.HorizontalFit
+                    minimumPixelSize: 11
+                }
+            }
         }
     }
 }

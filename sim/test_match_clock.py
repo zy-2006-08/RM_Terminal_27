@@ -165,13 +165,48 @@ for _ in range(5):
     m.tick_zones()
 assert m.blue_outpost_hp == 500, "5s 未激活后应按击毁方重建 500 HP"
 assert m.zones[1] == 2, "5s 未激活后应转为红方完全控制"
-assert m.dart_shoot(1, 1) is not None, "冷却 15 秒"
-m.seek(_MATCH_AT + 52)
-assert m.dart_shoot(1, 2) is None
-assert m.blue_base_hp == 9800
+assert m.dart_open(1) == "闸门已经开着"
+m.seek(_MATCH_AT + 44)
+before = m.blue_base_hp
+assert m.dart_shoot(1, 2) is None, "两发飞镖之间没有冷却(规则 5.7.3 的 15 秒是关闸后的)"
+assert m.blue_base_hp == before - 200
 m.tick_blind()
 assert m.blind_side == 2
 print("dart ok")
+
+d = SimulatedMatch()
+d.seek(_MATCH_AT + 20)
+assert d.dart_open(1) == "10 秒后才有开闸机会"
+d.seek(_MATCH_AT + 90)
+assert d.dart_open(1) is None, "0:30 的机会没用就留着,1:30 也能开"
+d.seek(_MATCH_AT + 130)
+assert d.dart_open(1) == "110 秒后才有开闸机会", "0:30 那次已经用了"
+
+d = SimulatedMatch()
+d.seek(_MATCH_AT + 250)
+assert d.dart_open(1) is None, "两次机会都没用就攒着"
+d.seek(_MATCH_AT + 295)
+assert d.dart_open(1) == "飞镖发射站冷却中，剩余 7.0s", "关闸后冷却 15 秒"
+d.seek(_MATCH_AT + 303)
+assert d.dart_open(1) is None
+d.seek(_MATCH_AT + 350)
+assert d.dart_open(1) == "飞镖闸门开启次数已达上限"
+print("dart gate chances ok")
+
+# 规则 5.7.3:每局 4 枚。中镖和开闸发射用的是同一份,用完了都不再命中,剩下的开闸机会也不让用。
+c = SimulatedMatch()
+c.seek(_MATCH_AT + 30)
+assert c.trigger_blind(2, 2) is None and c.trigger_blind(2, 3) is None
+assert c.dart_open(1) is None
+c.seek(_MATCH_AT + 38)
+assert c.dart_shoot(1, 1) is None and c.dart_shoot(1, 2) is None
+assert c.dart_shoot(1, 3) == "本局飞镖已用完"
+assert c.trigger_blind(2, 4) == "红方本局飞镖已用完"
+assert sum(1 for kind, param in c.events if kind == 9 and param.startswith("1,")) == 4
+c.seek(_MATCH_AT + 250)
+assert c.dart_open(1) == "本局飞镖已用完"
+assert c.trigger_blind(1, 2) is None, "蓝方的 4 枚另算"
+print("darts per round ok")
 
 m.set_structure_hp(1, 100)
 m.seek(_MATCH_AT + 240)
@@ -205,6 +240,31 @@ m4._end_round_by_base_hp()
 assert m4.round_winner == 0 and m4.round_end_reason == 1, "双基地同毁且血量相同应判平局"
 print("simultaneous base destruction draw ok")
 
+b = SimulatedMatch()
+b.seek(_MATCH_AT + 2)
+assert b.trigger_blind(2, 1) is None and b.blue_outpost_hp == 0, "中镖前哨站扣 1000"
+outpost_events = sum(1 for kind, _ in b.events if kind == 2)
+assert b.trigger_blind(2, 1) is None and b.blue_outpost_hp == 0
+assert sum(1 for kind, _ in b.events if kind == 2) == outpost_events, "倒下的前哨站不能再被击毁一次"
+b.zones[1] = ms._ZONE_BLUE_FULL
+for target, base_after in ((2, 9800), (3, 9500)):
+    assert b.trigger_blind(2, target) is None and b.blue_base_hp == base_after, "飞镖不吃防御增益"
+assert b.trigger_blind(2, 4) == "红方本局飞镖已用完" and b.blue_base_hp == 9500, "红方 4 枚用完,第 5 发不算"
+b = SimulatedMatch()
+b.seek(_MATCH_AT + 2)
+assert b.trigger_blind(2, 4) is None and b.blue_base_hp == 9200
+assert (b.other_hp[101], b.other_hp[103], b.other_hp[107]) == (320, 160, 320), \
+    "随机移动目标：地面机器人各扣上限 20%"
+assert b.hp == b.max_hp, "打的是蓝方，红方自机不扣"
+assert b.trigger_blind(2, 5) is None and b.blue_base_hp == 7950
+assert (b.other_hp[101], b.other_hp[103], b.other_hp[107]) == (120, 60, 120), "末端移动目标：各扣上限 50%"
+assert b.trigger_blind(1, 4) is None and b.red_base_hp == 9200
+assert b.hp == b.max_hp - int(b.max_hp * 0.2), "红方中镖，红方自机也扣 20%"
+idle = SimulatedMatch()
+idle.reset()
+assert idle.trigger_blind(2, 2) is None and idle.blue_base_hp == 10000, "赛外中镖不扣血"
+print("blind damage ok")
+
 m3 = SimulatedMatch()
 m3.seek(_MATCH_AT + 61)
 m3.tick_10hz()
@@ -234,14 +294,77 @@ assert o.zones[1] == ms._ZONE_RED_FULL, "5s 后应由击毁方红方完全控制
 assert o.blue_outpost_hp == 500, "5s 后应重建 500 HP"
 print("blue outpost manual destroy ok")
 
-# 红方已完全控制蓝方前哨阵地时再次击毁：立即由红方完全控制并重建。
+# 表 5-21:红方先临时控制蓝方前哨阵地(站满 5 秒),再打掉前哨站:立即红方完全控制并重建成红方的。
 r = SimulatedMatch()
 r.seek(_MATCH_AT + 2)
-r.zones[1] = ms._ZONE_RED_FULL
+assert r.set_zone(1, ms._ZONE_RED_TEMP)
 assert r.set_structure_hp(3, 0)
-assert r.zones[1] == ms._ZONE_RED_FULL, "已完全控制方不应被降为临时控制"
-assert r.blue_outpost_hp == 500, "已完全控制方击毁后应立即重建 500 HP"
-print("outpost destroy by controlling side ok")
+assert r.zones[1] == ms._ZONE_RED_FULL, "临时控制方击毁前哨站应立即完全控制"
+assert r.blue_outpost_hp == 500 and r.outpost_owner[1] == ms._FACTION_RED, "当场重建成红方的 500 血"
+print("outpost destroy by temporary controller ok")
+
+# 被占的前哨站能抢回来:蓝方打掉红方前哨站、5 秒后重建成蓝方的;红方站满 5 秒再打掉,马上变回红方的。
+t = SimulatedMatch()
+t.seek(_MATCH_AT + 2)
+assert t.set_structure_hp(2, 0)
+assert t.zones[0] == ms._ZONE_RED_TEMP and t.red_outpost_hp == 0
+t._expire_temp_control(0)
+assert t.zones[0] == ms._ZONE_BLUE_FULL and t.outpost_owner[0] == ms._FACTION_BLUE and t.red_outpost_hp == 500
+assert t.set_zone(0, ms._ZONE_RED_TEMP), "红方可以站在蓝方占的前哨站点上"
+assert t.set_structure_hp(2, 0)
+assert t.zones[0] == ms._ZONE_RED_FULL, "红方打掉蓝方占的前哨站,马上红方完全控制"
+assert t.outpost_owner[0] == ms._FACTION_RED and t.red_outpost_hp == 500, "重建成红方的 500 血"
+# 蓝方再占回去时也是一样:红方完全控制下被蓝方打掉,先红方临时。
+assert t.set_structure_hp(2, 0)
+assert t.zones[0] == ms._ZONE_RED_TEMP and t.red_outpost_hp == 0
+print("outpost retake ok")
+
+# 控制台直接把前哨阵地设成对方完全控制:按规则只能是前哨站被打掉再重建成对方的 500 血。
+z = SimulatedMatch()
+z.seek(_MATCH_AT + 2)
+z.events.clear()
+assert z.set_zone(1, ms._ZONE_RED_FULL)
+assert z.blue_outpost_hp == 500 and z.outpost_owner[1] == ms._FACTION_RED
+assert (2, "111") in z.events, "当作前哨站被打掉,发 Event 2"
+assert "500 血" in z.note
+assert z.set_zone(1, ms._ZONE_RED_TEMP) and z.zones[1] == ms._ZONE_RED_FULL, "红方已完全控制,再激活不变"
+assert z.set_zone(1, ms._ZONE_BLUE_TEMP) and z.zones[1] == ms._ZONE_BLUE_TEMP, "蓝方能站回自己一侧的点上"
+assert z.outpost_owner[1] == ms._FACTION_RED, "站在点上不换主人"
+w = SimulatedMatch()
+w.seek(_MATCH_AT + 2)
+assert w.set_zone(0, ms._ZONE_BLUE_TEMP), "蓝方站上红方前哨站的点"
+assert not w.set_zone(0, ms._ZONE_RED_TEMP), "前哨站还在且归红方时,红方不会是临时控制"
+assert "先被对方打掉" in w.note
+assert w.set_zone(0, ms._ZONE_RED_FULL) and w.zones[0] == ms._ZONE_RED_FULL and w.red_outpost_hp == 1000, \
+    "蓝方走开:回到红方完全控制,前哨站原样"
+assert w.set_structure_hp(2, 0) and not w.set_zone(0, ms._ZONE_BLUE_TEMP), "红方前哨站倒了,蓝方只能直接完全控制"
+assert not w.set_structure_hp(2, 300), "倒下的前哨站不能直接加血"
+assert w.red_outpost_hp == 0
+print("control panel zone rules ok")
+
+# 基地有 100% 防御时「设定血量」照改,但提醒这不是车打的。
+h = SimulatedMatch()
+h.seek(_MATCH_AT + 2)
+assert h.set_structure_hp(0, 500) and h.red_base_hp == 500
+assert "100% 防御" in h.note
+h.note = ""
+assert h.set_zone(0, ms._ZONE_BLUE_TEMP) and h.set_structure_hp(0, 400)
+assert "100% 防御" not in h.note, "红方前哨阵地被蓝方临时控制时基地没有防御,不提醒"
+print("base hp warning ok")
+
+# 随机掉血打掉前哨站,也按主人的对手打的算。
+a = SimulatedMatch()
+a.seek(_MATCH_AT + 2)
+a.outpost_owner[0] = ms._FACTION_BLUE
+a.zones[0] = ms._ZONE_RED_TEMP
+a.red_outpost_hp = 1
+a.auto_hp = True
+for _ in range(2000):
+    if a.red_outpost_hp != 1:
+        break
+    a.tick_field_hp()
+assert a.zones[0] == ms._ZONE_RED_FULL and a.outpost_owner[0] == ms._FACTION_RED, "随机掉血里也能抢回来"
+print("random outpost damage ok")
 
 # 规则 5.6.1：己方完全控制己方前哨阵地时，基地免疫普通伤害；飞镖不受影响。
 d = SimulatedMatch()
@@ -303,3 +426,27 @@ assert (q.red_control_points, q.blue_control_points) == (1, 3), (
     q.red_control_points, q.blue_control_points)
 assert not q.set_zone(0, 0), "前哨阵地不能未控"
 print("control combo ok")
+
+
+def advance(match, seconds):
+    # 不用 seek:它按整场赛程的绝对时刻推阶段,倒计时之后会被拉回第一局的开局时刻。
+    match.hold_at = match.elapsed + seconds
+    match.t0 = time.monotonic()
+
+
+n = SimulatedMatch()
+n.seek(_MATCH_AT + 420)
+assert n.stage()[0] == 5 and n.round_winner == 0, "各项持平,时间到应判平局"
+for round_index, score in ((1, (1, 0)), (2, (2, 0))):
+    n.countdown()
+    advance(n, ms._COUNTDOWN_SEC + 0.1)
+    assert n.stage()[0] == 4 and n.round_index == round_index, (n.stage(), n.round_index)
+    assert n.winner() == 255 and n.blue_base_hp == ms._BASE_MAX_HP, "结算中点倒计时应清掉上一局的结果和血量"
+    assert n.set_structure_hp(1, 0)
+    assert n.stage()[0] == 5 and n.winner() == 1, "打爆蓝方基地应判红方胜"
+    assert (n.red_score, n.blue_score) == score, (n.red_score, n.blue_score)
+assert n.match_over
+n.countdown()
+assert n.stage()[0] == 3 and n.round_index == 0 and (n.red_score, n.blue_score) == (0, 0), \
+    "整场打完再点倒计时应从第一局 0:0 重来"
+print("countdown during settlement starts next round ok")

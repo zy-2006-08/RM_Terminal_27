@@ -2,10 +2,12 @@
 
 namespace rm_terminal {
 
-// Field size in metres. 28.0 x 15.0 was reverse-engineered from the simulator's
-// publish envelope (sim/match_server.py: x = 14.0 +/- 5.5, y = 7.5 +/- 3.5), NOT
-// taken from an official spec. The 2027 rules are unpublished; re-check this when
-// they land.
+// Field size in metres: 28.0 x 15.0, per the 2027 rulebook 4.1 and measured in the
+// official RMUC2027_V1.0.0.stp, where the field spans model X [-14000, 14000] mm and
+// Y [-5875.5, 9124.5] mm. resources/images/minimap/minimap_bg.png is that rectangle
+// rendered top-down and turned 180 degrees, because the model has red on +X while the
+// protocol puts red's supply-zone fence corner at the origin: protocol
+// x = (14000 - X) / 1000, y = (9124.5 - Y) / 1000.
 //
 // Wrong dimensions here are a SILENT failure: every robot gets uniformly offset
 // or scaled while the map still looks perfectly tidy, so the operator has no cue

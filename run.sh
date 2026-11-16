@@ -82,8 +82,25 @@ SERVER=$!
 sleep 1
 
 echo "[run] 4/6 启动模拟图传发送端 (丢包率 $LOSS)"
-"${PY[@]}" -m sim.video_sender --loss "$LOSS" >"$LOGS/video.log" 2>&1 &
-VIDEO=$!
+case "$RM_SELF_ID" in
+  6|106)
+    # 指挥手没有自己的图传：模拟三台地面终端转发过来的三路（重装 1、步兵 3、步兵 4），错开放，画面才不一样。
+    WALL_BASE="$(grep -E '^[[:space:]]*video_wall_port[[:space:]]*=' rm_terminal.conf 2>/dev/null | tail -n 1 | cut -d= -f2 | tr -d '[:space:]')"
+    WALL_BASE="${WALL_BASE:-3340}"
+    VIDEO=""
+    # 测试片子约 400 帧一循环，错开三分之一。
+    for pair in 1:0 3:133 4:266; do
+      robot="${pair%%:*}"
+      "${PY[@]}" -m sim.video_sender --loss "$LOSS" --port $((WALL_BASE + robot)) --offset "${pair##*:}" \
+        >"$LOGS/video-$robot.log" 2>&1 &
+      VIDEO="$VIDEO $!"
+    done
+    ;;
+  *)
+    "${PY[@]}" -m sim.video_sender --loss "$LOSS" >"$LOGS/video.log" 2>&1 &
+    VIDEO=$!
+    ;;
+esac
 
 ARM_PATH="${RM_ARM_SERIAL:-/tmp/rm_terminal_arm}"
 echo "[run] 5/6 启动假机械臂 (串口 $ARM_PATH)"

@@ -34,6 +34,13 @@ std::string encode_dart(std::uint32_t target_id, bool open, bool launch_confirm)
 // 5 确认复活 6 确认花费金币复活 7/8/9 进攻/防御/移动 10/11/12 强化进攻/防御/移动。
 std::string encode_sentry(std::uint32_t command_id);
 
+// 指挥手发一条哨兵指令一共花多少金币(规则 5.7.2、表 5-7):自动哨兵每次另加 50 干预费,半自动不加。
+// remaining_sec 是比赛剩余秒数,远程回血和金币复活按它涨价,没有时这两项返回空;协议里补血点补弹
+// 不带数量,也返回空。金币复活的「机器人等级」哨兵没有(不适用经验体系),按 1 级估。
+std::optional<std::uint32_t> sentry_cost(std::uint32_t command_id, std::optional<std::int32_t> remaining_sec,
+                                         bool automatic);
+std::uint32_t sentry_mark_cost(bool automatic);
+
 // rm::CommonCommand(2.2.25)。cmd_type:1 兑换 17mm 发弹量(param 为发数,10 的倍数)
 // 2 兑换 42mm 发弹量(param 为发数) 3 确认复活 4 兑换立即复活 5 远程兑换发弹量
 // 6 远程兑换血量。3/4/6 协议没写 param,一律写 0。

@@ -6,7 +6,8 @@
 
 import sim.match_server as ms
 from sim.match_server import (
-    SimulatedMatch, base_status_code, dart_blind_duration, max_assembly_difficulty,
+    SimulatedMatch, assembly_ready, assembly_steps, assembly_timed_out, base_status_code,
+    dart_blind_duration, max_assembly_difficulty, tech_core_state,
     ordered_robot_ids, radar_centimetres, radar_robot_ids, relative_base_shield,
     relative_outpost_status, zone_event,
 )
@@ -38,6 +39,23 @@ assert [dart_blind_duration(n, 2) for n in (1, 2, 3, 4, 5)] == [10.0, 5.0, 3.0, 
 assert dart_blind_duration(3, 4) == 10.0 and dart_blind_duration(1, 5) == 10.0
 assert [base_status_code(True, True), base_status_code(False, False), base_status_code(False, True)] == [0, 1, 2]
 assert [max_assembly_difficulty(t) for t in (0, 59, 60, 125, 180, 400)] == [1, 1, 2, 3, 4, 4]
+
+# 科技核心(2.2.22):先运动 3 秒到位,再每 3 秒做完一步;每一级要的步骤按表 5-10。
+assert [assembly_steps(level) for level in (1, 2, 3, 4)] == [1, 2, 3, 3]
+assert tech_core_state(None, 0)["basic_state"] == 1
+moving = tech_core_state(2, 1.0)
+assert moving["basic_state"] == 2 and moving["putin_state"] == 0, moving
+one = tech_core_state(1, 30.0)
+assert (one["basic_state"], one["putin_state"], one["move_state"], one["rotate_state"]) == (3, 1, 0, 0), one
+two = tech_core_state(2, 9.5)
+assert (two["putin_state"], two["move_state"], two["rotate_state"]) == (1, 1, 0), two
+assert not assembly_ready(1, 5.9) and assembly_ready(1, 6.0) and not assembly_ready(3, 11.0) and assembly_ready(3, 12.0)
+four = tech_core_state(4, 4.0)
+assert four["remain_time_all"] == 44 and four["remain_time_step"] == 2, four
+assert tech_core_state(3, 4.0)["remain_time_all"] == 0, "剩余时间只在四级装配中有效"
+assert not assembly_timed_out(4, 47.9) and assembly_timed_out(4, 48.0)
+assert not assembly_timed_out(2, 29.9) and assembly_timed_out(2, 30.0)
+print("tech core ok")
 print("rule tables ok")
 
 # Event 5-8:前哨阵地参数就是绝对编码,基地阵地只有「完全/临时」两种。
@@ -77,7 +95,7 @@ print("dart events ok")
 m = match_at(60)
 m.target_locked, m.target_id = True, 101 if ms._SELF_FACTION == RED else 1
 # 重装(42mm 未装)和指挥手(空中)没有 17mm 发射机构,这里只借 shoot() 的击杀路径。
-m.launcher_ready, m.caliber = True, 17
+m.launcher_ready, m.launcher_verified, m.caliber = True, True, 17
 m.ammo = 50
 m.other_hp[m.target_id] = 20
 assert m.shoot(17, 1) is None
@@ -109,6 +127,30 @@ m.set_structure_hp(0 if ms._SELF_FACTION == RED else 1, 9000)
 m.set_structure_hp(0 if ms._SELF_FACTION == RED else 1, 8000)
 assert m.events.count((11, "")) == 1, m.events
 print("base attacked ok")
+
+# 42mm 安装权限(5.7.1):完成三级装配,或比赛进行 300 秒后。
+m = match_at(60)
+assert not m.launcher_permission()
+m.tech_level[ms._SELF_FACTION] = 3
+assert m.launcher_permission()
+assert match_at(300).launcher_permission() and not match_at(299).launcher_permission()
+# 300 秒还要减去 M/50 和 2N/3:本局对方基地血量、控制度比己方多出来的最大值。
+m = match_at(150)
+own_base = 0 if ms._SELF_FACTION == RED else 1
+assert m.set_structure_hp(own_base, 3000), "己方基地掉到 3000:M = 7000,提前 140 秒"
+assert m.max_base_gap == 7000 and m.launcher_unlock_sec() == 160.0
+assert not m.launcher_permission()
+if ms._SELF_FACTION == RED:
+    m.blue_control_points = 30
+else:
+    m.red_control_points = 30
+m.track_gaps()
+assert m.max_control_gap == 30 and m.launcher_unlock_sec() == 140.0, "N = 30,再提前 20 秒"
+assert match_at(150).launcher_unlock_sec() == 300.0
+m.seek(m.elapsed + 0)
+gaps = (m.max_base_gap, m.max_control_gap)
+assert m.set_structure_hp(own_base, 10000) and (m.max_base_gap, m.max_control_gap) == gaps, "取本局最大值,追回来也不变"
+print("launcher permission ok")
 
 # 每一个待发事件都是 (编号, 参数),编号在协议 1–16 之内。
 for event_id, param in m.events:

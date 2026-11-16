@@ -77,6 +77,7 @@ bool convert(GameFields<Field>& state, const inbound::GameStatus& patch, Monoton
     MERGE(rune_average_rings, nonnegative);
     MERGE(selected_shooter, between(1, 2));
     MERGE(selected_chassis, between(1, 2));
+    MERGE(sentry_control, between(0, 1));
     return ok;
 }
 bool convert(DynamicFields<Field>& state, const inbound::RobotDynamicStatus& patch, MonotonicMs now) {
