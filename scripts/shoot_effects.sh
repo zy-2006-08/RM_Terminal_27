@@ -250,7 +250,43 @@ scene_overview() {
     echo "report -> $(basename "$report")"
 }
 
-declare -F "scene_$BLOCK" > /dev/null || fail "用法: bash scripts/shoot_effects.sh {buffs|radar|field|overview}"
+# 第五块:地图事件动画。动画只放两三秒,每种单拍一张,事件掐在截图前一点点发。
+scene_map_anim() {
+    start_sim 3
+    capture 3 1440x900 7000 dart-1440x900.png
+    sleep 6.0
+    ctl blind 2 2
+    done_shot dart
+
+    capture 3 1440x900 7000 gate-1440x900.png
+    sleep 5.2
+    ctl dart-open 2
+    done_shot gate
+
+    # 敌方的能量机关要 3 秒才分得出是谁开的。
+    capture 3 1440x900 9000 rune-1440x900.png
+    sleep 3.5
+    ctl enemy-rune small
+    done_shot rune
+
+    capture 3 1440x900 7000 base-hit-1440x900.png
+    sleep 5.4
+    ctl structure 0 9200
+    done_shot base-hit
+
+    capture 3 1440x900 7000 zone-1440x900.png
+    sleep 4.8
+    ctl zone 1 2
+    done_shot zone
+
+    capture 3 1440x900 9000 fortress-1440x900.png
+    sleep 3
+    ctl fortress 1
+    done_shot fortress
+    stop_sim
+}
+
+declare -F "scene_$BLOCK" > /dev/null || fail "用法: bash scripts/shoot_effects.sh {buffs|radar|field|overview|map_anim}"
 mkdir -p "$OUT"
 mosquitto -p "$P" > "$RUN/logs/mosquitto.log" 2>&1 &
 PIDS+=("$!")
