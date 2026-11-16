@@ -46,6 +46,12 @@ up to 1920×1080. Top bar 106 px.
   server's real values without 「约」 or seconds, plus the enemy sentry's posture; enemy rows get
   「弹丸 N」. The enemy panel title carries a badge note: cyan 「雷达情报」, amber
   「雷达情报过期 N秒」 once the newest section is over 3 s old (chips then fall back to estimates).
+- Map effects (`map_effects.{h,cpp}`, drawn in `map_pane.cpp`): one-shot animations of 1.5–3 s in the
+  acting side's colour — dart arc from launcher to target then a burst, gate pulses, rune rays, base
+  ripples with the HP lost, a zone fill that fades — plus a fortress progress ring that stays while the
+  fortress is being stolen. Area effects sit under the robots, the rest above. Labels flip above the
+  point in the lower 40 % of the field so they stay inside the map. The map repaints at 30 fps only
+  while something is playing.
 - Overview (`overview.{h,cpp}`, `overview_pane.{h,cpp}`): the commander's analysis card becomes 「大局」.
   Top line pairs two verdicts (now / at 7:00) coloured by who wins; the middle plot is our control lead
   per second (fill above the zero line in our colour, below in theirs) with a dashed projection to the end;
