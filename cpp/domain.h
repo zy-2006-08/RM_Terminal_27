@@ -66,8 +66,9 @@ template<template<class> class F> struct GameFields {
     // RuneStatusSync,1Hz,己方:1 未激活 2 正在激活 3 已激活
     F<std::uint32_t> rune_status, rune_activated_arms;
     F<double> rune_average_rings;
-    // RobotPerformanceSelectionSync,1Hz,自机:发射 1 冷却优先 2 爆发优先;底盘 1 血量优先 2 功率优先
-    F<std::uint32_t> selected_shooter, selected_chassis;
+    // RobotPerformanceSelectionSync,1Hz,自机:发射 1 冷却优先 2 爆发优先;底盘 1 血量优先 2 功率优先;
+    // 哨兵控制方式 0 自动 1 半自动
+    F<std::uint32_t> selected_shooter, selected_chassis, sentry_control;
     auto fields() { return std::tie(current_round, total_rounds, red_score, blue_score,
         current_stage, stage_countdown_sec, stage_elapsed_sec, is_paused, winner, end_reason,
         red_base_hp, red_base_max_hp, blue_base_hp, blue_base_max_hp,
@@ -80,7 +81,7 @@ template<template<class> class F> struct GameFields {
         red_base_zone_progress, blue_base_zone_progress,
         economy, total_economy, tech_level, encryption_level,
         rune_status, rune_activated_arms, rune_average_rings,
-        selected_shooter, selected_chassis); }
+        selected_shooter, selected_chassis, sentry_control); }
 };
 // RobotDynamicStatus,10Hz,只有自机。
 template<template<class> class F> struct DynamicFields {
@@ -175,6 +176,25 @@ struct EventRecord {
     std::uint32_t faction = 0;  // 横幅配色:0 中立 1 红 2 蓝
     // 收到时的比赛倒计时。协议不带时间戳;记比赛时间而不是墙上时间,录像回放时才显示得对。
     std::optional<std::int32_t> countdown_sec;
+    // Event 9 飞镖命中:命中方阵营(0 = 不是这类事件)和目标 1–5。
+    std::uint32_t dart_hitter = 0;
+    std::uint32_t dart_target = 0;
+    // Event 4 的激活类型(1 小能量机关 2 大能量机关),Event 3 的激活臂数和平均环数。
+    // 两条事件都不带是哪一方的,由增益推算按我方能量机关状态分(见 buff_ledger.h)。
+    std::uint32_t rune_kind = 0;
+    std::uint32_t rune_arms = 0;
+    double rune_rings = 0;
+};
+
+// Buff(2.2.14)原样记下的一条。服务器获得增益时发一次,之后 1Hz 一直发到失去增益,失去时
+// 不另发:超过时效窗口没再收到就当已经没了。同一类增益可能来自好几处(能量机关、地形……),
+// 按「类型 + 最大时长」分开记,合成时按规则取最大(见 buff_ledger.h)。
+struct BuffRecord {
+    std::uint32_t type = 0;   // 1 攻击 2 防御/易伤 3 热量冷却 4 底盘功率 5 回血 6 可兑换发弹量 7 地形跨越预备
+    std::int32_t level = 0;   // 1/2/4/5 是百分比,2 为负是易伤;3 是每秒多冷却多少
+    std::uint32_t max_time = 0;
+    std::optional<std::uint32_t> left_time;
+    MonotonicMs received_at = 0;
 };
 
 // Ring buffer, bounded so a match-long run cannot grow without limit. Overwrites
@@ -248,6 +268,8 @@ struct DartTally {
     std::uint32_t red = 0;
     std::uint32_t blue = 0;
 };
+// 规则 5.7.3:每局比赛飞镖系统可装载 4 枚飞镖。
+constexpr std::uint32_t kDartsPerRound = 4;
 
 struct SentryCtrlOutcome {
     std::uint32_t command_id = 0;
@@ -291,6 +313,9 @@ struct Snapshot {
     std::map<RobotId, RobotState> robots;
     KillTally kills;
     DartTally dart_hits;
+    // Event 16:我方重装这一局装上了模块化 42mm 发射机构。协议里只有这一条说「装好了」,
+    // 所以和击杀数一样从终端打开时算起,每局清零。
+    bool launcher_installed = false;
     TechCoreFields<Field> tech_core;
     DartFields<Field> dart;
     SentryFields<Field> sentry;
@@ -298,6 +323,8 @@ struct Snapshot {
     std::optional<PathPlan> sentry_path;
     // 最近收到的地图标记,新的在后,有上限。
     std::vector<MapMark> map_marks;
+    // Buff 按机器人 id 记。快照里只留还在时效窗口里的。
+    std::map<std::uint32_t, std::vector<BuffRecord>> buffs;
 };
 
 }

@@ -86,6 +86,8 @@ void Store::reset() {
 void Store::resetRound() {
     state_.kills = KillTally{};
     state_.dart_hits = DartTally{};
+    state_.launcher_installed = false;
+    state_.buffs.clear();
     enemy_fixed_dart_hits_ = 0;
     blind_until_.reset();
     blind_target_ = 0;
@@ -101,15 +103,23 @@ bool Store::apply(const inbound::GameStatus& patch, MonotonicMs now) {
     if (!advance(now)) return false;
     const bool ok = convert(state_.game, patch, now);
     // 换局:局号变了,或者从比赛中/结算回到赛前阶段。击杀数、飞镖命中次数、遮挡和上限血量
-    // 都是按局算的。
+    // 都是按局算的,战场事件也是。结算那十几秒操作手还在看上一局发生了什么,所以局号要是
+    // 在结算里就变了,事件留到回赛前阶段再清。
     const auto& round = state_.game.current_round;
     const auto& stage = state_.game.current_stage;
+    const bool settling = stage.quality == Quality::Valid && stage.value == std::optional<std::uint32_t>(5);
     if (patch.current_round && round.quality == Quality::Valid) {
-        if (round_ && *round_ != *round.value) resetRound();
+        if (round_ && *round_ != *round.value) {
+            resetRound();
+            if (!settling) state_.events = EventHistory(event_capacity_);
+        }
         round_ = round.value;
     }
     if (patch.current_stage && stage.quality == Quality::Valid) {
-        if (stage_ && *stage_ >= 4 && *stage.value < 4) resetRound();
+        if (stage_ && *stage_ >= 4 && *stage.value < 4) {
+            resetRound();
+            state_.events = EventHistory(event_capacity_);
+        }
         stage_ = stage.value;
     }
     return ok;
@@ -157,6 +167,22 @@ bool Store::apply(const inbound::Event& patch, MonotonicMs now) {
         if (*event.dart_hitter == kRed) ++state_.dart_hits.red;
         else ++state_.dart_hits.blue;
     }
+    if (event.launcher_installed) state_.launcher_installed = true;
+    // 前哨站被击毁:按击毁前的阵地和血量判它归谁,再把血量当场记成 0,不等 1Hz 的全局状态,
+    // 否则顶栏的前哨站牌会按「临时控制 + 还立着」短暂判错主人。
+    if (event.outpost_index) {
+        const bool r_outpost = *event.outpost_index == 0;
+        Field<std::uint32_t>& zone = r_outpost ? state_.game.red_outpost_zone : state_.game.blue_outpost_zone;
+        Field<std::uint32_t>& hp = r_outpost ? state_.game.red_outpost_hp : state_.game.blue_outpost_hp;
+        const auto valid = [](const Field<std::uint32_t>& field) {
+            return field.quality == Quality::Valid ? field.value : std::nullopt;
+        };
+        const std::uint32_t owner = outpost_owner(valid(zone), valid(hp), r_outpost ? kRed : kBlue);
+        event.faction = owner;
+        event.level = owner == self ? 3u : 1u;
+        event.text = outpost_destroyed_text(owner, *event.outpost_index, self);
+        set_valid(hp, 0u, now);
+    }
     // 对方飞镖命中:按规则推算我方操作界面被遮挡到什么时候。连续命中时间叠加。
     if (event.dart_hitter && *event.dart_hitter != self) {
         const MonotonicMs duration = dart_blind_ms(event.dart_target, enemy_fixed_dart_hits_);
@@ -181,6 +207,13 @@ bool Store::apply(const inbound::Event& patch, MonotonicMs now) {
     record.faction = event.faction;
     if (state_.game.current_stage.value == 4u && state_.game.stage_countdown_sec.value)
         record.countdown_sec = state_.game.stage_countdown_sec.value;
+    if (event.dart_hitter) {
+        record.dart_hitter = *event.dart_hitter;
+        record.dart_target = event.dart_target;
+    }
+    record.rune_kind = event.rune_kind;
+    record.rune_arms = event.rune_arms;
+    record.rune_rings = event.rune_rings;
     state_.events.push(std::move(record));
     return event.understood;
 }
@@ -207,6 +240,21 @@ bool Store::apply(const inbound::RobotRespawnStatus& patch, std::optional<RobotI
 bool Store::apply(const inbound::RobotBuff& patch, std::optional<RobotId> source, MonotonicMs now) {
     std::lock_guard<std::mutex> lock(mutex_);
     return valid_source(source) && advance(now) && convert(state_.robots[*source].buffs, patch, now);
+}
+bool Store::apply(const inbound::BuffMessage& patch, MonotonicMs now) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (patch.robot_id == 0 || !advance(now)) return false;
+    std::vector<BuffRecord>& list = state_.buffs[patch.robot_id];
+    list.erase(std::remove_if(list.begin(), list.end(),
+                              [&](const BuffRecord& old) {
+                                  return now - old.received_at >= threshold_ ||
+                                         (old.type == patch.record.type && old.max_time == patch.record.max_time);
+                              }),
+               list.end());
+    BuffRecord record = patch.record;
+    record.received_at = now;
+    list.push_back(record);
+    return true;
 }
 bool Store::apply(const inbound::RobotInjury& patch, std::optional<RobotId> source, MonotonicMs now) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -330,6 +378,13 @@ Snapshot Store::snapshot(MonotonicMs now) const {
     age(copy.tech_core, now, threshold_);
     age(copy.dart, now, threshold_);
     age(copy.sentry, now, threshold_);
+    for (auto it = copy.buffs.begin(); it != copy.buffs.end();) {
+        std::vector<BuffRecord>& list = it->second;
+        list.erase(std::remove_if(list.begin(), list.end(),
+                                  [&](const BuffRecord& record) { return now - record.received_at >= threshold_; }),
+                   list.end());
+        it = list.empty() ? copy.buffs.erase(it) : std::next(it);
+    }
 
     // 遮挡是本机按事件推算的,不随某条消息老化:正在遮挡时一定可信;没在遮挡时,
     // 可信度跟着服务器数据流走(拿 5Hz 的 GameStatus 当代理)——流断了就可能漏掉命中事件。

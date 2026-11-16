@@ -42,6 +42,11 @@ struct Event {
     std::string param;
 };
 
+struct BuffMessage {
+    std::uint32_t robot_id = 0;
+    BuffRecord record;
+};
+
 struct SentryCtrlResult {
     std::uint32_t command_id = 0;
     std::uint32_t result_code = 0;

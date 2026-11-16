@@ -94,6 +94,8 @@ QStringList match_alert_phrases() {
 MatchAlerts::MatchAlerts(MatchAlertSettings settings) : settings_(std::move(settings)) {}
 
 void MatchAlerts::report(std::vector<MatchAlert>& out, MatchAlert alert) const {
+    if (alert.kind == AlertKind::Energy && settings_.role == Role::Hero) return;
+    if (alert.kind == AlertKind::DartGate && settings_.role != Role::Commander) return;
     if (settings_.disabled.contains(alert_kind_name(alert.kind))) return;
     out.push_back(std::move(alert));
 }
@@ -129,7 +131,9 @@ std::vector<MatchAlert> MatchAlerts::observe(const Snapshot& snapshot, Monotonic
     // 时间点:能量机关、飞镖闸门。
     if (const auto elapsed = fresh(game.stage_elapsed_sec)) {
         if (!last_elapsed_ || *elapsed < *last_elapsed_) last_elapsed_ = *elapsed;
+        const bool darts_spent = (red ? snapshot.dart_hits.red : snapshot.dart_hits.blue) >= kDartsPerRound;
         for (const auto& point : timeline()) {
+            if (point.kind == AlertKind::DartGate && darts_spent) continue;
             if (*last_elapsed_ < point.at_sec && point.at_sec <= *elapsed &&
                 *elapsed - point.at_sec <= kTimelineFreshSec) {
                 report(out, {point.kind, AlertLevel::Info, QString::fromUtf8(point.banner),
@@ -171,9 +175,14 @@ std::vector<MatchAlert> MatchAlerts::observe(const Snapshot& snapshot, Monotonic
     // 堡垒(2027):敌方开始激活我方堡垒时提醒一次。激活满 10 秒我方基地护甲展开。
     if (const auto activation =
             fresh(red ? game.red_fortress_activation_sec : game.blue_fortress_activation_sec)) {
-        if (*activation > 0 && last_fortress_.value_or(0) == 0)
+        if (*activation > 0 && last_fortress_.value_or(0) == 0) {
+            // 规则 5.6.4.9:在激活的那台 100% 易伤,我方基地护甲展开后就没有了。
+            const bool thief_exposed = fresh(red ? game.red_base_status : game.blue_base_status) != 2u;
             report(out, {AlertKind::Fortress, AlertLevel::Warning,
-                       QStringLiteral("敌方在激活我方堡垒"), QStringLiteral("敌方在激活我方堡垒")});
+                         thief_exposed ? QStringLiteral("敌方在激活我方堡垒 · 那台易伤100%")
+                                       : QStringLiteral("敌方在激活我方堡垒"),
+                         QStringLiteral("敌方在激活我方堡垒")});
+        }
         last_fortress_ = *activation;
     }
 

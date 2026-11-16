@@ -39,7 +39,7 @@
 #include "replay_player.h"
 #include "seat.h"
 #include "seat_picker.h"
-#include "assembly_pane.h"
+#include "assembly_flow.h"
 #include "dart_pane.h"
 #include "hold_panels.h"
 #include "km_control.h"
@@ -55,6 +55,8 @@
 #include "ui_mode.h"
 #include "ui_profile_store.h"
 #include "video_receiver.h"
+#include "video_relay.h"
+#include "video_wall.h"
 
 #if defined(RM_TERMINAL_HAS_SPEECH)
 #include "macos_speech_backend.h"
@@ -450,9 +452,13 @@ int main(int argc, char* argv[]) {
     }
 
     rm_terminal::VideoReceiver video;
-    video.setDatagramObserver([&recorder](const QByteArray& datagram) {
+    std::unique_ptr<rm_terminal::VideoRelay> relay;
+    video.setDatagramObserver([&recorder, &relay](const QByteArray& datagram) {
         recorder.recordVideo(datagram);
+        if (relay) relay->forward(datagram);
     });
+    const bool commander_seat = rm_terminal::Seat::fromRobotId(cfg.self_robot_id) &&
+                                rm_terminal::Seat::fromRobotId(cfg.self_robot_id)->role() == rm_terminal::Role::Commander;
 
     std::unique_ptr<rm_terminal::ReplayPlayer> replay;
     if (!replay_path.isEmpty()) {
@@ -482,13 +488,35 @@ int main(int argc, char* argv[]) {
     } else {
         rm_terminal::VideoEndpoint endpoint;
         endpoint.port = static_cast<quint16>(cfg.udp_port);
-        if (!video.start(endpoint)) {
+        if (!commander_seat && !video.start(endpoint)) {
             rm_terminal::StructuredLog::write(
                 rm_terminal::LogLevel::warning, QStringLiteral("reconnect_udp"),
                 {QStringLiteral("state=start_failed"),
                  QStringLiteral("port=%1").arg(cfg.udp_port)});
         }
     }
+
+    // 指挥手没有自己的图传(本机那一路不开),看的是队友终端转发过来的:规则 3.3.1 写明操作间里的自定义终端
+    // 可以有线互连通信。重装和两台步兵各占一个口,地面席位把自己收到的图传原样转发过去。回放时都不开:
+    // 录像里没有别人的图传,看录像也不该往外发。
+    std::vector<std::pair<std::uint32_t, std::unique_ptr<rm_terminal::VideoReceiver>>> wall;
+    if (!replay && commander_seat) {
+        for (const std::uint32_t robot : rm_terminal::wall_robots(static_cast<std::uint32_t>(cfg.self_robot_id))) {
+            auto receiver = std::make_unique<rm_terminal::VideoReceiver>();
+            rm_terminal::VideoEndpoint endpoint;
+            endpoint.address = QHostAddress::AnyIPv4;
+            endpoint.port = rm_terminal::wall_port(cfg.video_wall_port, static_cast<int>(robot));
+            const bool listening = receiver->start(endpoint);
+            rm_terminal::StructuredLog::write(
+                listening ? rm_terminal::LogLevel::info : rm_terminal::LogLevel::warning, QStringLiteral("video_wall"),
+                {QStringLiteral("state=%1").arg(listening ? QStringLiteral("listening") : QStringLiteral("start_failed")),
+                 QStringLiteral("robot=%1").arg(robot), QStringLiteral("port=%1").arg(endpoint.port)});
+            wall.emplace_back(robot, std::move(receiver));
+        }
+    }
+    if (!replay && !commander_seat && !cfg.video_relay_host.isEmpty())
+        relay = std::make_unique<rm_terminal::VideoRelay>(QHostAddress(cfg.video_relay_host),
+                                                          rm_terminal::wall_port(cfg.video_wall_port, cfg.self_robot_id));
 
     // 机械臂 -> 串口 -> 这里 -> MQTT CustomControl -> 车。回放时不开串口:看录像不该
     // 让桌上的机械臂数据被发出去。每帧只在收到时转发一次,断线或发不出去就丢掉,
@@ -563,6 +591,7 @@ int main(int argc, char* argv[]) {
     // 回放时照样出横幅(复盘时能看到当时提醒了什么),但不出声。
     rm_terminal::MatchAlertSettings alert_settings;
     alert_settings.self_faction = cfg.self_robot_id > 100 ? 2u : 1u;
+    if (const auto seat = rm_terminal::Seat::fromRobotId(cfg.self_robot_id)) alert_settings.role = seat->role();
     alert_settings.control_gap = cfg.alert_control_gap;
     alert_settings.disabled = cfg.alerts_disabled;
     rm_terminal::MatchAlerts match_alerts(alert_settings);
@@ -581,6 +610,12 @@ int main(int argc, char* argv[]) {
     const rm_terminal::Role seat_role = rm_terminal::Seat::fromRobotId(cfg.self_robot_id)
                                             ? rm_terminal::Seat::fromRobotId(cfg.self_robot_id)->role()
                                             : rm_terminal::Role::Infantry;
+    if (replay && seat_role == rm_terminal::Role::Commander) {
+        std::vector<rm_terminal::WallFeed> feeds;
+        for (const std::uint32_t robot : rm_terminal::wall_robots(static_cast<std::uint32_t>(cfg.self_robot_id)))
+            feeds.push_back(rm_terminal::wall_feed(robot, nullptr));
+        dashboard.setWallFeeds(std::move(feeds));
+    }
     rm_terminal::UiProfileController ui_profiles(ui_profile_files, seat_role);
     if (!picked_operator.isEmpty()) ui_profiles.switchOperator(picked_operator);
     // 操作手关掉的提醒叠加在配置文件 alerts_disabled 之上,语音开关只管事件提醒的声音。
@@ -684,18 +719,28 @@ int main(int argc, char* argv[]) {
         return !replay && intake.publish(topic, payload);
     };
     dashboard.setCommandSender(send);
-    rm_terminal::AssemblyPane* assembly = nullptr;
+    // 重装装配不再占一块面板:装配是拿真的自定义控制器做的,终端只发开始、确认、退出。照官方选手端,
+    // 重装按 H 打开的框里选难度,装配中屏幕下方正中显示进度(assembly_flow.h)。
+    rm_terminal::AssemblyFlow* assembly = nullptr;
     rm_terminal::DartPane* dart = nullptr;
     rm_terminal::SentryPane* sentry = nullptr;
-    if (QWidget* card = dashboard.roleCard(rm_terminal::PaneId::Assembly)) {
-        assembly = new rm_terminal::AssemblyPane(card);
-        dashboard.placePane(rm_terminal::PaneId::Assembly, assembly);
-        assembly->setSender(send);
-    }
     if (QWidget* card = dashboard.roleCard(rm_terminal::PaneId::Dart)) {
         dart = new rm_terminal::DartPane(card);
         dashboard.placePane(rm_terminal::PaneId::Dart, dart);
         dart->setSender(send);
+        // 飞镖键位照官方选手端。只有指挥手有飞镖面板,指挥手又没有兑换/复活/装配的 Y、N、L,不会撞键。
+        const auto dart_key = [&dashboard](int key, auto action) {
+            auto* shortcut = new QShortcut(QKeySequence(key), &dashboard);
+            shortcut->setContext(Qt::ApplicationShortcut);
+            // 按住 L 不连发:按一下只发一枚。
+            shortcut->setAutoRepeat(false);
+            QObject::connect(shortcut, &QShortcut::activated, &dashboard, action);
+        };
+        dart_key(Qt::Key_J, [dart] { dart->cycleTarget(); });
+        dart_key(Qt::Key_F, [dart] { dart->requestOpen(); });
+        dart_key(Qt::Key_Y, [dart] { dart->confirmOpen(); });
+        dart_key(Qt::Key_N, [dart] { dart->cancelOpen(); });
+        dart_key(Qt::Key_L, [dart] { dart->launch(); });
     }
     if (QWidget* card = dashboard.roleCard(rm_terminal::PaneId::Sentry)) {
         sentry = new rm_terminal::SentryPane(card);
@@ -732,6 +777,27 @@ int main(int argc, char* argv[]) {
         self_commands->setPurchaseRequest([purchases](rm_terminal::PurchaseKind kind, std::uint32_t rounds) {
             purchases->ask(kind, rounds);
         });
+        if (seat_role == rm_terminal::Role::Hero) {
+            assembly = new rm_terminal::AssemblyFlow(&dashboard);
+            assembly->setSender(send);
+            assembly->setNeighbor(purchases->remotePopup());
+            // Enter 开始;确认框开着时 Enter 不算,免得想确认回血却开始了装配。开始了就把框关掉。
+            const auto start_assembly = [assembly, purchases] {
+                if (!purchases->confirmOpen() && assembly->start()) purchases->toggleRemote();
+            };
+            purchases->setAssemblyActions([assembly](std::uint32_t level) { assembly->choose(level); }, start_assembly);
+            QObject::connect(assembly, &rm_terminal::AssemblyFlow::rowChanged, purchases,
+                             [assembly, purchases] { purchases->setAssemblyRow(assembly->row()); });
+            purchases->setAssemblyRow(assembly->row());
+            QObject::connect(assembly, &rm_terminal::AssemblyFlow::commandSent, &dashboard,
+                             [](std::uint32_t operation, std::uint32_t difficulty, bool ok) {
+                                 rm_terminal::StructuredLog::write(
+                                     rm_terminal::LogLevel::info, QStringLiteral("assembly_command"),
+                                     {QStringLiteral("operation=%1").arg(operation),
+                                      QStringLiteral("difficulty=%1").arg(difficulty),
+                                      QStringLiteral("state=%1").arg(ok ? "sent" : "not_sent")});
+                             });
+        }
         const auto shortcut = [&dashboard](const QKeySequence& keys, auto action) {
             auto* key = new QShortcut(keys, &dashboard);
             key->setContext(Qt::ApplicationShortcut);
@@ -743,9 +809,15 @@ int main(int argc, char* argv[]) {
 #else
         const int ctrl = Qt::CTRL;
 #endif
-        shortcut(QKeySequence(Qt::Key_H), [purchases, settings_panel] {
+        // 重装按 H 打开的框里还有装配难度;装配中按 H 不开框,免得 Y 按成买东西。
+        shortcut(QKeySequence(Qt::Key_H), [purchases, settings_panel, assembly] {
+            if (assembly && assembly->canExit()) {
+                assembly->busy();
+                return;
+            }
             settings_panel->setOpen(false);
             purchases->toggleRemote();
+            if (assembly && purchases->remoteOpen()) assembly->boxOpened();
         });
         shortcut(QKeySequence(Qt::Key_O), [purchases, settings_panel] {
             settings_panel->setOpen(false);
@@ -764,10 +836,43 @@ int main(int argc, char* argv[]) {
         dashboard.setEliminatedOverlayReplaced(true);
         revive_popup->setActions([self_commands] { self_commands->confirmRevive(); },
                                  [self_commands] { self_commands->payRevive(); });
-        // Y:兑换确认框开着时是「确定」,否则是免费复活。
-        shortcut(QKeySequence(Qt::Key_Y), [self_commands, purchases] {
-            if (!purchases->yes()) self_commands->confirmRevive();
+        // Y:兑换确认框开着时是「确定」;重装装配中是「确认装配」;都不是才是免费复活。
+        shortcut(QKeySequence(Qt::Key_Y), [self_commands, purchases, assembly] {
+            if (purchases->yes()) return;
+            if (assembly && assembly->confirm()) return;
+            self_commands->confirmRevive();
         });
+        if (assembly) {
+            // 1–4 选难度、Enter 开始只在 H 框开着时归终端;L 退出装配只在装配中归终端。平时不拦这几个键,
+            // 给方案起名字时照样能打数字和 L。
+            std::vector<QShortcut*> box_keys;
+            const auto box_key = [&dashboard, &box_keys](int key, auto action) {
+                auto* shortcut_key = new QShortcut(QKeySequence(key), &dashboard);
+                shortcut_key->setContext(Qt::ApplicationShortcut);
+                shortcut_key->setEnabled(false);
+                QObject::connect(shortcut_key, &QShortcut::activated, &dashboard, action);
+                box_keys.push_back(shortcut_key);
+                return shortcut_key;
+            };
+            box_key(Qt::Key_1, [assembly] { assembly->choose(1); });
+            box_key(Qt::Key_2, [assembly] { assembly->choose(2); });
+            box_key(Qt::Key_3, [assembly] { assembly->choose(3); });
+            box_key(Qt::Key_4, [assembly] { assembly->choose(4); });
+            const auto start_assembly = [assembly, purchases] {
+                if (!purchases->confirmOpen() && assembly->start()) purchases->toggleRemote();
+            };
+            box_key(Qt::Key_Return, start_assembly);
+            box_key(Qt::Key_Enter, start_assembly);
+            QObject::connect(purchases, &rm_terminal::PurchaseFlow::remoteOpenChanged, &dashboard,
+                             [box_keys](bool open) {
+                                 for (QShortcut* key : box_keys) key->setEnabled(open);
+                             });
+            auto* exit_key = new QShortcut(QKeySequence(Qt::Key_L), &dashboard);
+            exit_key->setContext(Qt::ApplicationShortcut);
+            exit_key->setEnabled(false);
+            QObject::connect(exit_key, &QShortcut::activated, &dashboard, [assembly] { assembly->exit(); });
+            QObject::connect(assembly, &rm_terminal::AssemblyFlow::canExitChanged, exit_key, &QShortcut::setEnabled);
+        }
         // F1:花金币立即复活,照官方选手端(手册第 9 页)。活着时什么都不发。
         shortcut(QKeySequence(Qt::Key_F1), [self_commands] { self_commands->payRevive(); });
     }
@@ -779,9 +884,12 @@ int main(int argc, char* argv[]) {
         keyboard_mouse = std::make_unique<rm_terminal::KmCapture>(&dashboard);
         rm_terminal::KmCapture* km = keyboard_mouse.get();
         km->setSender(send);
-        km->setPassthroughKeys({Qt::Key_H, Qt::Key_O, Qt::Key_I, Qt::Key_P, Qt::Key_Y, Qt::Key_N, Qt::Key_1,
-                                Qt::Key_2, Qt::Key_3, Qt::Key_F1, Qt::Key_Tab, Qt::Key_Backtab, Qt::Key_QuoteLeft,
-                                Qt::Key_AsciiTilde});
+        std::vector<int> passthrough{Qt::Key_H,  Qt::Key_O,   Qt::Key_I,   Qt::Key_P,       Qt::Key_Y,
+                                     Qt::Key_N,  Qt::Key_1,   Qt::Key_2,   Qt::Key_3,       Qt::Key_F1,
+                                     Qt::Key_Tab, Qt::Key_Backtab, Qt::Key_QuoteLeft, Qt::Key_AsciiTilde};
+        // 重装的装配键:框里 4 选四级、Enter 开始,装配中 L 退出。这几个键本来就不发给车。
+        if (assembly) passthrough.insert(passthrough.end(), {Qt::Key_4, Qt::Key_L, Qt::Key_Return, Qt::Key_Enter});
+        km->setPassthroughKeys(std::move(passthrough));
         dashboard.setKeyboardMouseToggle([km] { km->toggle(); });
         auto* toggle_key = new QShortcut(QKeySequence(Qt::Key_F9), &dashboard);
         toggle_key->setContext(Qt::ApplicationShortcut);
@@ -891,12 +999,20 @@ int main(int argc, char* argv[]) {
                          [release_holds](bool) { release_holds(); });
     }
     QObject::connect(settings_panel, &rm_terminal::SettingsPanel::openChanged, &dashboard,
-                     [&pause_keyboard_mouse](bool) { pause_keyboard_mouse(); });
+                     [&pause_keyboard_mouse, &dashboard](bool open) {
+                         dashboard.setSettingsPanelOpen(open);
+                         pause_keyboard_mouse();
+                     });
     auto* settings_key = new QShortcut(QKeySequence(Qt::Key_P), &dashboard);
     settings_key->setContext(Qt::ApplicationShortcut);
     QObject::connect(settings_key, &QShortcut::activated, &dashboard, [settings_panel, purchases] {
         if (purchases && !settings_panel->isOpen()) purchases->closeAll();
         settings_panel->toggle();
+    });
+    // 赛前卡片上的「性能体系 · P」:和按 P 一样打开设置面板。
+    dashboard.setPerformanceHandler([settings_panel, purchases] {
+        if (purchases) purchases->closeAll();
+        settings_panel->setOpen(true);
     });
     const auto apply_settings = [speech, &dashboard, &keyboard_mouse](const rm_terminal::TerminalSettings& settings) {
         speech->setVolume(settings.volume / 100.0);
@@ -958,7 +1074,7 @@ int main(int argc, char* argv[]) {
         rm_terminal::RateMeter referee, video, controller, feedback;
         rm_terminal::LinkStateLog log;
     } meters;
-    const auto sample_links = [&cfg, &intake, &video, &controller, &meters](
+    const auto sample_links = [&cfg, &intake, &video, &wall, &controller, &meters](
                                   rm_terminal::MonotonicMs now) {
         const auto mqtt = intake.linkStats();
         rm_terminal::RefereeSample referee;
@@ -980,12 +1096,18 @@ int main(int argc, char* argv[]) {
         }
         report.car = rm_terminal::car_status(car);
 
-        rm_terminal::VideoSample picture;
-        picture.online = video.online();
-        if (video.msSinceLastFrame() >= 0) picture.silent_ms = video.msSinceLastFrame();
-        picture.frames_per_s =
-            meters.video.update(static_cast<std::uint64_t>(video.decodedFrames()), now);
-        report.video = rm_terminal::video_status(picture);
+        if (!wall.empty()) {
+            std::vector<rm_terminal::WallLinkSample> feeds;
+            for (const auto& [robot, receiver] : wall) feeds.push_back({rm_terminal::wall_label(robot), receiver->online()});
+            report.video = rm_terminal::wall_status(feeds);
+        } else {
+            rm_terminal::VideoSample picture;
+            picture.online = video.online();
+            if (video.msSinceLastFrame() >= 0) picture.silent_ms = video.msSinceLastFrame();
+            picture.frames_per_s =
+                meters.video.update(static_cast<std::uint64_t>(video.decodedFrames()), now);
+            report.video = rm_terminal::video_status(picture);
+        }
 
         const auto arm = controller.stats();
         rm_terminal::ControllerSample sample;
@@ -1004,7 +1126,6 @@ int main(int argc, char* argv[]) {
         return report;
     };
 
-    rm_terminal::RateMeter arm_rate;
     std::optional<bool> seat_matched;
     // 赛事事件和指挥手指令的回执也写进日志:复盘和验收脚本都靠它们看「服务器说了什么」。
     rm_terminal::MonotonicMs logged_event_at = -1;
@@ -1020,10 +1141,10 @@ int main(int argc, char* argv[]) {
     } self_log;
     QTimer freshness_timer;
     QObject::connect(&freshness_timer, &QTimer::timeout,
-                     [&store, &reporter, &dashboard, &video, &reminders, &intake,
+                     [&store, &reporter, &dashboard, &video, &wall, &reminders, &intake,
                       &recorder, &replay, &sample_links, &cfg, &recordings, speech,
-                      &match_alerts, &alert_voice, &alert_voice_on, assembly, dart, sentry, &controller,
-                      &arm_rate, &seat_matched, &logged_event_at, &logged_sentry_result_at,
+                      &match_alerts, &alert_voice, &alert_voice_on, assembly, dart, sentry,
+                      &seat_matched, &logged_event_at, &logged_sentry_result_at,
                       &logged_dart, &logged_mark_at, self_commands, revive_popup, &keyboard_mouse,
                       &self_log, purchases, &self_dead, &pause_keyboard_mouse, settings_panel, seat_role,
                       &performance_phrase, &last_stage, &rune_key, &rune_step, team_panel, injury_panel]() {
@@ -1078,31 +1199,27 @@ int main(int argc, char* argv[]) {
             if (!replay && alert_voice_on) reminders.announce(alert_voice.pathFor(alert.speech));
         }
         dashboard.update(snapshot, &video, now);
+        if (!wall.empty()) {
+            std::vector<rm_terminal::WallFeed> feeds;
+            for (const auto& [robot, receiver] : wall) feeds.push_back(rm_terminal::wall_feed(robot, receiver.get()));
+            dashboard.setWallFeeds(std::move(feeds));
+        }
         // 「下一步」第 1 件换了就念一句(固定句子,赛前合成好的)。
         if (const QString phrase = dashboard.takeNextSpeech(); !phrase.isEmpty() && !replay)
             reminders.announce(alert_voice.pathFor(phrase));
         dashboard.setRecordingStatus(replay ? replay->statusText() : recorder.statusText());
         const bool link_up = !replay && intake.connected();
         dashboard.setLinkUp(link_up);
-        if (assembly) {
-            const auto arm = controller.stats();
-            const double fps = arm_rate.update(arm.frames, now);
-            assembly->setView(rm_terminal::assembly_view(snapshot));
-            assembly->setLinkUp(link_up);
-            assembly->setArm(arm.open ? std::optional<double>(fps) : std::nullopt,
-                             arm.frames > 0 ? std::optional<std::array<float, 6>>(arm.joints)
-                                            : std::nullopt);
-            assembly->tick(now);
-        }
         if (dart) {
             dart->setView(rm_terminal::dart_view(snapshot));
             dart->setLinkUp(link_up);
             dart->tick(now);
         }
         if (sentry) {
-            sentry->setView(rm_terminal::sentry_view(snapshot));
+            sentry->setView(rm_terminal::sentry_view(snapshot, &dashboard.buffBoard()));
             sentry->setLinkUp(link_up);
             sentry->tick(now);
+            dashboard.setPaneHeader(rm_terminal::PaneId::Sentry, sentry->headerText());
         }
         bool performance_untouched = false;
         QString video_status;
@@ -1143,6 +1260,14 @@ int main(int argc, char* argv[]) {
                                 flag(view.can_remote_ammo), flag(view.can_remote_heal)),
                        "exchange_state");
             self_dead = view.dead.value_or(false);
+            if (assembly) {
+                rm_terminal::AssemblyState::Inputs inputs;
+                inputs.view = rm_terminal::assembly_view(snapshot);
+                inputs.link_up = link_up;
+                inputs.in_match = view.stage == std::optional<std::uint32_t>(4);
+                inputs.dead = self_dead;
+                assembly->update(inputs, now);
+            }
             if (purchases) {
                 purchases->update(view, link_up, now);
                 self_commands->setPurchaseText(purchases->statusText(), purchases->statusProblem());
@@ -1160,6 +1285,18 @@ int main(int argc, char* argv[]) {
                 choosing && performance_untouched
                     ? QStringLiteral("性能体系还是默认（血量优先 + 冷却优先）· 按 P 修改，开赛就锁定")
                     : QString());
+            // 赛前卡片上「性能体系 · P」按钮的第二行:现在选的是什么。
+            QString performance_text;
+            if (view.infantry) {
+                const QString chassis = self_commands->shownChassis().value_or(1) == 2 ? QStringLiteral("功率优先")
+                                                                                       : QStringLiteral("血量优先");
+                const QString shooter = self_commands->shownShooter().value_or(1) == 2 ? QStringLiteral("爆发优先")
+                                                                                       : QStringLiteral("冷却优先");
+                performance_text = !choosing               ? QStringLiteral("准备阶段开始后才能选")
+                                   : performance_untouched ? QStringLiteral("还是默认，开赛就锁定")
+                                                           : chassis + QStringLiteral(" + ") + shooter;
+            }
+            dashboard.setPreMatchPerformance(performance_text, choosing && performance_untouched);
             if (performance_untouched && view.stage == std::optional<std::uint32_t>(2) && last_stage != view.stage) {
                 dashboard.showAlert(QStringLiteral("还没选性能体系：按 P 选，开赛就锁定"),
                                     rm_terminal::AlertLevel::Warning, now);
@@ -1269,6 +1406,7 @@ int main(int argc, char* argv[]) {
         // 上面的 update()、setSelfCheck() 会把自检页、比赛弹窗提到最上面;操作手自己按键打开的框
         // 要盖在它们上面才点得到。放在这一拍最后。
         if (purchases) purchases->raiseOpen();
+        if (assembly) assembly->raiseOpen();
         if (settings_panel->isOpen()) settings_panel->raise();
         team_panel->setView(rm_terminal::team_view(snapshot));
         injury_panel->setView(rm_terminal::injury_view(snapshot));

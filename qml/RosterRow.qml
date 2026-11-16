@@ -27,6 +27,8 @@ Item {
     property int bullets: -1
     // 「下一步」给这台车标的编号,空串不画。
     property string rank: ""
+    // 车身上的增益:[{text, tone}],tone 0 有利 1 不利 2 中性。要紧的在前,放不下的不画。
+    property var buffs: []
     // 操作手可以在界面设置里关掉残血呼吸;标签、红色数字和红条照常显示。
     property bool pulseEnabled: true
 
@@ -45,10 +47,20 @@ Item {
     // 按 62 像素高设计。行高变了,上下位置跟着高度缩放;头像、文字的大小还要看宽度够不够
     // (一行要约 290 像素宽才放得下 1 倍的字),行变高、宽度不变时字不会挤到一起。
     readonly property real k: height / 62
-    readonly property real kx: Math.min(k, Math.max(0.85, (width - 12) / 290))
-    readonly property real fk: Math.max(0.85, Math.min(1.25, kx))
-    // 文字和血条按 kx 排成一块(62 高时从 12 到 48),在行里上下居中:行变高时上下多出来的空一样多。
-    readonly property real blockTop: (height - 36 * kx) / 2
+    // 宽度允许放到多大:一行要约 290 像素宽才放得下 1 倍的字。
+    readonly property real kw: Math.max(0.85, (width - 12) / 290)
+    // 内容块的大小:跟着行高长,但被宽度兜住 —— 行被拖高、宽度没变时字不会挤到一起或溢出。
+    // 上限 2.5:再大就比面板标题还抢眼。
+    readonly property real kxBase: Math.max(0.85, Math.min(2.5, Math.min(k, kw)))
+    // 增益标签优先放在血条下面一行,整块(编号行 + 血条 + 标签)按 60 高排;行太矮时
+    // 挤进编号那一行、血量数字左边,放不下的不画。
+    readonly property bool hasBuffs: buffs.length > 0 && liveState === 1
+    readonly property bool buffsBelow: hasBuffs && (height - 4) / 60 >= 0.85
+    readonly property real kx: buffsBelow ? Math.min(kxBase, (height - 4) / 60) : kxBase
+    // 字号同一个系数:行拖大字就变大、拖小就变小(以前封在 1.25,行里空一大半)。
+    readonly property real fk: kx
+    // 文字和血条排成一块(62 高时从 12 到 48),在行里上下居中:行变高时上下多出来的空一样多。
+    readonly property real blockTop: (height - (buffsBelow ? 60 : 36) * kx) / 2
 
     property real shownRatio: 0
     property real trailHi: 0
@@ -190,16 +202,18 @@ Item {
 
     Item {
         id: portrait
+        // 头像再按 kx 放大也不能超出行:行很矮时(面板只有一两格高)按行高收,不画到行外面。
+        readonly property real zoom: Math.min(root.kx, (root.height - 8) / 48)
         x: 8 * root.kx
         y: (root.height - height) / 2
-        width: 56 * root.kx
-        height: 48 * root.kx
+        width: 56 * zoom
+        height: 48 * zoom
         opacity: root.kia ? 0.5 : (root.noData ? 0.4 : 1)
 
         SoftGlow {
             x: 2
             width: parent.width - 4
-            height: 18 * root.kx
+            height: 18 * portrait.zoom
             anchors.bottom: parent.bottom
             anchors.bottomMargin: 1
             color: Theme.alpha(Theme.factionFill(root.isBlue), 0.42)
@@ -213,7 +227,8 @@ Item {
 
     Item {
         id: textArea
-        x: 74 * root.kx
+        // 跟着头像实际占的宽度走:头像被行高压小了,字就往左挪,不留一条空当。
+        x: portrait.x + portrait.width + 10 * root.kx
         width: parent.width - x - 12
         height: parent.height
 
@@ -327,6 +342,71 @@ Item {
             ink: Theme.textBright
             fill: Qt.rgba(1, 1, 1, 0.09)
             zoom: root.fk
+        }
+
+        // 增益标签按顺序排,放不下的整个不画,不画半个。
+        Item {
+            id: buffRow
+            objectName: "buffChips"
+            readonly property int chipPx: Math.max(11, Math.round(12 * root.kx))
+            readonly property real pad: Math.round(6 * root.kx)
+            readonly property real gap: Math.round(5 * root.kx)
+            readonly property real start: root.buffsBelow ? 0 : lineA.width + Math.round(8 * root.kx)
+            readonly property real room: root.buffsBelow
+                ? textArea.width
+                : Math.max(0, (hpRow.visible ? hpRow.x : textArea.width) - start - Math.round(8 * root.kx))
+            readonly property int fit: {
+                var used = 0
+                var n = 0
+                for (var i = 0; i < root.buffs.length; ++i) {
+                    var w = chipMetrics.advanceWidth(root.buffs[i].text) + 2 * pad
+                    if (n > 0) w += gap
+                    if (used + w > room) break
+                    used += w
+                    n += 1
+                }
+                return n
+            }
+            visible: root.hasBuffs && fit > 0
+            x: start
+            y: root.buffsBelow ? root.blockTop + 41 * root.kx : lineA.y + (lineA.height - height) / 2
+            width: room
+            height: Math.round(19 * root.kx)
+
+            FontMetrics {
+                id: chipMetrics
+                font.family: Theme.labelFamily
+                font.pixelSize: buffRow.chipPx
+                font.weight: Font.Bold
+            }
+            Row {
+                spacing: buffRow.gap
+                Repeater {
+                    model: buffRow.fit
+                    Item {
+                        readonly property var chip: root.buffs[index]
+                        width: chipText.implicitWidth + 2 * buffRow.pad
+                        height: buffRow.height
+                        GlassShape {
+                            anchors.fill: parent
+                            cut: 4
+                            fillColor: chip.tone === 0 ? Qt.rgba(62 / 255, 207 / 255, 142 / 255, 0.20)
+                                     : chip.tone === 1 ? Qt.rgba(1, 100 / 255, 100 / 255, 0.26)
+                                                       : Theme.accentBg
+                        }
+                        Text {
+                            id: chipText
+                            anchors.centerIn: parent
+                            anchors.verticalCenterOffset: 0.5
+                            text: chip.text
+                            color: chip.tone === 0 ? Theme.okText : chip.tone === 1 ? Theme.dangerText : Theme.accentText
+                            font.family: Theme.labelFamily
+                            font.pixelSize: buffRow.chipPx
+                            font.weight: Font.Bold
+                        }
+                    }
+                }
+            }
         }
 
         // 无数据:状态点 + 文字,绝不画空血条 —— 空条会被读成血量 0 即阵亡。

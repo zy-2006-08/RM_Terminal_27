@@ -6,6 +6,7 @@
 #include <QString>
 #include <QWidget>
 #include <cstddef>
+#include <map>
 #include <vector>
 
 namespace rm_terminal {
@@ -38,7 +39,9 @@ struct EventFeedRow {
     EventBanner banner;
 };
 
-std::vector<EventFeedRow> build_event_rows(const Snapshot& snapshot, std::size_t max);
+// rune_sides:增益推算分出来的能量机关事件归属(收到时刻 -> 阵营),给了就在这两条前面写「我方/敌方」。
+std::vector<EventFeedRow> build_event_rows(const Snapshot& snapshot, std::size_t max,
+                                           const std::map<MonotonicMs, std::uint32_t>* rune_sides = nullptr);
 
 class EventFeedPane : public QWidget {
     Q_OBJECT

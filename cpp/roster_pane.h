@@ -1,5 +1,6 @@
 #pragma once
 
+#include "buff_ledger.h"
 #include "domain.h"
 
 #include <QString>
@@ -48,6 +49,8 @@ struct RosterEntry {
     std::optional<bool> can_remote_heal;
     std::optional<bool> can_remote_ammo;
     std::optional<bool> pending_respawn;
+    // 车身上的增益,要紧的在前(见 buff_ledger.h)。build_roster 不填,由调用方按 BuffBoard 挂上。
+    std::vector<BuffChip> buffs;
 };
 
 // Derived from the snapshot rather than stored: the roster is a view of

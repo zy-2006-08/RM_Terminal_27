@@ -25,7 +25,6 @@ constexpr int kMediumArea = 32 + 40 + 42 + 2 * 8;
 constexpr int kCompactArea = 32 + 40 + 10;
 // 迷你(1280 × 760 小窗口里的 2 格高):控制度一行 24、五个色块 34。
 constexpr int kMiniArea = 24 + 34 + 4;
-constexpr int kMaxGap = 24;
 constexpr qreal kPadX = 6;
 constexpr qreal kPadY = 4;
 constexpr int kFullHeight = kFullArea + 2 * 4;
@@ -147,8 +146,9 @@ void paint_tile(QPainter& painter, const QRectF& tile, const ZoneLook& look, con
         painter.fillRect(QRectF(tile.left(), tile.top(), 3, tile.height()), look.bar);
     }
     // 字跟着色块的高度变,上下居中;色块窄(面板只有 4 格宽)时名字和状态用短的说法。
-    const qreal f = std::clamp(tile.height() / 52.0, 0.7, 1.0);
-    const int name_px = std::max(11, static_cast<int>(std::lround(12.5 * f)));
+    // 上限放到 kMaxPaneScale:色块变高字就跟着变大,不再卡在 1 倍让色块里空一大半。
+    const qreal f = std::clamp<qreal>(tile.height() / 52.0, 0.7, theme::kMaxPaneScale);
+    const int name_px = std::max(theme::kMinLabelPx, static_cast<int>(std::lround(12.5 * f)));
     const int status_px = std::max(13, static_cast<int>(std::lround(16 * f)));
     const bool narrow = tile.width() < 96;
     const qreal pad = narrow ? 9 : 15;
@@ -160,26 +160,32 @@ void paint_tile(QPainter& painter, const QRectF& tile, const ZoneLook& look, con
     const QString shown_status = narrow ? short_zone_text(status) : status;
     const qreal text_w = tile.width() - pad - 5;
     // 放不下先缩小字(最小 10 / 11 像素),还放不下再省略。
-    int fit_name_px = name_px;
-    while (fit_name_px > 10 && QFontMetricsF(theme::labelPx(fit_name_px)).horizontalAdvance(shown_name) > text_w) --fit_name_px;
+    const int fit_name_px = theme::fitFontPx(shown_name, name_px, 10, text_w,
+                                              [](int size) { return theme::labelPx(size); });
     painter.setFont(theme::labelPx(fit_name_px));
     painter.setPen(theme::kTextSecondary);
     const QRectF name_box(tile.left() + pad, top, text_w, name_h);
     painter.drawText(name_box, Qt::AlignLeft | Qt::AlignVCenter,
                      painter.fontMetrics().elidedText(shown_name, Qt::ElideRight, static_cast<int>(name_box.width())));
+    // 「红推 4s」靠右写在名字那一行。名字已经占到右边时就不写:两段字叠在一起比少一个
+    // 推进秒数难读得多,秒数在阵地色块的颜色和状态里也能看出来。
     if (!note.isEmpty() && !narrow) {
-        painter.setFont(theme::numericPx(12, QFont::DemiBold));
-        painter.setPen(theme::kTextBright);
-        painter.drawText(name_box.adjusted(0, 0, -4, 0), Qt::AlignRight | Qt::AlignVCenter, note);
+        const QFont note_font = theme::numericPx(std::max(theme::kMinNumberPx, static_cast<int>(std::lround(12 * f))),
+                                                 QFont::DemiBold);
+        const qreal note_w = QFontMetricsF(note_font).horizontalAdvance(note);
+        const qreal name_w = QFontMetricsF(theme::labelPx(fit_name_px)).horizontalAdvance(shown_name);
+        if (name_w + 8 + note_w <= name_box.width()) {
+            painter.setFont(note_font);
+            painter.setPen(theme::kTextBright);
+            painter.drawText(name_box.adjusted(0, 0, -4, 0), Qt::AlignRight | Qt::AlignVCenter, note);
+        }
     }
     const auto status_font_of = [narrow](int size) {
         QFont font = theme::labelPx(size, QFont::Bold);
         font.setLetterSpacing(QFont::AbsoluteSpacing, narrow ? 0 : 1);
         return font;
     };
-    int fit_status_px = status_px;
-    while (fit_status_px > 11 && QFontMetricsF(status_font_of(fit_status_px)).horizontalAdvance(shown_status) > text_w)
-        --fit_status_px;
+    const int fit_status_px = theme::fitFontPx(shown_status, status_px, theme::kMinLabelPx, text_w, status_font_of);
     const QFont status_font = status_font_of(fit_status_px);
     painter.setFont(status_font);
     painter.setPen(look.text);
@@ -392,37 +398,66 @@ void BattleAnalysisPane::paintControl(QPainter& painter, const QRectF& row, bool
     };
 
     if (!compact) {
-        const QRectF top(row.left(), row.top(), row.width(), 16);
-        painter.setFont(theme::labelPx(13));
+        // 完整档:一行小标题 + 一行大数字和对拉条。两行按 16:38 分这一块的高度,
+        // 字号和条的粗细都跟着走 —— 块变高就一起变大,不在块里留空带。
+        const qreal k = std::min(row.height() / 60.0, theme::kMaxPaneScale);
+        const qreal label_h = row.height() * 16.0 / 60.0;
+        const qreal main_h = row.height() - label_h - 6 * k;
+        const QRectF top(row.left(), row.top(), row.width(), label_h);
+        painter.setFont(theme::labelPx(std::max(theme::kMinLabelPx, static_cast<int>(std::lround(13 * k)))));
         painter.setPen(theme::kTextSecondary);
         painter.drawText(top, Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("控制度"));
-        paint_lead(top.adjusted(0, -3, 0, 3), Qt::AlignRight, 18);
-        const QRectF main(row.left(), row.top() + 22, row.width(), 38);
-        value(QRectF(main.left(), main.top(), 64, main.height()), red, false, 38);
-        value(QRectF(main.right() - 64, main.top(), 64, main.height()), blue, true, 38);
-        paint_tug(painter, QRectF(main.left() + 70, main.center().y() - 6, main.width() - 140, 12), red, blue);
+        paint_lead(top, Qt::AlignRight, std::max(theme::kMinNumberPx, static_cast<int>(std::lround(18 * k))));
+        const QRectF main(row.left(), top.bottom() + 6 * k, row.width(), main_h);
+        // 大数字按块高来,但两侧数字加中间的条必须排得进这一行的宽度:宽度不够就缩字号,
+        // 不让数字压到条上。三位数「888」是最宽的情况,按它量。
+        const qreal number_room = row.width() * 0.26;
+        const int number_px = theme::fitFontPx(QStringLiteral("888"),
+                                               std::max(theme::kMinNumberPx, static_cast<int>(std::lround(main_h * 0.9))),
+                                               theme::kMinNumberPx, number_room,
+                                               [](int size) { return theme::numericPx(size, QFont::Bold); });
+        const qreal number_w = QFontMetricsF(theme::numericPx(number_px, QFont::Bold))
+                                       .horizontalAdvance(QStringLiteral("888")) + 4;
+        value(QRectF(main.left(), main.top(), number_w, main.height()), red, false, number_px);
+        value(QRectF(main.right() - number_w, main.top(), number_w, main.height()), blue, true, number_px);
+        const qreal bar_h = std::clamp<qreal>(main_h * 0.3, 10, 26);
+        const qreal bar_left = main.left() + number_w + 8 * k;
+        const qreal bar_right = main.right() - number_w - 8 * k;
+        if (bar_right - bar_left > 24)
+            paint_tug(painter, QRectF(bar_left, main.center().y() - bar_h / 2, bar_right - bar_left, bar_h), red, blue);
         return;
     }
-    painter.setFont(theme::labelPx(label_px));
+    // 一行式的控制度:字号跟着这一行的高度走(设计 32、迷你档 24),行拖高字就变大,
+    // 不会在行里上下各空一截。
+    const qreal rk = std::min(row.height() / (mini ? 24.0 : 32.0), theme::kMaxPaneScale);
+    const int row_label_px = std::max(theme::kMinLabelPx, static_cast<int>(std::lround(label_px * rk)));
+    painter.setFont(theme::labelPx(row_label_px));
     painter.setPen(theme::kTextSecondary);
     const qreal label_w = QFontMetricsF(painter.font()).horizontalAdvance(QStringLiteral("控制度"));
     painter.drawText(QRectF(row.left(), row.top(), label_w, row.height()), Qt::AlignLeft | Qt::AlignVCenter,
                      QStringLiteral("控制度"));
-    const qreal lead_w = theme::mixedTextWidth(lead_label, theme::labelPx(label_px), theme::labelPx(label_px)) +
-                         (lead_number.isEmpty() ? 0 : 40);
+    const QFont lead_font = theme::labelPx(row_label_px);
+    const qreal lead_w = theme::mixedTextWidth(lead_label, lead_font, lead_font) +
+                         (lead_number.isEmpty() ? 0 : 40 * rk);
     const qreal lead_left = row.right() - lead_w;
-    paint_lead(QRectF(lead_left, row.top(), lead_w, row.height()), Qt::AlignRight, mini ? 15 : 17);
-    const qreal value_w = mini ? 38 : 46;
-    const int number_px = mini ? 22 : 28;
+    paint_lead(QRectF(lead_left, row.top(), lead_w, row.height()), Qt::AlignRight,
+               std::max(theme::kMinNumberPx, static_cast<int>(std::lround((mini ? 15 : 17) * rk))));
     const qreal red_left = row.left() + label_w + (mini ? 8 : 12);
-    value(QRectF(red_left, row.top(), value_w, row.height()), red, false, number_px);
     const qreal blue_right = lead_left - (mini ? 8 : 12);
+    // 两个数字要并排放进「标题」和「领先几分」之间,中间还得留出对拉条的位置。
+    // 所以数字的字号同时被行高和这段宽度管着:行拖高字变大,但绝不让红蓝两个数字撞在一起。
+    const qreal number_room = std::max<qreal>(1, (blue_right - red_left) / 2 - 12);
+    const int number_px = theme::fitFontPx(
+        QStringLiteral("888"), std::max(theme::kMinNumberPx, static_cast<int>(std::lround((mini ? 22 : 28) * rk))),
+        theme::kMinNumberPx, number_room, [](int size) { return theme::numericPx(size, QFont::Bold); });
+    const qreal value_w = QFontMetricsF(theme::numericPx(number_px, QFont::Bold)).horizontalAdvance(QStringLiteral("888"));
+    value(QRectF(red_left, row.top(), value_w, row.height()), red, false, number_px);
     value(QRectF(blue_right - value_w, row.top(), value_w, row.height()), blue, true, number_px);
     const qreal bar_left = red_left + value_w + 10;
     const qreal bar_right = blue_right - value_w - 10;
+    const qreal bar_h = std::clamp<qreal>((mini ? 10 : 12) * rk, 10, 26);
     if (bar_right - bar_left > 24)
-        paint_tug(painter, QRectF(bar_left, row.center().y() - (mini ? 5 : 6), bar_right - bar_left, mini ? 10 : 12), red,
-                  blue);
+        paint_tug(painter, QRectF(bar_left, row.center().y() - bar_h / 2, bar_right - bar_left, bar_h), red, blue);
 }
 
 void BattleAnalysisPane::paintZones(QPainter& painter, const QRectF& area, bool with_fortress) const {
@@ -458,9 +493,12 @@ void BattleAnalysisPane::paintZones(QPainter& painter, const QRectF& area, bool 
 
 void BattleAnalysisPane::paintFortress(QPainter& painter, const QRectF& row) const {
     theme::paintGlass(painter, row, 6, false, theme::kTile, Qt::transparent);
-    const QRectF chip(row.left() + 12, row.center().y() - 10, 38, 20);
+    // 这一行里的牌子和字都按行高缩放(设计行高 34),行变高字就变大。
+    const qreal k = std::min(row.height() / 34.0, theme::kMaxPaneScale);
+    const qreal chip_h = std::min(row.height() - 4, 20 * k);
+    const QRectF chip(row.left() + 12 * k, row.center().y() - chip_h / 2, 38 * k, chip_h);
     theme::paintGlass(painter, chip, 4, false, theme::kAccentBg, Qt::transparent);
-    QFont chip_font = theme::labelPx(12, QFont::Bold);
+    QFont chip_font = theme::labelPx(std::max(theme::kMinLabelPx, static_cast<int>(std::lround(12 * k))), QFont::Bold);
     chip_font.setLetterSpacing(QFont::AbsoluteSpacing, 1);
     painter.setFont(chip_font);
     painter.setPen(theme::kAccentText);
@@ -472,8 +510,11 @@ void BattleAnalysisPane::paintFortress(QPainter& painter, const QRectF& row) con
     case FortressTone::Unknown: ink = theme::kTextMuted; break;
     case FortressTone::Quiet: break;
     }
-    const QRectF text(chip.right() + 10, row.top(), row.right() - chip.right() - 22, row.height());
-    painter.setFont(theme::labelPx(14));
+    const QRectF text(chip.right() + 10 * k, row.top(), row.right() - chip.right() - 22 * k, row.height());
+    const int text_px = theme::fitFontPx(fortress_status_text(fortress_), static_cast<int>(std::lround(14 * k)),
+                                         theme::kMinLabelPx, text.width(),
+                                         [](int size) { return theme::labelPx(size); });
+    painter.setFont(theme::labelPx(text_px));
     painter.setPen(ink);
     painter.drawText(text, Qt::AlignLeft | Qt::AlignVCenter,
                      painter.fontMetrics().elidedText(fortress_status_text(fortress_), Qt::ElideRight,
@@ -486,6 +527,10 @@ void BattleAnalysisPane::paintStats(QPainter& painter, const QRectF& row, bool c
                                      QStringLiteral(":/images/message/validate_icon_rune.png")};
     const qreal width = row.width() / 4;
     const bool own_blue = own_faction_ == 2;
+    // 四格统计按自己这一块的高度缩放(完整档设计高 70、中等档 42),块变高字和图标就变大。
+    const qreal k = std::min(row.height() / (compact ? 42.0 : 70.0), theme::kMaxPaneScale);
+    // 图标最多长到 24:再大它就比标签还抢眼,还要从标签那里抢走宽度。
+    const qreal icon = std::min<qreal>(24, std::lround(15 * k));
     for (int i = 0; i < 4; ++i) {
         const QRectF cell(row.left() + i * width, row.top(), width, row.height());
         if (i > 0) painter.fillRect(QRectF(cell.left(), cell.top(), 1, cell.height()), theme::kRowBorder);
@@ -495,41 +540,39 @@ void BattleAnalysisPane::paintStats(QPainter& painter, const QRectF& row, bool c
         if (static_cast<std::size_t>(i) >= metrics_.size()) continue;
         const AnalysisMetric& metric = metrics_[static_cast<std::size_t>(i)];
 
-        const QRectF icon_box(left, cell.top() + 2, 15, 15);
+        const QRectF icon_box(left, cell.top() + 2 * k, icon, icon);
         if (i == 0) {
             paint_coin(painter, icon_box, theme::kTextSecondary);
         } else {
-            const QPixmap icon = tinted_icon(icons[i], theme::kTextSecondary, devicePixelRatioF(), 15);
-            if (!icon.isNull()) painter.drawPixmap(icon_box.topLeft(), icon);
+            const QPixmap tinted = tinted_icon(icons[i], theme::kTextSecondary, devicePixelRatioF(),
+                                               static_cast<int>(icon));
+            if (!tinted.isNull()) painter.drawPixmap(icon_box.topLeft(), tinted);
         }
-        painter.setFont(theme::labelPx(compact ? 12 : 13));
-        painter.setPen(theme::kTextSecondary);
-        const QRectF label_box(left + 21, cell.top() + 2, right - left - 21, 15);
-        // 格子窄时用短的说法(「我方经济」→「经济」),还放不下再省略。
-        QString label_text = metric.label;
-        if (painter.fontMetrics().horizontalAdvance(label_text) > label_box.width())
-            label_text = short_stat_label(label_text);
-        painter.drawText(label_box, Qt::AlignLeft | Qt::AlignVCenter,
-                         painter.fontMetrics().elidedText(label_text, Qt::ElideRight, static_cast<int>(label_box.width())));
+        const int wanted_label_px = std::max(theme::kMinLabelPx,
+                                             static_cast<int>(std::lround((compact ? 12 : 13) * k)));
+        const qreal label_h = std::max<qreal>(icon, wanted_label_px + 3);
+        const QRectF label_box(left + icon + 6 * k, cell.top() + 2 * k, right - left - icon - 6 * k, label_h);
 
-        const QRectF value_box = compact ? QRectF(left, cell.top() + 18, right - left, 24)
-                                         : QRectF(left, cell.top() + 26, right - left, 32);
         const bool text_value = !metric.text_value.isEmpty();
         const bool has_value = text_value || metric.self_value.has_value();
         const QString shown = text_value ? metric.text_value : value_text(metric.self_value);
         // 字放不下这一格就缩小,不切掉半个字。
-        int value_px = text_value ? (compact ? 16 : 21) : (compact ? 22 : 30);
+        int value_px = std::max(theme::kMinNumberPx,
+                                static_cast<int>(std::lround((text_value ? (compact ? 16 : 21) : (compact ? 22 : 30)) * k)));
+        // 数值紧跟标签往下排,高度按字号给,不摊开整格 —— 摊开后数字会被居中到很低的地方,
+        // 标签和数字之间裂出一条空带。格子更高时是字号变大把空间吃掉,不是把两行拉开。
+        const qreal value_top = label_box.bottom() + 2 * k;
+        const qreal value_bottom = cell.bottom() - (metric.has_enemy ? 8 * k : 2 * k);
+        const qreal value_room = std::max<qreal>(1, value_bottom - value_top);
+        const QRectF value_box(left, value_top, right - left, std::min<qreal>(value_room, value_px * 1.4));
         const auto make_font = [&](int px) {
             QFont font = text_value ? theme::labelPx(px, QFont::Bold) : theme::numericPx(px, QFont::DemiBold);
             if (text_value) font.setLetterSpacing(QFont::AbsoluteSpacing, 1);
             return font;
         };
         QFont value_font = make_font(value_px);
-        while (value_px > 12 && QFontMetricsF(value_font).horizontalAdvance(shown) > value_box.width())
+        while (value_px > theme::kMinNumberPx && QFontMetricsF(value_font).horizontalAdvance(shown) > value_box.width())
             value_font = make_font(--value_px);
-        painter.setFont(value_font);
-        painter.setPen(has_value ? theme::kTextPrimary : theme::kTextMuted);
-        painter.drawText(value_box, Qt::AlignLeft | Qt::AlignVCenter, shown);
         const qreal value_width = QFontMetricsF(value_font).horizontalAdvance(shown);
 
         QString aside_label;
@@ -542,26 +585,82 @@ void BattleAnalysisPane::paintStats(QPainter& painter, const QRectF& row, bool c
             aside_label = space > 0 ? metric.note.left(space) : metric.note;
             aside_number = space > 0 ? metric.note.mid(space + 1) : QString();
         }
+        const QFont aside_label_font = theme::labelPx(
+            std::max(theme::kMinLabelPx, static_cast<int>(std::lround((compact ? 12 : 13) * k))));
+        const QFont aside_number_font = theme::numericPx(
+            std::max(theme::kMinNumberPx, static_cast<int>(std::lround((compact ? 13 : 15) * k))), QFont::DemiBold);
+        const qreal aside_width = aside_label.isEmpty()
+                                      ? 0
+                                      : QFontMetricsF(aside_label_font).horizontalAdvance(aside_label) + 4 +
+                                            QFontMetricsF(aside_number_font).horizontalAdvance(aside_number);
+
+        // 格子窄时先用短的说法(「我方经济」→「经济」),再缩字号,最后才省略。
+        QString label_text = metric.label;
+        const auto label_fits = [&](const QString& text, qreal room) {
+            return QFontMetricsF(theme::labelPx(wanted_label_px)).horizontalAdvance(text) <= room;
+        };
+        // 右边那一小段(「敌 0」「累计 800」「敌 约36s」)放数值右边,放不下就不画。note_first 的格子例外:
+        // 依次试标签那一行(标签不够就用短说法)、数值下面一行,都不行就只留图标、把标签那一行让给它。
+        enum class AsideAt { None, BesideValue, LabelRow, Below };
+        AsideAt aside_at = AsideAt::None;
         if (!aside_label.isEmpty()) {
-            const QFont label = theme::labelPx(compact ? 12 : 13);
-            const QFont number = theme::numericPx(compact ? 13 : 15, QFont::DemiBold);
-            const qreal aside_width = QFontMetricsF(label).horizontalAdvance(aside_label) + 4 +
-                                      QFontMetricsF(number).horizontalAdvance(aside_number);
+            const qreal label_row_room = label_box.width() - 8 - aside_width;
             if (value_width + 8 + aside_width <= right - left) {
-                const QRectF aside(right - aside_width, value_box.top() + (compact ? 4 : 6), aside_width,
-                                   value_box.height() - (compact ? 4 : 6));
-                painter.setFont(label);
-                painter.setPen(theme::kTextSecondary);
-                painter.drawText(aside, Qt::AlignLeft | Qt::AlignVCenter, aside_label);
-                painter.setFont(number);
-                painter.setPen(theme::kTextBright);
-                painter.drawText(aside, Qt::AlignRight | Qt::AlignVCenter, aside_number);
+                aside_at = AsideAt::BesideValue;
+            } else if (!metric.note_first) {
+                aside_at = AsideAt::None;
+            } else if (label_fits(label_text, label_row_room)) {
+                aside_at = AsideAt::LabelRow;
+            } else if (label_fits(short_stat_label(label_text), label_row_room)) {
+                label_text = short_stat_label(label_text);
+                aside_at = AsideAt::LabelRow;
+            } else if (aside_width <= right - left &&
+                       value_box.bottom() + QFontMetricsF(aside_number_font).height() <= cell.bottom()) {
+                aside_at = AsideAt::Below;
+            } else if (aside_width <= label_box.width()) {
+                label_text.clear();
+                aside_at = AsideAt::LabelRow;
             }
+        }
+        const qreal label_room = aside_at == AsideAt::LabelRow ? label_box.width() - 8 - aside_width : label_box.width();
+        if (!label_text.isEmpty()) {
+            if (!label_fits(label_text, label_room)) label_text = short_stat_label(label_text);
+            const int label_px = theme::fitFontPx(label_text, wanted_label_px, theme::kMinLabelPx, label_room,
+                                                  [](int size) { return theme::labelPx(size); });
+            painter.setFont(theme::labelPx(label_px));
+            painter.setPen(theme::kTextSecondary);
+            painter.drawText(QRectF(label_box.left(), label_box.top(), label_room, label_box.height()),
+                             Qt::AlignLeft | Qt::AlignVCenter,
+                             painter.fontMetrics().elidedText(label_text, Qt::ElideRight, static_cast<int>(label_room)));
+        }
+
+        painter.setFont(value_font);
+        painter.setPen(has_value ? theme::kTextPrimary : theme::kTextMuted);
+        painter.drawText(value_box, Qt::AlignLeft | Qt::AlignVCenter, shown);
+
+        if (aside_at != AsideAt::None) {
+            QRectF aside;
+            if (aside_at == AsideAt::BesideValue) {
+                const qreal inset = (compact ? 4 : 6) * k;
+                aside = QRectF(right - aside_width, value_box.top() + inset, aside_width,
+                               std::max<qreal>(1, value_box.height() - inset));
+            } else if (aside_at == AsideAt::LabelRow) {
+                aside = QRectF(label_box.right() - aside_width, label_box.top(), aside_width, label_box.height());
+            } else {
+                aside = QRectF(left, value_box.bottom(), aside_width, QFontMetricsF(aside_number_font).height());
+            }
+            painter.setFont(aside_label_font);
+            painter.setPen(theme::kTextSecondary);
+            painter.drawText(aside, Qt::AlignLeft | Qt::AlignVCenter, aside_label);
+            painter.setFont(aside_number_font);
+            painter.setPen(theme::kTextBright);
+            painter.drawText(aside, Qt::AlignRight | Qt::AlignVCenter, aside_number);
         }
 
         if (metric.has_enemy && metric.self_value && metric.enemy_value) {
             const double total = static_cast<double>(*metric.self_value) + static_cast<double>(*metric.enemy_value);
-            const QRectF bar(left, cell.bottom() - (compact ? 3 : 6), right - left, 3);
+            const qreal bar_h = std::clamp<qreal>(std::lround(3 * k), 3, 8);
+            const QRectF bar(left, cell.bottom() - bar_h - (compact ? 1 : 3) * k, right - left, bar_h);
             painter.fillRect(bar, with_alpha(side_fill(!own_blue), 0.8));
             if (total > 0)
                 painter.fillRect(QRectF(bar.left(), bar.top(), bar.width() * (*metric.self_value / total), bar.height()),
@@ -591,10 +690,14 @@ void BattleAnalysisPane::paintEvent(QPaintEvent*) {
         paintBigControl(painter, area);
         return;
     }
-    // 按高度挑一档,整块都画得下的那档里最全的;多出来的高度匀到各段之间(每道最多 kMaxGap),再多就上下居中。
+    // 按高度挑一档,整块都画得下的那档里最全的。height 现在只是分高度用的权重(效果图上
+    // 那几块的高度比),不是写死的像素:面板多高,这几块就按这个比例铺满多高。
     struct Block {
         qreal height;
         std::function<void(const QRectF&)> draw;
+        // 面板高得连放大到上限都用不完时,多出来的高度给谁。阵地色块是整块的颜色加居中的字,
+        // 多高都好看;控制度、堡垒、统计都是「一行字」,拉太高只会在块里空一截。
+        bool stretch = false;
     };
     std::vector<Block> blocks;
     qreal min_gap = 10;
@@ -606,29 +709,53 @@ void BattleAnalysisPane::paintEvent(QPaintEvent*) {
     switch (level()) {
     case Level::Full:
         min_gap = 8;
-        blocks = {{60, control(false)}, {52, zones(false)}, {34, [&](const QRectF& r) { paintFortress(painter, r); }},
-                  {70, stats(false)}};
+        blocks = {{60, control(false), false},
+                  {52, zones(false), true},
+                  {34, [&](const QRectF& r) { paintFortress(painter, r); }, false},
+                  {70, stats(false), false}};
         break;
     case Level::Medium:
         min_gap = 8;
-        blocks = {{32, control(true)}, {40, zones(true)}, {42, stats(true)}};
+        blocks = {{32, control(true), false}, {40, zones(true), true}, {42, stats(true), false}};
         break;
-    case Level::Compact: blocks = {{32, control(true)}, {40, zones(true)}}; break;
+    case Level::Compact: blocks = {{32, control(true), false}, {40, zones(true), true}}; break;
     case Level::Mini:
         min_gap = 4;
-        blocks = {{24, control(true)}, {34, zones(true)}};
+        blocks = {{24, control(true), false}, {34, zones(true), true}};
         break;
-    case Level::Tiny: blocks = {{std::clamp<qreal>(area.height(), 24, 40), control(true)}}; break;
+    case Level::Tiny: blocks = {{area.height(), control(true), true}}; break;
     }
-    qreal used = 0;
-    for (const Block& block : blocks) used += block.height;
+    // 每块按设计高度的占比分走全部可用高度,块里的字跟着块的高度变大变小。
+    // 不再上下居中、也不再把余量当间隔留白:操作手把面板拖多高,这几块就铺满多高。
+    qreal weights = 0;
+    for (const Block& block : blocks) weights += block.height;
     const int gaps = static_cast<int>(blocks.size()) - 1;
-    const qreal spare = std::max<qreal>(0, area.height() - used);
-    const qreal gap = gaps > 0 ? std::clamp<qreal>(spare / (gaps + 2), min_gap, kMaxGap) : 0;
-    qreal y = area.top() + std::max<qreal>(0, (spare - gap * gaps) / 2);
-    for (const Block& block : blocks) {
-        block.draw(QRectF(area.left(), y, area.width(), block.height));
-        y += block.height + gap;
+    const qreal gap = std::min<qreal>(min_gap, gaps > 0 ? area.height() / (gaps * 4.0) : min_gap);
+    const qreal usable = std::max<qreal>(1, area.height() - gap * gaps);
+    // 先按权重分,再把「长到上限就用不动了」的那几块多出来的高度全部让给 stretch 的块。
+    // 这样总高度一分不剩(最后一块的底边落在内容区底部),又不会有哪块被拉高后空一截。
+    std::vector<qreal> heights(blocks.size());
+    for (std::size_t i = 0; i < blocks.size(); ++i) heights[i] = usable * blocks[i].height / weights;
+    qreal freed = 0;
+    qreal stretch_weights = 0;
+    for (std::size_t i = 0; i < blocks.size(); ++i) {
+        const qreal cap = blocks[i].height * theme::kMaxPaneScale;
+        if (blocks[i].stretch) {
+            stretch_weights += blocks[i].height;
+        } else if (heights[i] > cap) {
+            freed += heights[i] - cap;
+            heights[i] = cap;
+        }
+    }
+    if (freed > 0 && stretch_weights > 0)
+        for (std::size_t i = 0; i < blocks.size(); ++i)
+            if (blocks[i].stretch) heights[i] += freed * blocks[i].height / stretch_weights;
+    qreal y = area.top();
+    for (std::size_t i = 0; i < blocks.size(); ++i) {
+        // 最后一块吃掉浮点的零头,底边正好落在内容区的底部。
+        const qreal height = i + 1 == blocks.size() ? area.bottom() - y : std::floor(heights[i]);
+        blocks[i].draw(QRectF(area.left(), y, area.width(), height));
+        y += height + gap;
     }
 }
 

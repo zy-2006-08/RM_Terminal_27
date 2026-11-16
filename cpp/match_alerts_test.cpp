@@ -86,7 +86,9 @@ void control_gap_hysteresis() {
 }
 
 void timeline_fires_on_time_and_never_backfills() {
-    auto alerts = red_alerts();
+    rm_terminal::MatchAlertSettings commander;
+    commander.role = rm_terminal::Role::Commander;
+    auto alerts = red_alerts(commander);
     alerts.observe(preparing(), 0);
     int dart = 0, energy = 0;
     for (int t = 0; t <= 95; ++t) {
@@ -101,16 +103,61 @@ void timeline_fires_on_time_and_never_backfills() {
     check(dart == 2 && energy == 2, "nothing else fires in the first 95 s");
 
     // 进程启动时比赛已经进行到 3:20:不能补报 3:00 的大能量机关。
-    auto late = red_alerts();
+    auto late = red_alerts(commander);
     check(late.observe(in_match(200), 0).empty(), "joining mid-match does not backfill");
     check(count(late.observe(in_match(255), 1000), AlertKind::Energy) == 1,
           "the next point after joining still fires");
     // 时钟一下跳过很多(模拟器跳转):只报刚越过 5 秒内的点。
-    auto jump = red_alerts();
+    auto jump = red_alerts(commander);
     jump.observe(in_match(100), 0);
     const auto out = jump.observe(in_match(243), 1000);
     check(count(out, AlertKind::Energy) == 0 && count(out, AlertKind::DartGate) == 1,
           "a jump only reports points within the last 5 s");
+}
+
+void dart_gate_quiet_once_our_darts_are_spent() {
+    rm_terminal::MatchAlertSettings commander;
+    commander.role = rm_terminal::Role::Commander;
+    const auto heard = [&](std::uint32_t red_hits, std::uint32_t blue_hits) {
+        auto alerts = red_alerts(commander);
+        alerts.observe(preparing(), 0);
+        int n = 0;
+        for (int t = 225; t <= 245; ++t) {
+            auto snapshot = in_match(t);
+            snapshot.dart_hits = rm_terminal::DartTally{red_hits, blue_hits};
+            n += count(alerts.observe(snapshot, 1000 + t * 1000), AlertKind::DartGate);
+        }
+        return n;
+    };
+    check(heard(3, 0) == 2, "a dart left: 3:50 and 4:00 still remind");
+    check(heard(4, 0) == 0, "all four darts hit: no gate reminders");
+    check(heard(0, 4) == 2, "the enemy's darts do not use up ours");
+}
+
+void alerts_follow_the_seat() {
+    const auto heard = [](rm_terminal::Role role, AlertKind kind) {
+        rm_terminal::MatchAlertSettings settings;
+        settings.role = role;
+        auto alerts = red_alerts(settings);
+        alerts.observe(preparing(), 0);
+        int n = 0;
+        for (int t = 0; t <= 245; ++t) n += count(alerts.observe(in_match(t), 1000 + t * 1000), kind);
+        return n;
+    };
+    using rm_terminal::Role;
+    check(heard(Role::Hero, AlertKind::Energy) == 0, "the heavy cannot open the energy mechanism");
+    check(heard(Role::Hero, AlertKind::DartGate) == 0, "the heavy does not run the dart");
+    check(heard(Role::Infantry, AlertKind::Energy) == 3, "infantry hears 0:00, 1:30 and 3:00");
+    check(heard(Role::Infantry, AlertKind::DartGate) == 0, "infantry does not run the dart");
+    check(heard(Role::Commander, AlertKind::DartGate) == 4, "the commander hears both gate windows");
+    check(heard(Role::Commander, AlertKind::Energy) == 3, "the commander still hears the energy windows");
+
+    rm_terminal::MatchAlertSettings heavy;
+    heavy.role = Role::Hero;
+    auto alerts = red_alerts(heavy);
+    auto snapshot = in_match(60);
+    set<std::uint32_t>(snapshot.game.red_outpost_zone, 3u);
+    check(count(alerts.observe(snapshot, 0), AlertKind::OutpostTemp) == 1, "zone alerts reach every seat");
 }
 
 void fortress_and_base() {
@@ -143,6 +190,32 @@ void fortress_and_base() {
     set<std::uint32_t>(snapshot.game.red_base_hp, 4700u);
     check(count(alerts.observe(snapshot, 12500), AlertKind::BaseAttacked) == 1,
           "damage after the quiet window alerts again");
+}
+
+// 偷堡垒的那台 100% 易伤,我方基地护甲已经展开时就没有了(规则 5.6.4.9)。
+void fortress_thief_text() {
+    const auto banner_of = [](const std::vector<rm_terminal::MatchAlert>& out) {
+        for (const auto& alert : out)
+            if (alert.kind == AlertKind::Fortress) return alert.banner;
+        return QString();
+    };
+    auto alerts = red_alerts();
+    auto snapshot = in_match(200);
+    set<std::uint32_t>(snapshot.game.red_base_status, 1u);
+    set<std::int32_t>(snapshot.game.red_fortress_activation_sec, 0);
+    alerts.observe(snapshot, 0);
+    set<std::int32_t>(snapshot.game.red_fortress_activation_sec, 1);
+    const QString exposed = banner_of(alerts.observe(snapshot, 250));
+    check(exposed.startsWith(QStringLiteral("敌方在激活我方堡垒")) && exposed.contains(QStringLiteral("易伤100%")),
+          "armor not deployed: the thief is 100% vulnerable");
+
+    auto deployed = red_alerts();
+    set<std::uint32_t>(snapshot.game.red_base_status, 2u);
+    set<std::int32_t>(snapshot.game.red_fortress_activation_sec, 0);
+    deployed.observe(snapshot, 0);
+    set<std::int32_t>(snapshot.game.red_fortress_activation_sec, 1);
+    const QString plain = banner_of(deployed.observe(snapshot, 250));
+    check(plain == QStringLiteral("敌方在激活我方堡垒"), "armor deployed: no vulnerability to mention");
 }
 
 void enemy_low_hp_per_robot() {
@@ -209,7 +282,10 @@ int main() {
     outpost_temp_once_then_full_once();
     control_gap_hysteresis();
     timeline_fires_on_time_and_never_backfills();
+    dart_gate_quiet_once_our_darts_are_spent();
+    alerts_follow_the_seat();
     fortress_and_base();
+    fortress_thief_text();
     enemy_low_hp_per_robot();
     disabled_kinds_and_phrases();
     banner_queue_orders_and_expires();

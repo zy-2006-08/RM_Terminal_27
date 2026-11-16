@@ -1,5 +1,6 @@
 #include "top_bar_model.h"
 
+#include "match_event.h"
 #include "presentation.h"
 
 namespace rm_terminal {
@@ -41,7 +42,7 @@ void seed_slots(TopBarSide& side, std::uint32_t id_base) {
 
 }  // namespace
 
-TopBarModel top_bar_model(const Snapshot& snapshot) {
+TopBarModel top_bar_model(const Snapshot& snapshot, const BuffBoard* buffs) {
     const auto& game = snapshot.game;
     TopBarModel model;
 
@@ -58,18 +59,37 @@ TopBarModel top_bar_model(const Snapshot& snapshot) {
     model.blue.outpost_hp = game.blue_outpost_hp.value;
     model.blue.outpost_max_hp = game.blue_outpost_max_hp.value;
 
-    auto outpost_blue = [](const Field<std::uint32_t>& zone, bool fallback) {
-        if (zone.quality != Quality::Valid || !zone.value) return fallback;
-        return *zone.value == 3u || *zone.value == 4u;
+    // 牌子的颜色跟前哨站归谁走,不跟谁站在点上走:对方站满 5 秒只是临时控制,前哨站还是原主人的。
+    const auto valid_value = [](const Field<std::uint32_t>& field) -> std::optional<std::uint32_t> {
+        return field.quality == Quality::Valid ? field.value : std::nullopt;
     };
-    model.red.outpost_controlled_by_blue = outpost_blue(game.red_outpost_zone, false);
-    model.blue.outpost_controlled_by_blue = outpost_blue(game.blue_outpost_zone, true);
+    model.red.outpost_owned_by_blue =
+        outpost_owner(valid_value(game.red_outpost_zone), valid_value(game.red_outpost_hp), kRed) == kBlue;
+    model.blue.outpost_owned_by_blue =
+        outpost_owner(valid_value(game.blue_outpost_zone), valid_value(game.blue_outpost_hp), kBlue) == kBlue;
 
     const auto valid = [](const Field<std::uint32_t>& field) -> std::optional<std::uint32_t> {
         return field.quality == Quality::Valid ? field.value : std::nullopt;
     };
     model.red.base_status = valid(game.red_base_status);
     model.blue.base_status = valid(game.blue_base_status);
+    // 没有 100% 防御时,能量机关、装配还会给基地 25% 或 50%(规则 5.6.3、表 5-12)。
+    // 敌方的装配等级协议不给,没推出防御时只能说「没有 100% 防御」,不能说「无防御增益」。
+    const std::optional<std::uint32_t> own = snapshot.self ? std::optional<std::uint32_t>(faction_of(snapshot.self->value))
+                                                           : std::nullopt;
+    for (const std::uint32_t faction : {kRed, kBlue}) {
+        TopBarSide& side = faction == kRed ? model.red : model.blue;
+        if (!side.base_status || *side.base_status == 0 || !buffs || !own) continue;
+        const QString armor = *side.base_status == 2 ? QStringLiteral("护甲已展开") : QStringLiteral("护甲未展开");
+        const SideBuffs& extra = buffs->side(faction);
+        if (extra.structure_defense > 0)
+            side.defense_text = QStringLiteral("%1防御 %2% · %3")
+                                    .arg(extra.structure_estimated ? QStringLiteral("约") : QString())
+                                    .arg(extra.structure_defense)
+                                    .arg(armor);
+        else
+            side.defense_text = (faction == *own ? QStringLiteral("无防御增益 · ") : QStringLiteral("无 100% 防御 · ")) + armor;
+    }
     model.red.control_points = valid(game.red_control_points);
     model.blue.control_points = valid(game.blue_control_points);
     // 2027 协议不发队名:team_name 留空,QML 回落到不显示,不编造校名。

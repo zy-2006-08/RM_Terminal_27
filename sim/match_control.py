@@ -20,9 +20,11 @@
     .venv/bin/python sim/match_control.py blind 2 4         # 蓝方中「基地随机移动目标」飞镖(发 Event 9)
     .venv/bin/python sim/match_control.py blind-clear       # 清掉模拟器的遮挡账本(终端自己算,不受影响)
     .venv/bin/python sim/match_control.py shoot 17 10       # 对锁定目标打 10 发 17mm
-    .venv/bin/python sim/match_control.py module            # 重装安装 42mm 模块
+    .venv/bin/python sim/match_control.py module            # 重装在工作台装上 42mm 发射机构(要有安装权限)
+    .venv/bin/python sim/match_control.py verify            # 重装打验证弹,打出后才算成功安装(Event 16)
     .venv/bin/python sim/match_control.py buy 17 100        # 花金币兑换 100 发 17mm
     .venv/bin/python sim/match_control.py point 0           # 车开出兑换点(1 开进去),不在兑换点不能非远程兑换
+    .venv/bin/python sim/match_control.py assembly-zone 0   # 重装开出装配区(1 开进去),不在装配区开始不了装配
     .venv/bin/python sim/match_control.py pay-revive        # 花金币立即复活自机
     .venv/bin/python sim/match_control.py confirm-revive    # 读条满后确认复活(替官方选手端点,发协议 CommonCommand 3)
     .venv/bin/python sim/match_control.py card              # 模拟自机刷场地交互卡解除虚弱
@@ -30,6 +32,8 @@
     .venv/bin/python sim/match_control.py dart-open 1       # 红方在 30s/240s 窗口开闸
     .venv/bin/python sim/match_control.py dart 1 1          # 红方飞镖打蓝方前哨站
     .venv/bin/python sim/match_control.py mark 1            # 模拟指挥手标记敌方重装(1 攻击 2 防御 3 警戒)
+    .venv/bin/python sim/match_control.py enemy-rune small  # 敌方激活小能量机关(big 大能量机关),只发 Event 3/4
+    .venv/bin/python sim/match_control.py terrain tunnel    # 自机拿地形增益:highland/road/tunnel/through/pre
 
 配合 RM_HOLD=1 启动 match_server.py:那样服务器起来后停在准备阶段等指令,
 不发 start 就一直不开赛。不带 RM_HOLD 则维持既有的启动即开赛行为。
@@ -51,11 +55,11 @@ import rm_terminal_pb2 as pb
 from sim.constants import MQTT_PORT, SERVER_HOST, T_COMMON_COMMAND
 from sim.match_server import (
     CTRL_AUTO_HP, CTRL_BEGIN, CTRL_BLIND, CTRL_BLIND_CLEAR, CTRL_BUY, CTRL_CARD,
-    CTRL_CHECK, CTRL_COUNTDOWN, CTRL_DART_OPEN, CTRL_DART_SHOOT, CTRL_EXCHANGE_POINT, CTRL_HOLD,
+    CTRL_ASSEMBLY_ZONE, CTRL_CHECK, CTRL_COUNTDOWN, CTRL_DART_OPEN, CTRL_DART_SHOOT, CTRL_EXCHANGE_POINT, CTRL_HOLD,
     CTRL_MARK, CTRL_MODULE, CTRL_PAY_REVIVE, CTRL_PREP,
     CTRL_RESET, CTRL_RESUME, CTRL_SEEK, CTRL_SET_FORTRESS, CTRL_SET_HP,
     CTRL_SET_STRUCTURE_HP, CTRL_SET_ZONE, CTRL_SHOOT, CTRL_SPEED,
-    CTRL_USE_REINFORCE,
+    CTRL_USE_REINFORCE, CTRL_VERIFY_LAUNCHER, CTRL_ENEMY_RUNE, CTRL_TERRAIN, CTRL_RADAR_LOCK,
 )
 
 _ACTIONS = {
@@ -79,8 +83,10 @@ _ACTIONS = {
     "blind-clear": (CTRL_BLIND_CLEAR, "解除手动致盲"),
     "shoot": (CTRL_SHOOT, "对锁定目标射击"),
     "module": (CTRL_MODULE, "安装 42mm 模块"),
+    "verify": (CTRL_VERIFY_LAUNCHER, "打验证弹"),
     "buy": (CTRL_BUY, "兑换允许发弹量"),
     "point": (CTRL_EXCHANGE_POINT, "车开进/开出兑换点"),
+    "assembly-zone": (CTRL_ASSEMBLY_ZONE, "重装开进/开出装配区"),
     "pay-revive": (CTRL_PAY_REVIVE, "金币兑换立即复活"),
     # 这一条不是赛程控制:直接发协议的 cmd_type 3,和终端、官方选手端发的一模一样。
     "confirm-revive": (3, "确认复活"),
@@ -88,7 +94,11 @@ _ACTIONS = {
     "dart-open": (CTRL_DART_OPEN, "开启飞镖闸门"),
     "dart": (CTRL_DART_SHOOT, "发射飞镖"),
     "mark": (CTRL_MARK, "模拟指挥手地图标记"),
+    "enemy-rune": (CTRL_ENEMY_RUNE, "敌方激活能量机关"),
+    "terrain": (CTRL_TERRAIN, "自机拿地形增益"),
+    "radar-lock": (CTRL_RADAR_LOCK, "强制雷达标记"),
 }
+_TERRAIN_NAMES = {"highland": 1, "road": 2, "tunnel": 3, "through": 4, "pre": 5}
 _NEEDS_VALUE = {"seek": 1.0, "speed": 10.0}
 
 
@@ -125,6 +135,11 @@ def main() -> int:
     elif action == "point":
         if len(args) < 2 or args[1] not in ("0", "1"):
             print("point 需要 1(开进兑换点) 或 0(开出去)", file=sys.stderr)
+            return 2
+        param = int(args[1])
+    elif action == "assembly-zone":
+        if len(args) < 2 or args[1] not in ("0", "1"):
+            print("assembly-zone 需要 1(开进装配区) 或 0(开出去)", file=sys.stderr)
             return 2
         param = int(args[1])
     elif action == "zone":
@@ -215,6 +230,22 @@ def main() -> int:
         except ValueError:
             print("mark 的类型是 1(攻击)/2(防御)/3(警戒)", file=sys.stderr)
             return 2
+    elif action == "enemy-rune":
+        if len(args) < 2 or args[1] not in ("small", "big"):
+            print("enemy-rune 需要 small(小能量机关) 或 big(大能量机关)", file=sys.stderr)
+            return 2
+        param = 2 if args[1] == "big" else 1
+    elif action == "radar-lock":
+        try:
+            param = int(args[1]) if len(args) > 1 else 0
+        except ValueError:
+            print("radar-lock 需要敌方车号,例如: radar-lock 104(0 解除)", file=sys.stderr)
+            return 2
+    elif action == "terrain":
+        if len(args) < 2 or args[1] not in _TERRAIN_NAMES:
+            print(f"terrain 需要 {'/'.join(_TERRAIN_NAMES)}", file=sys.stderr)
+            return 2
+        param = _TERRAIN_NAMES[args[1]]
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="sim-control")
     try:

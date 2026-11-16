@@ -5,6 +5,7 @@
 #include "map_marks.h"
 
 #include <QColor>
+#include <QPixmap>
 #include <QSize>
 #include <QString>
 #include <QStringList>
@@ -68,6 +69,16 @@ struct MapStatus {
 
 MapStatus map_status(const std::vector<MapMarker>& markers, const FieldExtent& field);
 
+// 能量机关增益的倒计时圈,画在场地正中的能量机关上。fraction 是还剩多少(1 = 满圈),
+// 不知道开了多久时画满圈。
+struct RuneRing {
+    std::uint32_t faction = 0;
+    QString label;
+    double fraction = 1.0;
+    bool paused = false;
+    bool estimated = false;
+};
+
 class MapPane final : public QWidget {
 public:
     explicit MapPane(QWidget* parent = nullptr);
@@ -82,6 +93,7 @@ public:
     // 残血敌人(机器人 id),标记外面套一圈红光,和花名册的残血提示对上。
     void setLowHealth(const std::vector<std::uint32_t>& ids);
     void setSentryPath(const std::vector<std::pair<double, double>>& points);
+    void setRuneRings(const std::vector<RuneRing>& rings);
 
     // 操作手的界面设置:场地底图不透明度(0.2–1.0),画不画敌方机器人和地图标记。
     // 藏起来的敌方只是不画,地图下方的「位置缺失」文字照常,点选敌方标记照常。
@@ -108,6 +120,7 @@ private:
     std::vector<DrawnMark> marks_;
     std::vector<std::uint32_t> low_health_;
     std::vector<std::pair<double, double>> sentry_path_;
+    std::vector<RuneRing> rune_rings_;
     ClickHandler click_handler_;
     std::uint32_t own_faction_ = 1;
     FieldExtent field_ = default_field_extent();
@@ -115,6 +128,7 @@ private:
     bool base_alert_left_ = true;
     bool base_alert_bright_ = true;
     double background_opacity_;
+    QPixmap scaled_background_;
     bool show_enemies_ = true;
     bool show_marks_ = true;
     std::uint32_t display_faction_ = 1;

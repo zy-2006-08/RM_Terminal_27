@@ -21,7 +21,25 @@ struct MatchEvent {
     // zone_code 为 GameFields 的绝对编码(0 未控 1 红临时 2 红完全 3 蓝临时 4 蓝完全)
     std::optional<std::size_t> zone_index;
     std::uint32_t zone_code = 0;
+    // 16 我方重装装上了模块化 42mm 发射机构
+    bool launcher_installed = false;
+    // 2 前哨站被击毁:0 是开局在红方一侧的 R 前哨站,1 是 B 前哨站
+    std::optional<std::size_t> outpost_index;
+    // 4 能量机关进入已激活(1 小 2 大);3 大能量机关激活的臂数和平均环数。都不带是哪一方的。
+    std::uint32_t rune_kind = 0;
+    std::uint32_t rune_arms = 0;
+    double rune_rings = 0;
 };
+
+// 前哨站现在归谁(kRed / kBlue)。协议不直接发,从这块前哨阵地的状态(绝对编码 0–4)和前哨站血量推
+// (规则手册 5.6.1、表 5-21):只有打掉重建才换主人,所以某一方完全控制时前哨站是这一方的;
+// 某一方临时控制时,前哨站已倒说明是这一方的刚被打掉,还立着说明这一方正在占对方的点。
+// 缺数据时算开局位置 home 的那一方。
+std::uint32_t outpost_owner(std::optional<std::uint32_t> zone, std::optional<std::uint32_t> hp,
+                            std::uint32_t home);
+
+// 「我方前哨站被击毁」;前哨站已经被对方占了时再写清是哪一侧那座。index 同 outpost_index。
+std::string outpost_destroyed_text(std::uint32_t owner, std::size_t index, std::uint32_t self);
 
 // self_faction 用来把红蓝写成「我方/敌方」。参数解析不了时返回一条 level 0 的原样记录,
 // 不产生任何副作用。

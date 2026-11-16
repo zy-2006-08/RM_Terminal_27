@@ -30,7 +30,7 @@ QString rune_text(const GameFields<Field>& g) {
 
 }  // namespace
 
-std::vector<AnalysisMetric> build_analysis_metrics(const Snapshot& snapshot) {
+std::vector<AnalysisMetric> build_analysis_metrics(const Snapshot& snapshot, const BuffBoard* buffs, MonotonicMs now) {
     const std::optional<std::uint32_t> self = self_faction(snapshot);
     const bool known = self.has_value();
     const bool red = known && *self == kRed;
@@ -70,6 +70,17 @@ std::vector<AnalysisMetric> build_analysis_metrics(const Snapshot& snapshot) {
         rune.text_value = rune_text(g);
         if (const auto arms = as_int(g.rune_activated_arms); arms && *arms > 0)
             rune.note = QStringLiteral("%1 臂").arg(*arms);
+        if (buffs) {
+            const SideBuffs& ours = buffs->side(red ? kRed : kBlue);
+            const SideBuffs& theirs = buffs->side(red ? kBlue : kRed);
+            if (ours.rune)
+                if (const QString text = rune_buff_text(*ours.rune, now); !text.isEmpty()) rune.text_value = text;
+            if (theirs.rune)
+                if (const QString text = rune_time_text(*theirs.rune, now, true); !text.isEmpty()) {
+                    rune.note = QStringLiteral("敌 ") + text;
+                    rune.note_first = true;
+                }
+        }
     }
     metrics.push_back(rune);
     return metrics;
@@ -138,16 +149,17 @@ QString metric_stance_text(MetricStance stance) {
 ZoneBoard zone_board(const Snapshot& snapshot) {
     const GameFields<Field>& g = snapshot.game;
     ZoneBoard board;
-    board.zones = {{{QStringLiteral("红方前哨区"), ZoneControl::Unknown, std::nullopt},
+    // 从左到右照场地摆:红方基地、红方前哨、蓝方前哨、蓝方基地,和顶栏红左蓝右一致。
+    board.zones = {{{QStringLiteral("红方基地区"), ZoneControl::Unknown, std::nullopt},
+                    {QStringLiteral("红方前哨区"), ZoneControl::Unknown, std::nullopt},
                     {QStringLiteral("蓝方前哨区"), ZoneControl::Unknown, std::nullopt},
-                    {QStringLiteral("红方基地区"), ZoneControl::Unknown, std::nullopt},
                     {QStringLiteral("蓝方基地区"), ZoneControl::Unknown, std::nullopt}}};
 
-    const Field<std::uint32_t>* raw[4] = {&g.red_outpost_zone, &g.blue_outpost_zone,
-                                          &g.red_base_zone, &g.blue_base_zone};
-    const Field<std::int32_t>* progress[4] = {&g.red_outpost_zone_progress,
-                                              &g.blue_outpost_zone_progress,
-                                              &g.red_base_zone_progress, &g.blue_base_zone_progress};
+    const Field<std::uint32_t>* raw[4] = {&g.red_base_zone, &g.red_outpost_zone,
+                                          &g.blue_outpost_zone, &g.blue_base_zone};
+    const Field<std::int32_t>* progress[4] = {&g.red_base_zone_progress,
+                                              &g.red_outpost_zone_progress,
+                                              &g.blue_outpost_zone_progress, &g.blue_base_zone_progress};
     for (std::size_t i = 0; i < 4; ++i) {
         if (progress[i]->quality == Quality::Valid) board.zones[i].progress = progress[i]->value;
         if (raw[i]->quality != Quality::Valid || !raw[i]->value) continue;

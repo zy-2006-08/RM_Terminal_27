@@ -1,5 +1,6 @@
 #include "dashboard.h"
 
+#include "glass_items.h"
 #include "layout_editor.h"
 #include "logging.h"
 #include "presentation.h"
@@ -10,10 +11,14 @@
 #include "unit_grid.h"
 
 #include <algorithm>
+#include <cmath>
 #include <initializer_list>
 
+#include <QAbstractButton>
 #include <QColor>
 #include <QComboBox>
+#include <QEnterEvent>
+#include <QVariantMap>
 #include <QFont>
 #include <QFontMetrics>
 #include <QFrame>
@@ -28,6 +33,7 @@
 #include <QPair>
 #include <QMouseEvent>
 #include <QScrollArea>
+#include <QShortcut>
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QSlider>
@@ -146,6 +152,64 @@ QString clock_text(const Field<std::int32_t>& field) {
                .arg(total / 60, 2, 10, QLatin1Char('0'))
                .arg(total % 60, 2, 10, QLatin1Char('0')) +
            mark(field);
+}
+
+// 赛前卡片上一个大按钮的透明替身:样子由 QML 画,它只接点击、换手形指针、告诉 QML 亮起来。
+class HitButton final : public QAbstractButton {
+public:
+    HitButton(QWidget* parent, std::function<void(bool)> hover)
+        : QAbstractButton(parent), hover_(std::move(hover)) {
+        setCursor(Qt::PointingHandCursor);
+        setFocusPolicy(Qt::NoFocus);
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {}
+    void enterEvent(QEnterEvent* event) override {
+        QAbstractButton::enterEvent(event);
+        hover_(true);
+    }
+    void leaveEvent(QEvent* event) override {
+        QAbstractButton::leaveEvent(event);
+        hover_(false);
+    }
+
+private:
+    std::function<void(bool)> hover_;
+};
+
+// 赛前卡片的几何。窗口比 1600×900 大时和顶栏一样整体放大(最多 1.6 倍)。上面一段放倒计时
+// 和「比赛即将开始」,下面一排大按钮;一排放不下(每个不到 150 宽)就排成两行。
+struct PreMatchCard {
+    QRect card;
+    QRect heading;  // 相对卡片
+    std::vector<QRect> buttons;
+    double scale = 1.0;
+};
+
+PreMatchCard pre_match_card(QSize window, int count) {
+    PreMatchCard out;
+    out.scale = std::clamp(std::min(window.width() / 1600.0, window.height() / 900.0), 1.0, 1.6);
+    const auto px = [&out](double value) { return static_cast<int>(std::lround(value * out.scale)); };
+    // 左右留得比上下多:边框切图两侧各有一道发光竖条,占宽度的 5% 左右,按钮不能压上去。
+    const int side = px(46), top = px(26), bottom = px(26), gap = px(12), heading = px(146), row = px(64),
+              above = px(12);
+    const int width = std::max(px(400), std::min(window.width() - 80, px(740)));
+    const int inner = width - 2 * side;
+    const int per_row = count <= 0 ? 1 : ((inner - (count - 1) * gap) / count >= px(140) ? count : (count + 1) / 2);
+    const int rows = count <= 0 ? 0 : (count + per_row - 1) / per_row;
+    const int height = top + heading + (rows > 0 ? above + rows * row + (rows - 1) * gap : 0) + bottom;
+    out.card = QRect((window.width() - width) / 2, (window.height() - height) / 2, width, height);
+    out.heading = QRect(side, top, inner, heading);
+    const int button = (inner - (per_row - 1) * gap) / per_row;
+    for (int i = 0; i < count; ++i) {
+        const int r = i / per_row;
+        const int in_row = std::min(per_row, count - r * per_row);
+        const int left = out.card.left() + side + (inner - in_row * button - (in_row - 1) * gap) / 2;
+        out.buttons.emplace_back(left + (i % per_row) * (button + gap),
+                                 out.card.top() + top + heading + above + r * (row + gap), button, row);
+    }
+    return out;
 }
 
 }
@@ -384,7 +448,93 @@ void Dashboard::setVideoRotated(bool rotated) {
     video_full_pane_->setRotated(rotated);
 }
 
+void Dashboard::setWallFeeds(std::vector<WallFeed> feeds) {
+    if (!wall_compact_ || !wall_full_) return;
+    wall_full_->setFeeds(feeds);
+    wall_compact_->setFeeds(std::move(feeds));
+}
+
 void Dashboard::setPreMatchReminder(const QString& text) { pre_match_reminder_ = text; }
+
+void Dashboard::setPreMatchPerformance(const QString& text, bool warn) {
+    pre_match_performance_ = text;
+    pre_match_performance_warn_ = warn;
+}
+
+void Dashboard::setPerformanceHandler(std::function<void()> open) { performance_handler_ = std::move(open); }
+
+void Dashboard::setSettingsPanelOpen(bool open) { settings_panel_open_ = open; }
+
+void Dashboard::setPreMatchHover(int key) {
+    if (pre_match_hover_ == key) return;
+    pre_match_hover_ = key;
+    if (QQuickItem* overlay = popup_->rootObject()) overlay->setProperty("hovered", key);
+}
+
+void Dashboard::syncPreMatchCard(bool shown) {
+    struct Entry {
+        int key;
+        QString title;
+        QString value;
+        bool warn;
+    };
+    std::vector<Entry> entries;
+    if (shown) {
+        if (!pre_match_performance_.isEmpty())
+            entries.push_back({0, QStringLiteral("性能体系 · P"), pre_match_performance_, pre_match_performance_warn_});
+        if (!keyboard_mouse_entry_->isHidden())
+            entries.push_back({1, QStringLiteral("键鼠控制 · F9"),
+                               keyboard_mouse_status_.isEmpty() ? QStringLiteral("关") : QStringLiteral("开"), false});
+        if (reminder_entry_->isEnabled()) entries.push_back({2, QStringLiteral("战术提醒"), reminder_summary_, false});
+        if (!ui_settings_entry_->isHidden() && ui_settings_entry_->isEnabled())
+            entries.push_back({3, QStringLiteral("界面设置"), QStringLiteral("改布局和组件"), false});
+    }
+    const PreMatchCard layout = pre_match_card(size(), static_cast<int>(entries.size()));
+    QVariantList model;
+    QStringList titles;
+    std::array<bool, 4> placed{};
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+        const Entry& entry = entries[i];
+        const QRect box = layout.buttons[i];
+        model.append(QVariantMap{{QStringLiteral("key"), entry.key},
+                                 {QStringLiteral("x"), box.x()},
+                                 {QStringLiteral("y"), box.y()},
+                                 {QStringLiteral("w"), box.width()},
+                                 {QStringLiteral("h"), box.height()},
+                                 {QStringLiteral("title"), entry.title},
+                                 {QStringLiteral("value"), entry.value},
+                                 {QStringLiteral("warn"), entry.warn}});
+        titles.append(entry.title);
+        QAbstractButton* hit = pre_match_hits_[static_cast<std::size_t>(entry.key)];
+        if (hit->geometry() != box) hit->setGeometry(box);
+        placed[static_cast<std::size_t>(entry.key)] = true;
+    }
+    for (std::size_t key = 0; key < pre_match_hits_.size(); ++key) {
+        QAbstractButton* hit = pre_match_hits_[key];
+        // 只在刚露出来时提一次层。每拍都 raise,它就和铺满全窗的弹窗层每 0.25 秒互换一次上下,
+        // 整个窗口跟着重画,主线程被占满,鼠标键盘都跟着卡。
+        if (placed[key] == !hit->isHidden()) continue;
+        hit->setVisible(placed[key]);
+        if (placed[key]) hit->raise();
+    }
+    if (pre_match_hover_ >= 0 && !placed[static_cast<std::size_t>(pre_match_hover_)]) setPreMatchHover(-1);
+    pre_match_titles_ = titles;
+    pre_match_card_shown_ = !entries.empty();
+    const QRect card = pre_match_card_shown_ ? layout.card : QRect();
+    QQuickItem* overlay = popup_->rootObject();
+    if (!overlay) return;
+    // 只在变了的时候写:每一帧都写一份新数组,QML 会把按钮整个删了重建,画面会闪。
+    if (model != pre_match_model_) {
+        pre_match_model_ = model;
+        overlay->setProperty("buttons", model);
+    }
+    if (card != pre_match_card_rect_) {
+        pre_match_card_rect_ = card;
+        overlay->setProperty("cardRect", QRectF(card));
+        overlay->setProperty("headingRect", QRectF(layout.heading));
+    }
+    overlay->setProperty("uiScale", layout.scale);
+}
 
 void Dashboard::setRuneEntry(const QString& text, bool lit, double progress, const QString& tooltip) {
     const bool shown = !text.isEmpty();
@@ -649,6 +799,11 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     // 图传卡片不要标题栏:画面左下角自己写着「图传」「点击放大」,省下的高度都给画面。
     auto* video_card = new GlassCard(QString(), info_page_);
     video_card->setObjectName(QStringLiteral("videoCard"));
+    if (role_ == Role::Commander) {
+        wall_compact_ = new VideoWall(VideoWall::Mode::Compact, video_card);
+        wall_compact_->setObjectName(QStringLiteral("videoWallCompact"));
+        QObject::connect(wall_compact_, &VideoWall::clicked, this, &Dashboard::showVideoPage);
+    }
 
     auto* event_box = new GlassCard(QStringLiteral("战场事件"), info_page_);
     event_box->setObjectName(QStringLiteral("eventCard"));
@@ -748,6 +903,19 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     video_full_pane_->setToolTip(QStringLiteral("点击返回自动视图（致盲或强制图传时保持全屏）"));
     video_layout->addWidget(video_full_pane_, 1);
     QObject::connect(video_full_pane_, &VideoPane::clicked, this, &Dashboard::showInfoPage);
+    if (wall_compact_) {
+        wall_full_ = new VideoWall(VideoWall::Mode::Full, video_page_);
+        wall_full_->setObjectName(QStringLiteral("videoWallFull"));
+        video_layout->addWidget(wall_full_, 1);
+        video_full_pane_->setVisible(false);
+        // 指挥手自己不开车,图传页上方不写血量。
+        video_hp_->setVisible(false);
+        QObject::connect(wall_full_, &VideoWall::clicked, this, &Dashboard::showInfoPage);
+        std::vector<WallFeed> waiting;
+        for (const std::uint32_t robot : wall_robots(self_robot_id_))
+            waiting.push_back({robot, wall_label(robot), QImage(), QStringLiteral("还没收到转发")});
+        setWallFeeds(std::move(waiting));
+    }
 
     stack_->addWidget(info_page_);
     stack_->addWidget(video_page_);
@@ -838,6 +1006,19 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     popup_->setSource(QUrl(QStringLiteral("qrc:/qml/PopupOverlay.qml")));
     popup_->setVisible(false);
 
+    // 赛前卡片上四个大按钮的透明替身,点了和点状态条上对应的小按钮一样。
+    const auto hit = [this](const char* name, int key, std::function<void()> action) {
+        auto* button = new HitButton(this, [this, key](bool inside) { setPreMatchHover(inside ? key : -1); });
+        button->setObjectName(QString::fromLatin1(name));
+        button->setVisible(false);
+        QObject::connect(button, &QAbstractButton::clicked, this, std::move(action));
+        return button;
+    };
+    pre_match_hits_ = {hit("preMatchPerformance", 0, [this] { if (performance_handler_) performance_handler_(); }),
+                       hit("preMatchKeyboardMouse", 1, [this] { keyboard_mouse_entry_->click(); }),
+                       hit("preMatchReminders", 2, [this] { reminder_entry_->click(); }),
+                       hit("preMatchUiSettings", 3, [this] { ui_settings_entry_->click(); })};
+
     victory_ = new QQuickWidget(this);
     victory_->setObjectName(QStringLiteral("victoryOverlay"));
     victory_->setResizeMode(QQuickWidget::SizeRootObjectToView);
@@ -845,8 +1026,26 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     victory_->setAttribute(Qt::WA_TranslucentBackground);
     victory_->setAttribute(Qt::WA_AlwaysStackOnTop);
     victory_->setAttribute(Qt::WA_TransparentForMouseEvents);
+    // 结算面板里的头像、R 标和字体走和花名册同一条路径(qrc + 注册字体 + 背景切片)。
+    prepare_quick_widget(victory_);
     victory_->setSource(QUrl(QStringLiteral("qrc:/qml/VictoryOverlay.qml")));
     victory_->setVisible(false);
+
+    // Esc 关掉结算面板。装在仪表盘自己身上而不是主程序里:覆盖层穿透鼠标事件
+    // (WA_TransparentForMouseEvents),拿不到键盘焦点,所以快捷键只能挂在宿主窗口。
+    //
+    // ApplicationShortcut 而不是 WindowShortcut:焦点常在图传或某个按钮上,
+    // 窗口级快捷键在子控件持有焦点时收不到。主程序的键鼠控制过滤器可能先吃掉
+    // 第一次 Esc(退出键鼠控制),那时第二次 Esc 才关面板 —— 这是可接受的。
+    auto* dismiss = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+    dismiss->setContext(Qt::ApplicationShortcut);
+    QObject::connect(dismiss, &QShortcut::activated, this, [this] {
+        if (shown_result_ == GameResult::None || !victory_->isVisible()) return;
+        // 记下被关掉的是哪一次结算,而不是单一个 bool:同一局结算里面板不再弹回来,
+        // 但下一局(或换一种结果)照旧显示。
+        dismissed_result_ = shown_result_;
+        victory_->setVisible(false);
+    });
 
     // 我方基地在地图哪一侧。场地图红方在左。
     our_base_left_ = config.self_robot_id <= 100;
@@ -883,6 +1082,14 @@ void Dashboard::layoutCells(const LayoutProfile& profile) {
 }
 
 void Dashboard::placeVideo() {
+    if (wall_compact_) {
+        auto* card = static_cast<GlassCard*>(pane_cards_.at(PaneId::Video));
+        if (card->body()->indexOf(wall_compact_) < 0) card->body()->addWidget(wall_compact_, 1);
+        info_video_pane_->setVisible(false);
+        video_stats_->setVisible(false);
+        wall_compact_->setVisible(!video_hidden_);
+        return;
+    }
     // 图传跟着布局走:放进「图传」卡片。席位表里写了要并进别的卡片(现在没有席位这样用)才放进那张卡片的下半截。
     const std::optional<PaneId> host_pane = embedded_host(current_profile_, PaneId::Video);
     auto* host = static_cast<GlassCard*>(pane_cards_.at(host_pane.value_or(PaneId::Video)));
@@ -976,12 +1183,13 @@ void Dashboard::applyUiScheme(const UiScheme& scheme, bool editing) {
 
 void Dashboard::updateNextStep(const Snapshot& snapshot, MonotonicMs now) {
     if (!next_enabled_) return;
-    std::vector<NextGroup> order;
-    for (const QString& key : next_options_.next_order)
-        if (const auto group = next_group_from_key(key)) order.push_back(*group);
-    if (order.empty()) order = default_next_order();
-    next_cards_ = next_board_.update(snapshot, now, order, static_cast<std::size_t>(next_options_.next_count),
-                                     static_cast<MonotonicMs>(next_options_.next_dwell_sec) * 1000);
+    NextBuffs next_buffs;
+    next_buffs.self_weak = buffs_.self_weak;
+    next_buffs.self_attack = buffs_.self_attack;
+    if (snapshot.self) next_buffs.enemy_structure_defense =
+        buffs_.side(opponent_of(faction_of(snapshot.self->value))).structure_defense;
+    next_cards_ = next_board_.update(snapshot, now, static_cast<std::size_t>(next_options_.next_count),
+                                     static_cast<MonotonicMs>(next_options_.next_dwell_sec) * 1000, next_buffs);
     const bool urgent = std::any_of(next_cards_.begin(), next_cards_.end(), [](const NextCard& c) { return c.urgent; });
     const bool showing = next_popup_mode_ ? urgent : true;
     if (next_popup_mode_) {
@@ -1232,6 +1440,11 @@ QPixmap Dashboard::paneImage(PaneId pane, QSize size) {
         }
         break;
     case PaneId::Video: {
+        if (wall_compact_) {
+            auto* wall = new VideoWall(VideoWall::Mode::Compact);
+            wall->setFeeds(wall_compact_->feeds());
+            return sample(QString(), wall);
+        }
         // 图传单独一块时的样子:卡片里放现在这一帧。
         GlassCard card(QStringLiteral("图传"));
         card.resize(size);
@@ -1330,14 +1543,21 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
 
     refreshPage();
 
-    top_bar_->setSnapshot(snapshot);
+    buffs_ = buff_tracker_.update(snapshot, now);
+    top_bar_->setSnapshot(snapshot, &buffs_);
     const std::optional<std::uint32_t> mine = self_faction(snapshot);
     const std::uint32_t ally_faction = mine.value_or(1);
     const std::uint32_t enemy_faction = ally_faction == 2 ? 1 : 2;
     ally_roster_->setFactionKnown(mine.has_value(), ally_faction == 2);
     enemy_roster_->setFactionKnown(mine.has_value(), enemy_faction == 2);
-    ally_roster_->setEntries(build_roster(snapshot, ally_faction));
-    const std::vector<RosterEntry> enemies = build_roster(snapshot, enemy_faction);
+    const auto with_buffs = [this](std::vector<RosterEntry> entries) {
+        for (RosterEntry& entry : entries)
+            if (const auto found = buffs_.chips.find(entry.id.value); found != buffs_.chips.end())
+                entry.buffs = found->second;
+        return entries;
+    };
+    ally_roster_->setEntries(with_buffs(build_roster(snapshot, ally_faction)));
+    const std::vector<RosterEntry> enemies = with_buffs(build_roster(snapshot, enemy_faction));
     enemy_roster_->setEntries(enemies);
     // 地图上残血敌人的红光和花名册的残血提示是同一条规则:活着、有血量、不超过四分之一。
     std::vector<std::uint32_t> low_health;
@@ -1348,7 +1568,7 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
                 low_health.push_back(enemy.id.value);
     map_->setLowHealth(low_health);
     updateNextStep(snapshot, now);
-    analysis_->setMetrics(build_analysis_metrics(snapshot));
+    analysis_->setMetrics(build_analysis_metrics(snapshot, &buffs_, now));
     self_status_->setEntry(self_entry(snapshot));
     {
         const auto elapsed = snapshot.game.stage_elapsed_sec;
@@ -1358,15 +1578,20 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
     }
     analysis_->setFortress(fortress_status(snapshot));
     analysis_->setZoneBoard(zone_board(snapshot));
+    // 标记转发给哨兵的单价要看哨兵是自动还是半自动(规则 5.7.2)。协议没发时按规则默认「自动」。
+    if (mark_toolbar_)
+        mark_toolbar_->setSentryAutomatic(snapshot.game.sentry_control.value !=
+                                          std::optional<std::uint32_t>(1));
 
-    alert_text_ = alert_strip_text(snapshot, video);
-    if (!pre_match_reminder_.isEmpty())
+    // 指挥手没有自己的图传,本机那一路永远收不到,不能常挂「图传离线」。墙上缺几路看状态灯。
+    alert_text_ = alert_strip_text(snapshot, wall_compact_ ? nullptr : video);
+    if (!pre_match_reminder_.isEmpty() && !(pre_match_card_shown_ && !pre_match_performance_.isEmpty()))
         alert_text_ = alert_text_.isEmpty() ? pre_match_reminder_
                                             : pre_match_reminder_ + QStringLiteral("      ") + alert_text_;
     alert_strip_->setVisible(!alert_text_.isEmpty());
     placeAlertStrip();
 
-    const std::vector<EventFeedRow> event_rows = build_event_rows(snapshot, kEventPanelRows);
+    const std::vector<EventFeedRow> event_rows = build_event_rows(snapshot, kEventPanelRows, &buffs_.rune_event_sides);
     event_->setRows(event_rows);
     event_->setDroppedCount(snapshot.events.droppedCount());
     setPaneHeader(PaneId::Events,
@@ -1378,6 +1603,24 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
     setPaneHeader(PaneId::Analysis, analysis_->headerText());
     video_stats_->setText(video_panel_text(video, &video_faults_, now));
     map_->setRobots(snapshot.map_robots);
+    {
+        std::vector<RuneRing> rings;
+        for (const std::uint32_t faction : {kRed, kBlue}) {
+            const SideBuffs& side = buffs_.side(faction);
+            if (!side.rune) continue;
+            RuneRing ring;
+            ring.faction = faction;
+            ring.label = rune_buff_text(*side.rune, now);
+            if (side.rune->timed && side.rune->until > side.rune->started)
+                ring.fraction = std::clamp(static_cast<double>(side.rune->until - now) /
+                                               static_cast<double>(side.rune->until - side.rune->started),
+                                           0.0, 1.0);
+            ring.paused = now < side.rune->paused_until;
+            ring.estimated = side.rune->estimated;
+            if (!ring.label.isEmpty()) rings.push_back(ring);
+        }
+        map_->setRuneRings(rings);
+    }
     last_now_ = now;
     sent_marks_.erase(std::remove_if(sent_marks_.begin(), sent_marks_.end(),
                                      [&](const auto& sent) { return now - sent.second >= mark_lifetime_ms_; }),
@@ -1430,14 +1673,28 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
         StructuredLog::write(LogLevel::info, QStringLiteral("game_result"),
                              {QStringLiteral("result=%1").arg(game_result_name(result))});
         shown_result_ = result;
+        // 结果变了就是新的一次结算,上一次的 Esc 不该把这一次也关掉。
+        dismissed_result_ = GameResult::None;
         if (QQuickItem* overlay = victory_->rootObject()) {
-            overlay->setProperty("title", game_result_title(result));
-            overlay->setProperty("frameUrls", game_result_frame_urls(result));
+            const SettlementModel model = settlement_model(snapshot);
+            overlay->setProperty("title", model.title);
+            overlay->setProperty("reason", model.reason);
+            overlay->setProperty("outcome", game_result_outcome(result));
+            overlay->setProperty("model", settlement_variant(model));
+            // shown 翻真时 QML 把动画时钟归零重播,所以它必须最后设。
             overlay->setProperty("shown", result != GameResult::None);
         }
         victory_->setVisible(result != GameResult::None);
+    } else if (result != GameResult::None) {
+        // 结果和血量不在同一帧到:基地被打爆那一帧血量常常还是旧值。结算期间每帧刷新数字,
+        // 不重设 shown,动画不会重播。
+        if (QQuickItem* overlay = victory_->rootObject()) {
+            const SettlementModel model = settlement_model(snapshot);
+            overlay->setProperty("reason", model.reason);
+            overlay->setProperty("model", settlement_variant(model));
+        }
     }
-    if (result != GameResult::None) victory_->raise();
+    if (result != GameResult::None && result != dismissed_result_) victory_->raise();
 
     // 界面设置比赛中锁定。只认新鲜可信的阶段:断线时保持原状,比赛中断线不会解锁。
     if (const Field<std::uint32_t>& stage = snapshot.game.current_stage;
@@ -1463,10 +1720,14 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
     }
 
     const bool replaced = popup.popup == Popup::Eliminated && eliminated_overlay_replaced_;
+    // 战术提醒窗口开着时赛前卡片先让开,和 P 面板一样:不让开的话窗口压在卡片正中,
+    // 四周还露着卡片和另外两个按钮,一不小心就点到窗口后面去。
+    const bool reminders_open = reminder_dialog_ && reminder_dialog_->isVisible();
     const bool popup_shown =
         popup.popup != Popup::None && !replaced && result == GameResult::None && !selfCheckVisible() &&
-        !uiSettingsVisible();
+        !uiSettingsVisible() && !settings_panel_open_ && !(popup.popup == Popup::PreMatch && reminders_open);
     popup_->setVisible(popup_shown);
+    syncPreMatchCard(popup_shown && popup.popup == Popup::PreMatch);
     if (QQuickItem* overlay = popup_->rootObject()) {
         overlay->setProperty("kind", popup_kind(popup.popup));
         overlay->setProperty("title", popup_title(popup.popup));
@@ -1536,16 +1797,11 @@ void Dashboard::placeAlertStrip() {
 
 void Dashboard::placeBanner() {
     if (!alert_banner_ || !alert_banner_->isVisible() || uiSettingsVisible()) return;
-    // 信息页盖在地图最上面一条(离地图上沿 16);图传全屏页没有地图,放在顶栏下方居中。
-    if (map_->isVisible() && map_->width() > 0) {
-        const QPoint at = map_->mapTo(this, QPoint(0, 0));
-        const int height = map_->height() >= 240 ? GlowBanner::kHeight : 48;
-        alert_banner_->setGeometry(at.x(), at.y() + std::min(16, map_->height() / 20), map_->width(), height);
-    } else {
-        const int width = std::min(720, this->width() - 80);
-        alert_banner_->setGeometry((this->width() - width) / 2, top_bar_->geometry().bottom() + 8, width,
-                                   GlowBanner::kHeight);
-    }
+    // 不管布局里有没有地图、在哪一页,都放在顶栏下方正中、盖在所有面板上面:操作手把地图
+    // 拿掉以后横幅照样看得见。宽度和高度跟着窗口走,全屏时字也跟着变大。
+    const int width = std::min(this->width() - 80, std::clamp(this->width() * 9 / 20, 560, 1100));
+    const int height = std::clamp(this->height() / 14, GlowBanner::kHeight, 96);
+    alert_banner_->setGeometry((this->width() - width) / 2, top_bar_->geometry().bottom() + 8, width, height);
 }
 
 void Dashboard::showAlert(const QString& text, AlertLevel level, MonotonicMs now) {
@@ -1838,9 +2094,8 @@ void Dashboard::attachReminders(ReminderController* controller) {
 
     const auto sync = [this] {
         const auto state = reminders_->uiState();
-        reminder_entry_->setText(state.master_enabled
-                                     ? QStringLiteral("战术提醒 · %1 条").arg(state.enabled_count)
-                                     : QStringLiteral("战术提醒 · 关"));
+        reminder_summary_ = state.master_enabled ? QStringLiteral("%1 条").arg(state.enabled_count) : QStringLiteral("关");
+        reminder_entry_->setText(QStringLiteral("战术提醒 · ") + reminder_summary_);
     };
     QObject::connect(controller, &ReminderController::stateChanged, this, sync);
     sync();
@@ -1870,6 +2125,9 @@ std::string Dashboard::layoutDump() const {
           << pane_entry(QStringLiteral("video_full_pane"), video_full_pane_)
           << pane_entry(QStringLiteral("event_panel"), event_)
           << pane_entry(QStringLiteral("mode_banner"), mode_banner_);
+    if (wall_compact_)
+        panes << pane_entry(QStringLiteral("video_wall_compact"), wall_compact_)
+              << pane_entry(QStringLiteral("video_wall_full"), wall_full_);
     // 布局档案里的每一格,按 PaneId 的固定顺序。
     for (const auto& [pane, card] : pane_cards_)
         panes << pane_entry(QStringLiteral("card_") + pane_name(pane), card);

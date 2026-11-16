@@ -208,20 +208,53 @@ void events_count_kills_and_blind_the_operator() {
     require(decoder.accept("Event", hit.SerializeAsString(), at), "our hit");
     require(store.snapshot(at).blind.self_base_blinded.value == false, "our own hit does not blind us");
 
-    // 换局:击杀数和命中次数清零。
+    // 换局:击杀数、命中次数和战场事件清零。
+    require(store.snapshot(at).events.size() > 0, "round one has events");
     game.set_current_round(2);
     require(decoder.accept("GameStatus", game.SerializeAsString(), at + 1), "next round");
     s = store.snapshot(at + 1);
     require(s.kills.blue == 0, "kills reset with the round");
+    require(s.events.size() == 0 && s.events.droppedCount() == 0, "the event feed starts empty in a new round");
     hit.set_param("2,1");
     require(decoder.accept("Event", hit.SerializeAsString(), at + 2), "first hit of round two");
     require(store.snapshot(at + 2).blind.blind_remaining_ms.value == 10000, "hit count resets with the round");
+    require(store.snapshot(at + 2).events.size() == 1, "round two keeps its own events");
+
+    // 结算里还看得到这一局的事件,回到下一局的赛前阶段才清。
+    game.set_current_stage(5);
+    require(decoder.accept("GameStatus", game.SerializeAsString(), at + 3), "settlement");
+    require(store.snapshot(at + 3).events.size() == 1, "settlement still shows the round's events");
+    game.set_current_round(3);
+    require(decoder.accept("GameStatus", game.SerializeAsString(), at + 4), "round number moves during settlement");
+    require(store.snapshot(at + 4).events.size() == 1, "a round number change inside settlement keeps the events");
+    game.set_current_stage(1);
+    require(decoder.accept("GameStatus", game.SerializeAsString(), at + 5), "next round's preparation");
+    require(store.snapshot(at + 5).events.size() == 0, "preparation of the next round clears the feed");
+    at += 5;
 
     rm::Event unknown;
     unknown.set_event_id(99);
     require(!decoder.accept("Event", unknown.SerializeAsString(), at + 3), "unknown event id is flagged");
-    require(store.snapshot(at + 3).events.recent(1).front().text.find("99") != std::string::npos,
+    require(!store.snapshot(at + 3).events.recent(1).empty() &&
+                store.snapshot(at + 3).events.recent(1).front().text.find("99") != std::string::npos,
             "unknown event still shows up verbatim");
+}
+
+void launcher_installed_lasts_one_round() {
+    Store store(500);
+    Decoder decoder(store, RobotId{1});
+    rm::GameStatus game;
+    game.set_current_round(1);
+    game.set_current_stage(4);
+    require(decoder.accept("GameStatus", game.SerializeAsString(), 0), "match running");
+    require(!store.snapshot(0).launcher_installed, "a round starts without the launcher");
+    rm::Event installed;
+    installed.set_event_id(16);
+    require(decoder.accept("Event", installed.SerializeAsString(), 10), "launcher event");
+    require(store.snapshot(10).launcher_installed, "event 16 marks the launcher installed");
+    game.set_current_round(2);
+    require(decoder.accept("GameStatus", game.SerializeAsString(), 20), "next round");
+    require(!store.snapshot(20).launcher_installed, "every round starts with the launcher on the workbench");
 }
 
 void blind_freshness_follows_the_server_stream() {
@@ -368,6 +401,40 @@ void buff_six_marks_the_exchange_point() {
             "terminal subscribes Buff");
 }
 
+// 每一类 Buff 都按车号记下(没填车号的是自机);同类型、同最大时长的新一条替掉旧的,过了时效窗口就没了。
+void every_buff_is_recorded_per_robot() {
+    Store store(500);
+    Decoder decoder(store, RobotId{3});
+    const auto send = [&decoder](std::uint32_t robot, std::uint32_t type, std::int32_t level, std::uint32_t max_time,
+                                 std::uint32_t left, MonotonicMs at) {
+        rm::Buff buff;
+        if (robot != 0) buff.set_robot_id(robot);
+        buff.set_buff_type(type);
+        buff.set_buff_level(level);
+        buff.set_buff_max_time(max_time);
+        buff.set_buff_left_time(left);
+        return decoder.accept("Buff", buff.SerializeAsString(), at);
+    };
+    require(send(0, 2, 25, 45, 40, 10), "own defense buff without a robot id");
+    require(send(3, 2, 50, 30, 30, 11), "own terrain defense from another source");
+    require(send(3, 1, 200, 60, 60, 12), "attack");
+    require(send(3, 3, 40, 120, 120, 13), "cooling");
+    require(send(3, 5, 10, 0, 0, 14), "heal");
+    require(send(3, 7, 0, 5, 5, 15), "terrain pre-buff");
+    require(send(4, 2, -15, 0, 0, 16), "a teammate's vulnerability");
+    require(!send(250, 2, 25, 45, 45, 17), "an impossible robot id is rejected");
+    require(send(3, 2, 25, 45, 39, 18), "same source refreshes");
+    auto s = store.snapshot(20);
+    require(s.buffs.at(3).size() == 6, "two defense sources plus attack, cooling, heal, pre-buff");
+    require(s.buffs.at(4).size() == 1 && s.buffs.at(4).front().level == -15, "teammate kept under its own id");
+    const auto rune = std::find_if(s.buffs.at(3).begin(), s.buffs.at(3).end(),
+                                   [](const BuffRecord& r) { return r.type == 2 && r.max_time == 45; });
+    require(rune != s.buffs.at(3).end() && rune->left_time == 39u && rune->received_at == 18,
+            "the refreshed record replaced the old one");
+    s = store.snapshot(530);
+    require(s.buffs.empty(), "no refresh for a whole stale window: the buffs are gone");
+}
+
 void performance_selection_sync() {
     Store store(500);
     Decoder decoder(store, RobotId{3});
@@ -379,6 +446,7 @@ void performance_selection_sync() {
     const auto s = store.snapshot(1);
     require(s.game.selected_shooter.value == 2u && s.game.selected_chassis.value == 1u,
             "performance selection lands in game fields");
+    require(s.game.sentry_control.value == 1u, "sentry control (semi-automatic) lands in game fields");
     require(std::find(Decoder::topics().begin(), Decoder::topics().end(),
                       "RobotPerformanceSelectionSync") != Decoder::topics().end(),
             "terminal subscribes RobotPerformanceSelectionSync");
@@ -467,11 +535,13 @@ int main() {
         blue_seat_mirrors_the_same_message();
         special_mechanisms_fill_every_timer();
         events_count_kills_and_blind_the_operator();
+        launcher_installed_lasts_one_round();
         blind_freshness_follows_the_server_stream();
         radar_positions_in_both_encodings();
         sentry_position_only_for_own_sentry();
         self_robot_messages();
         buff_six_marks_the_exchange_point();
+        every_buff_is_recorded_per_robot();
         performance_selection_sync();
         commander_and_hero_messages();
         rejects_bad_input_without_touching_state();

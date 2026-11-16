@@ -1,5 +1,6 @@
 #pragma once
 
+#include "buff_ledger.h"
 #include "domain.h"
 
 #include <QString>
@@ -27,11 +28,16 @@ struct AnalysisMetric {
     QString note;
     // 非空时代替 self_value 显示(能量机关是状态,不是数)。
     QString text_value;
+    // note 比标签要紧(能量机关那一格的敌方增益):数值右边放不下时挪到标签那一行或数值下面,
+    // 再不行让标签让位。其它格子的 note 放不下就不画。
+    bool note_first = false;
 };
 
 // 我方视角:经济(只有我方)、总伤害、击杀(Event 1 本机累计)、能量机关(只有我方)。
 // 阵营取自开机选定的席位;没有席位时双方数值一律为空,不默认按红方算。
-std::vector<AnalysisMetric> build_analysis_metrics(const Snapshot& snapshot);
+// 给了 buffs 时,能量机关那一格写我方这次增益还剩几秒,敌方的写在右边(推算的带「约」)。
+std::vector<AnalysisMetric> build_analysis_metrics(const Snapshot& snapshot, const BuffBoard* buffs = nullptr,
+                                                   MonotonicMs now = 0);
 
 // 堡垒(2027):双方基地区各有一个堡垒增益点,对方激活满 10 秒,这一方的基地护甲展开。
 struct FortressStatus {

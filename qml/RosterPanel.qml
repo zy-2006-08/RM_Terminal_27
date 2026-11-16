@@ -53,11 +53,13 @@ Item {
         Column {
             id: rows
             anchors.fill: parent
-            // 行高按 62 设计,面板高时最多放到 104(内容在行里上下居中),行间距从 6 加到最多 12;
-            // 再高就把余量留在面板底部。
+            // 行高按 62 设计,但不设上限:几行就把面板的高度均分成几份,全部用掉。
+            // 以前封在 104 并把余量留在面板底部,四行的花名册在高面板里下面空掉一大半。
+            // 行间距跟着面板高度走(最多 12),但绝不吃掉剩余高度 —— 余量进行高,不进空隙。
             readonly property int rowCount: Math.max(1, root.entries.length)
-            readonly property real rowHeight: Math.min(104, (height - (rowCount - 1) * 6) / rowCount)
-            spacing: rowCount > 1 ? Math.max(6, Math.min(12, (height - rowCount * rowHeight) / (rowCount - 1))) : 6
+            readonly property real spacingFor: rowCount > 1 ? Math.max(4, Math.min(12, height / (rowCount * 8))) : 0
+            readonly property real rowHeight: Math.max(1, (height - (rowCount - 1) * spacingFor) / rowCount)
+            spacing: spacingFor
 
             Repeater {
                 // Snapshot lists are replaced every tick; a count model preserves pulse phase
@@ -81,6 +83,7 @@ Item {
                     hasPosition: entry.hasPosition
                     positionStale: entry.positionStale
                     bullets: entry.bullets
+                    buffs: entry.buffs !== undefined ? entry.buffs : []
                     rank: root.ranks[entry.id] !== undefined ? root.ranks[entry.id] : ""
                 }
             }

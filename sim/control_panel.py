@@ -62,7 +62,8 @@ state = {"online": False, "stage": None, "remain": 0, "elapsed": 0,
          "zones": [0, 0, 0, 0], "control": (0, 0), "reinforce": (0, 0),
          "base": (0, 10000, 0, 10000), "fortress": (0, False, 0.0), "blind": (0, 0),
          "armor": (False, False), "economy": (0, 0),
-         "respawn": (False, 0, 0, False, 0, False), "self": None}
+         "respawn": (False, 0, 0, False, 0, False), "self": None,
+         "note_seq": None, "outpost": (1000, 1000), "outpost_owner": (1, 2)}
 
 
 def mmss(seconds: float) -> str:
@@ -206,7 +207,9 @@ button(shoot_row, "射击",
 tool_row = tk.Frame(robot)
 tool_row.pack(pady=(0, 4))
 button(tool_row, "装42mm",
-       lambda: act("安装 42mm 模块", "module")).pack(side="left", padx=2)
+       lambda: act("装 42mm 发射机构", "module")).pack(side="left", padx=2)
+button(tool_row, "打验证弹",
+       lambda: act("打验证弹", "verify")).pack(side="left", padx=2)
 tk.Label(tool_row, text="兑换发数").pack(side="left", padx=(6, 0))
 buy_entry = tk.Entry(tool_row, width=5)
 buy_entry.insert(0, "100")
@@ -245,6 +248,19 @@ def toggle_point() -> None:
 
 tk.Checkbutton(robot, text="车在兑换点(补给区等,关掉 = 开出去,只能远程兑换)",
                variable=exchange_point, command=toggle_point).pack(pady=(0, 4))
+
+# 重装站在己方装配区增益点上才能开始装配(规则 5.6.4.7)。终端收不到这一项,只能看装配开没开始。
+assembly_zone = tk.BooleanVar(value=True)
+
+
+def toggle_assembly_zone() -> None:
+    on = assembly_zone.get()
+    act(f"重装{'开进' if on else '开出'}装配区", "assembly-zone", "1" if on else "0")
+
+
+if SELF_ROBOT_ID % 100 == 1:
+    tk.Checkbutton(robot, text="重装在装配区(关掉 = 开出去,开始不了装配,装配中开出去算失败)",
+                   variable=assembly_zone, command=toggle_assembly_zone).pack(pady=(0, 4))
 
 zone = tk.LabelFrame(root, text="测试注入 · 阵地")
 zone.pack(fill="x", padx=8, pady=6)
@@ -373,6 +389,19 @@ tk.Label(mark_row, text="模拟指挥手标记敌方重装").pack(side="left")
 for mark_name, mark_kind in (("攻击", "1"), ("防御", "2"), ("警戒", "3")):
     button(mark_row, mark_name,
            lambda k=mark_kind, n=mark_name: act(f"指挥手标记({n})", "mark", k)).pack(side="left", padx=2)
+
+
+buff_row = tk.Frame(dart)
+buff_row.pack(pady=(0, 4))
+tk.Label(buff_row, text="增益").pack(side="left")
+button(buff_row, "敌方开小符",
+       lambda: act("敌方激活小能量机关", "enemy-rune", "small")).pack(side="left", padx=2)
+button(buff_row, "敌方开大符",
+       lambda: act("敌方激活大能量机关", "enemy-rune", "big")).pack(side="left", padx=2)
+for terrain_name, terrain_key in (("自机过高地", "highland"), ("过公路", "road"),
+                                  ("跨隧道", "tunnel"), ("穿隧道", "through"), ("高地差一步", "pre")):
+    button(buff_row, terrain_name,
+           lambda k=terrain_key, n=terrain_name: act(f"地形增益({n})", "terrain", k)).pack(side="left", padx=2)
 
 
 # ---------------- 链路：测终端断线时的反应 ----------------
@@ -513,12 +542,21 @@ def on_message(_client, _userdata, message) -> None:
         state["economy"] = tuple(sim["economy"])
         state["blind"] = (sim["blind"][0], sim["blind"][1])
         state["hp"] = {int(rid): tuple(value) for rid, value in sim["hp"].items()}
+        state["outpost"] = tuple(sim["outpost"])
+        state["outpost_owner"] = tuple(sim.get("outpost_owner", (1, 2)))
+        # 模拟器对按钮的回复(拒绝的原因、按规则的提醒)。第一次连上时只记下编号,不显示旧消息。
+        seq = sim.get("note_seq", 0)
+        if state["note_seq"] is not None and seq != state["note_seq"] and sim.get("note"):
+            state["action"] = f"模拟器:{sim['note']}"
+        state["note_seq"] = seq
         state["self"] = {key: sim.get(key) for key in
-                         ("performance", "combat", "self_ammo", "rune", "rune_chances", "km")}
+                         ("performance", "combat", "self_ammo", "rune", "rune_chances", "km", "launcher")}
         if None in (state["self"]["performance"], state["self"]["combat"]):
             state["self"] = None
         if "exchange_point" in sim and exchange_point.get() != sim["exchange_point"]:
             exchange_point.set(sim["exchange_point"])
+        if "assembly_zone" in sim and assembly_zone.get() != sim["assembly_zone"]:
+            assembly_zone.set(sim["assembly_zone"])
         if SELF_ROBOT_ID not in state["hp"]:
             state["hp"][SELF_ROBOT_ID] = tuple(sim["self_hp"])
     elif message.topic == T_ROBOT_RESPAWN:
@@ -569,9 +607,21 @@ def self_text() -> str:
         return "自机 等待服务器状态"
     chassis, shooter = extra["performance"]
     out, countdown = extra["combat"]
-    return (f"自机 弹 {extra['self_ammo']} · {'脱战' if out else f'交战中 {countdown}s'}"
+    text = (f"自机 弹 {extra['self_ammo']} · {'脱战' if out else f'交战中 {countdown}s'}"
             f" · 底盘 {PERFORMANCE.get(chassis, ('?',))[0]} · 发射 {PERFORMANCE.get(shooter, ('?', '?'))[1]}"
             f" · 能量机关 {RUNE_STATES.get(extra['rune'], extra['rune'])} 机会 {extra['rune_chances']}")
+    launcher = extra.get("launcher")
+    if SELF_ROBOT_ID % 100 == 1 and launcher:
+        ready, verified, permission, unlock = launcher
+        if verified:
+            text += " · 42mm 已成功安装"
+        elif ready:
+            text += " · 42mm 装上了,还差打验证弹"
+        elif permission:
+            text += " · 42mm 有安装权限,可以点「装42mm」"
+        else:
+            text += f" · 42mm 比赛第 {unlock} 秒才有安装权限(或装成三级)"
+    return text
 
 
 def km_text() -> str:
@@ -603,6 +653,9 @@ def tick() -> None:
     zone_text = "阵地 " + " ".join(
         f"{short}:{ZONE_STATES[value]}"
         for short, value in zip(ZONE_SHORT, state["zones"]))
+    zone_text += " · 前哨站 " + " ".join(
+        f"{where}归{'红方' if owner == 1 else '蓝方'} {hp}"
+        for where, owner, hp in zip(("红侧", "蓝侧"), state["outpost_owner"], state["outpost"]))
     fortress_side, fortress_auto, fortress_sec = state["fortress"]
     fortress_text = FORTRESS_SHORT[fortress_side] if 0 <= fortress_side < 3 else "?"
     if fortress_side:

@@ -27,7 +27,8 @@ target_link_libraries(terminal_logging PUBLIC Qt6::Core)
 add_library(terminal_domain cpp/conversion.cpp cpp/store.cpp cpp/decoder.cpp cpp/match_event.cpp cpp/match_event.h cpp/clock.cpp cpp/clock.h)
 target_include_directories(terminal_domain PUBLIC cpp)
 target_link_libraries(terminal_domain PUBLIC terminal_proto)
-add_library(terminal_video cpp/video.cpp cpp/video_receiver.cpp cpp/video_receiver.h cpp/video_recovery.cpp cpp/video_recovery.h)
+add_library(terminal_video cpp/video.cpp cpp/video_receiver.cpp cpp/video_receiver.h cpp/video_recovery.cpp cpp/video_recovery.h
+    cpp/video_relay.cpp cpp/video_relay.h)
 target_include_directories(terminal_video PUBLIC cpp)
 target_link_libraries(terminal_video PUBLIC terminal_logging Qt6::Core Qt6::Network)
 # 录像格式与 GUI/网络无关,单独成库:格式测试不必拉起 Qt Widgets 或一个 broker。
@@ -44,7 +45,8 @@ add_library(terminal_presentation cpp/presentation.cpp cpp/ui_mode.cpp cpp/ui_mo
     cpp/link_health.cpp cpp/link_health.h
     cpp/match_alerts.cpp cpp/match_alerts.h
     cpp/layout_profile.cpp cpp/layout_profile.h
-    cpp/map_marks.cpp cpp/map_marks.h cpp/next_step.cpp cpp/next_step.h)
+    cpp/map_marks.cpp cpp/map_marks.h cpp/next_step.cpp cpp/next_step.h
+    cpp/buff_ledger.cpp cpp/buff_ledger.h)
 target_link_libraries(terminal_presentation PUBLIC terminal_domain terminal_logging Qt6::Core)
 
 # 操作手个性化界面:方案模型、藏面板后的补位规则、存盘。只链 Qt6::Core,
@@ -106,7 +108,6 @@ add_library(terminal_visual
     cpp/battle_analysis.cpp cpp/battle_analysis.h
     cpp/battle_analysis_pane.cpp cpp/battle_analysis_pane.h
     cpp/event_feed_pane.cpp cpp/event_feed_pane.h
-    cpp/mark_toolbar.cpp cpp/mark_toolbar.h
     cpp/input_method_guard.cpp cpp/input_method_guard.h
     cpp/top_bar.cpp cpp/top_bar.h)
 target_link_libraries(terminal_visual PUBLIC terminal_presentation Qt6::Widgets Qt6::QuickWidgets)
@@ -116,7 +117,10 @@ target_link_libraries(terminal_visual PUBLIC terminal_presentation Qt6::Widgets 
 # 三条上行指令),分开后共享面板的测试不会因为协议头改动而重编。
 add_library(terminal_role_panes
     cpp/role_commands.cpp cpp/role_commands.h
-    cpp/assembly_pane.cpp cpp/assembly_pane.h
+    cpp/assembly_flow.cpp cpp/assembly_flow.h
+    # 标记工具条要按规则 5.7.2 报出转发给哨兵的单价(sentry_mark_cost),所以跟着
+    # role_commands 走,不再留在 terminal_visual 里。
+    cpp/mark_toolbar.cpp cpp/mark_toolbar.h
     cpp/dart_pane.cpp cpp/dart_pane.h
     cpp/sentry_pane.cpp cpp/sentry_pane.h
     cpp/self_command_pane.cpp cpp/self_command_pane.h cpp/self_command_view.h
@@ -180,6 +184,7 @@ target_compile_definitions(terminal_seat_picker PRIVATE QT_NO_KEYWORDS)
 # A library rather than sources compiled straight into the executable, so the
 # offscreen layout test can link the real Dashboard instead of a reimplementation.
 add_library(terminal_dashboard cpp/dashboard.cpp cpp/dashboard.h
+    cpp/video_wall.cpp cpp/video_wall.h
     cpp/layout_editor.cpp cpp/layout_editor.h
     cpp/pane_details.cpp cpp/pane_details.h
     cpp/self_check_panel.cpp cpp/self_check_panel.h
@@ -250,6 +255,12 @@ if(BUILD_TESTING)
     add_executable(match_alerts_test cpp/match_alerts_test.cpp)
     target_link_libraries(match_alerts_test PRIVATE terminal_presentation)
     add_test(NAME match_alerts COMMAND match_alerts_test)
+    add_executable(next_step_test cpp/next_step_test.cpp)
+    target_link_libraries(next_step_test PRIVATE terminal_presentation)
+    add_test(NAME next_step COMMAND next_step_test)
+    add_executable(buff_ledger_test cpp/buff_ledger_test.cpp)
+    target_link_libraries(buff_ledger_test PRIVATE terminal_presentation)
+    add_test(NAME buff_ledger COMMAND buff_ledger_test)
     add_executable(replay_player_test cpp/replay_player_test.cpp cpp/replay_player.cpp cpp/replay_player.h)
     target_link_libraries(replay_player_test PRIVATE terminal_domain terminal_recording terminal_video Qt6::Core)
     target_compile_definitions(replay_player_test PRIVATE QT_NO_KEYWORDS)
@@ -296,6 +307,13 @@ if(BUILD_TESTING)
         RM_TERMINAL_ARTIFACT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/artifacts")
     add_test(NAME purchase COMMAND purchase_test)
     set_tests_properties(purchase PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
+    # 重装装配:选难度、开始、确认、退出和进度条是纯逻辑;H 框和进度条用离屏窗口截图。
+    add_executable(assembly_flow_test cpp/assembly_flow_test.cpp)
+    target_link_libraries(assembly_flow_test PRIVATE terminal_role_panes Qt6::Widgets)
+    target_compile_definitions(assembly_flow_test PRIVATE QT_NO_KEYWORDS
+        RM_TERMINAL_ARTIFACT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/artifacts")
+    add_test(NAME assembly_flow COMMAND assembly_flow_test)
+    set_tests_properties(assembly_flow PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
     # P 设置面板:终端设置的存盘、面板上的每一项、输入法只给打字框。
     add_executable(settings_panel_test cpp/settings_panel_test.cpp)
     target_link_libraries(settings_panel_test PRIVATE terminal_qrc terminal_dashboard Qt6::Widgets Qt6::QuickWidgets)
@@ -361,6 +379,12 @@ if(BUILD_TESTING)
         RM_TERMINAL_DASHBOARD_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/cpp/dashboard.cpp")
     add_test(NAME dashboard_layout COMMAND dashboard_layout_test)
     set_tests_properties(dashboard_layout PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
+    # 指挥手的图传墙:排格子、每格写什么、画出来对不对,以及地面席位的转发原样到达。
+    add_executable(video_wall_test cpp/video_wall_test.cpp)
+    target_link_libraries(video_wall_test PRIVATE terminal_qrc terminal_dashboard Qt6::Widgets)
+    target_compile_definitions(video_wall_test PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME video_wall COMMAND video_wall_test)
+    set_tests_properties(video_wall PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
     add_executable(layout_editor_test cpp/layout_editor_test.cpp)
     target_link_libraries(layout_editor_test PRIVATE terminal_qrc terminal_dashboard Qt6::Widgets)
     target_compile_definitions(layout_editor_test PRIVATE QT_NO_KEYWORDS)

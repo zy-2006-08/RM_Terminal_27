@@ -11,38 +11,33 @@ namespace rm_terminal {
 
 // 「下一步」:让慌乱的操作手一眼看到接下来对我方最有利的几件事。
 //
-// 不是算出来的最优解,是一张固定的先后顺序表:先保命,再守家,再抓机会,最后补给和抢分。
-// 满足条件的事按这个顺序挑出前几件。五组的先后可以在界面设置里改,组内的先后固定。
-// 雷达看不到的敌人不推荐去打,也不写距离。
-
-enum class NextGroup { Survive, Defend, Opportunity, Supply, Score };
-constexpr int kNextGroupCount = 5;
-std::vector<NextGroup> default_next_order();
-QString next_group_name(NextGroup group);   // 保命 / 守家 / 抓机会 / 补给 / 抢分
-QString next_group_hint(NextGroup group);   // 「阵亡先复活,血少先回血」
-QString next_group_key(NextGroup group);    // 存盘用的英文名
-std::optional<NextGroup> next_group_from_key(const QString& key);
+// 先后照《下一步先后表》:先看能不能做、做了有没有用,再按表里的先后排。表里的顺序就是 NextRule 的顺序。
+// 规则上做不了的事(没弹还叫人开枪、敌方基地有 100% 防御还叫人打)不出卡片。
+// 阵亡不出卡片:复活是唯一能做的事,不用占一格。
 
 enum class NextRule {
-    FreeRevive,
-    PaidRevive,
-    WaitRevive,
-    RemoteHeal,
-    LeaveCombat,
-    DefendFortress,
-    DefendBase,
-    DefendZone,
-    FocusEnemy,
-    OpenRune,
-    HoldZone,
-    BuyAmmo,
-    TakeZone,
+    AttackBase,           // 1 敌方基地没防御,弹够打掉
+    AttackBaseAfterAmmo,  // 2 同上,但没弹:先补弹,补完打基地
+    DefendFortress,       // 3 我方堡垒被偷
+    DefendBase,           // 4 我方基地在掉血,而且没有 100% 防御
+    Heal,                 // 5 本机血少
+    BuyAmmo,              // 6 弹少
+    InstallLauncher,      // 7 重装有权限还没装上 42mm
+    VerifyLauncher,       // 8 重装装上了,还差一发验证弹
+    AttackOutpost,        // 9 敌方前哨站弹够打掉
+    FocusEnemy,           // 10 集火残血敌人
+    OpenRune,             // 11 开能量机关(步兵)
+    Assemble,             // 12 重装去装配
+    DefendZone,           // 13 我方阵地被敌方临时控制
+    HoldZone,             // 14 我方临时控制的阵地(前哨站倒了就写让开 5 秒)
+    AttackBaseLongShot,   // 15 敌方基地没防御,但一时打不掉
+    TakeZone,             // 16 控制度落后
+    Endgame,              // 17 最后 60 秒:现在结束是输是赢
 };
 
 struct NextCard {
-    NextRule rule = NextRule::FreeRevive;
-    NextGroup group = NextGroup::Survive;
-    QString category;  // 卡片左上角的小标签:复活、防守、进攻……
+    NextRule rule = NextRule::AttackBase;
+    QString category;  // 卡片左上角的小标签:进攻、防守、补给……
     QString title;     // 动词开头的一句话
     QString reason;    // 带数字的原因
     // 卡片指向界面上的哪里:集火的那台敌方车(花名册那一行标同一个编号),
@@ -50,27 +45,32 @@ struct NextCard {
     std::optional<std::uint32_t> enemy_id;
     bool rune_button = false;
     QString speech;    // 第 1 件念出来时念的固定句子(语音是赛前合成好的,不能带实时数字)
-    // 阵亡、堡垒被偷、基地被打:「有急事才弹出」只在有这种事时弹出来。
     bool urgent = false;
 };
 
 // 规则手册表 5-7:50 + ROUNDUP((420 - 剩余秒数) / 60 × 20)。
 std::uint32_t remote_heal_cost(std::int32_t remaining_sec);
 
-// 从一帧快照里挑出所有满足条件的事,还没排序。base_hit 是「我方基地这几秒在掉血」,
+// 缺省按没有增益算。
+struct NextBuffs {
+    bool self_weak = false;
+    double self_attack = 1.0;
+    int enemy_structure_defense = 0;
+};
+
+// 从一帧快照里挑出所有成立的事,按 NextRule 的顺序排好。base_hit 是「我方基地这几秒在掉血」,
 // 由调用方(NextStepBoard)跨帧判断。
-std::vector<NextCard> next_candidates(const Snapshot& snapshot, bool base_hit);
+std::vector<NextCard> next_candidates(const Snapshot& snapshot, bool base_hit, const NextBuffs& buffs = {});
 
-// 按组的先后排序,组内按规则的固定先后,取前 count 件。
-std::vector<NextCard> rank_next(std::vector<NextCard> cards, const std::vector<NextGroup>& order,
-                                std::size_t count);
+// 按表里的先后取前 count 件。顺序固定,不让操作手拖。
+std::vector<NextCard> rank_next(std::vector<NextCard> cards, std::size_t count);
 
-// 每张卡至少停 dwell 毫秒,免得来回跳:期间排名变了也不换,除非出了更急的事(组更靠前),
-// 或者正显示的某件事已经不成立了(复活了、堡垒没人偷了)。同一件事的数字每帧照常更新。
+// 每张卡至少停 dwell 毫秒,免得来回跳:期间排名变了也不换,除非出了更靠前的事,
+// 或者正显示的某件事已经不成立了。同一件事的数字每帧照常更新。
 class NextStepBoard {
 public:
-    std::vector<NextCard> update(const Snapshot& snapshot, MonotonicMs now, const std::vector<NextGroup>& order,
-                                 std::size_t count, MonotonicMs dwell_ms);
+    std::vector<NextCard> update(const Snapshot& snapshot, MonotonicMs now, std::size_t count,
+                                 MonotonicMs dwell_ms, const NextBuffs& buffs = {});
 
 private:
     std::vector<NextCard> shown_;

@@ -4,6 +4,7 @@
 #include "theme.h"
 
 #include <QFont>
+#include <QFontMetrics>
 #include <QHash>
 #include <QMouseEvent>
 #include <QPaintEvent>
@@ -275,9 +276,15 @@ void MapPane::paintEvent(QPaintEvent*) {
             const int middle = view.x + view.width / 2;
             painter.drawLine(middle, view.y, middle, view.y + view.height - 1);
         } else {
+            // 先平滑缩到画的大小再贴。直接拉伸是最近邻采样,细线成了锯齿,看着又锐又碎。
+            const qreal dpr = devicePixelRatioF();
+            const QSize pixels = (QSizeF(field_rect.size()) * dpr).toSize();
+            if (scaled_background_.size() != pixels)
+                scaled_background_ = background.scaled(pixels, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            scaled_background_.setDevicePixelRatio(dpr);
             painter.save();
             painter.setOpacity(background_opacity_);
-            painter.drawPixmap(field_rect, background);
+            painter.drawPixmap(field_rect.topLeft(), scaled_background_);
             painter.restore();
         }
     }
@@ -288,6 +295,43 @@ void MapPane::paintEvent(QPaintEvent*) {
         painter.setPen(kStatusText);
         painter.drawText(QRect(view.x, view.y, view.width, view.height), Qt::AlignCenter,
                          QStringLiteral("无位置数据"));
+    }
+
+    // 能量机关增益的倒计时圈画在机器人下面:车停在能量机关旁边时不能被圈盖住。
+    if (!rune_rings_.empty() && view.width > 0) {
+        const Projected middle = project(field_, view, field_.width_m / 2, field_.height_m / 2);
+        const QPointF centre(middle.point.x, middle.point.y);
+        const double base = std::max(14.0, view.height * 0.07);
+        painter.save();
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        QFont tag_font = theme::labelPx(std::max(theme::kMinLabelPx, static_cast<int>(std::lround(view.height * 0.045))),
+                                        QFont::DemiBold);
+        painter.setFont(tag_font);
+        const QFontMetrics metrics(tag_font);
+        for (std::size_t i = 0; i < rune_rings_.size(); ++i) {
+            const RuneRing& ring = rune_rings_[i];
+            const double radius = base + 7.0 * static_cast<double>(i);
+            QColor ink = ring.paused ? QColor(150, 158, 172) : faction_color(ring.faction).lighter(125);
+            painter.setBrush(Qt::NoBrush);
+            painter.setPen(QPen(QColor(0, 0, 0, 120), 6.0));
+            painter.drawEllipse(centre, radius, radius);
+            QPen arc(ink, 4.0, ring.estimated ? Qt::DashLine : Qt::SolidLine, Qt::FlatCap);
+            painter.setPen(arc);
+            const QRectF box(centre.x() - radius, centre.y() - radius, radius * 2, radius * 2);
+            painter.drawArc(box, 90 * 16, -static_cast<int>(std::lround(std::clamp(ring.fraction, 0.0, 1.0) * 360 * 16)));
+            const QString text = (ring.faction == display_faction_ ? QStringLiteral("我 ") : QStringLiteral("敌 ")) + ring.label;
+            const int line_h = metrics.height();
+            const QPoint at(static_cast<int>(centre.x() + base + 7.0 * static_cast<double>(rune_rings_.size()) + 4),
+                            static_cast<int>(centre.y() - line_h * static_cast<double>(rune_rings_.size()) / 2 +
+                                             line_h * static_cast<double>(i) + metrics.ascent()));
+            const QRect back = metrics.boundingRect(text).translated(at).adjusted(-4, -1, 4, 1);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(6, 10, 18, 205));
+            painter.drawRoundedRect(back, 3, 3);
+            painter.setPen(ink);
+            painter.drawText(at, text);
+        }
+        painter.restore();
     }
 
     // 哨兵规划路径画在机器人下面:它是意图,不是位置。
@@ -341,6 +385,17 @@ void MapPane::paintEvent(QPaintEvent*) {
             painter.drawText(QPointF(projected.point.x + radius + 4.0,
                                      projected.point.y - radius - 2.0),
                              QStringLiteral("过期"));
+        }
+        // 敌方车被我方雷达标记:进度到了 100 以上,一般有易伤(规则 5.7.4);对方加密等级更高时没有,
+        // 这个终端拿不到,所以只写「被标记」。
+        if (marker.highlight != 0 && !marker.is_self && marker.faction != display_faction_) {
+            const double radius = marker_diameter(marker) / 2;
+            const QString text = QStringLiteral("被标记");
+            const QPointF at(projected.point.x + radius + 4.0, projected.point.y + radius + 12.0);
+            const QRectF back = QRectF(painter.fontMetrics().boundingRect(text)).translated(at).adjusted(-3, -1, 3, 1);
+            painter.fillRect(back, QColor(6, 10, 18, 200));
+            painter.setPen(theme::kWarn);
+            painter.drawText(at, text);
         }
     }
 
@@ -414,8 +469,8 @@ void MapPane::paintEvent(QPaintEvent*) {
         line(kAlertText, QStringLiteral("自机位置不可用 · 单机 RobotPosition 未收到"));
 
     if (base_alert_) {
-        // 场地图还是 2026 的,画不准 2027 基地的确切位置,所以闪我方那一半的边框并标在
-        // 我方一侧;换成 2027 场地图后再改成在基地处闪。
+        // 场地图已换成 2027 的,但基地在图上的坐标还没写进代码,所以闪我方那一半的边框并标在
+        // 我方一侧;要在基地处闪,得先把基地坐标写进来。
         const QColor red(255, 100, 100, base_alert_bright_ ? 235 : 100);
         painter.setPen(QPen(red, 3));
         painter.setBrush(QColor(255, 100, 100, base_alert_bright_ ? 28 : 10));
@@ -449,6 +504,11 @@ void MapPane::setLowHealth(const std::vector<std::uint32_t>& ids) {
 
 void MapPane::setMarks(const std::vector<DrawnMark>& marks) {
     marks_ = marks;
+    update();
+}
+
+void MapPane::setRuneRings(const std::vector<RuneRing>& rings) {
+    rune_rings_ = rings;
     update();
 }
 

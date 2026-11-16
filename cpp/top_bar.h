@@ -18,7 +18,7 @@ class TopBar final : public QQuickWidget {
 public:
     explicit TopBar(QWidget* parent = nullptr);
 
-    void setSnapshot(const Snapshot& snapshot);
+    void setSnapshot(const Snapshot& snapshot, const BuffBoard* buffs = nullptr);
 
     bool loaded() const { return rootObject() != nullptr; }
 

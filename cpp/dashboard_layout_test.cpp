@@ -1,9 +1,18 @@
+#include "dart_pane.h"
 #include "dashboard.h"
 #include "layout_editor.h"
+#include "sentry_pane.h"
 #include "layout_ops.h"
+#include "reminder_repository.h"
+#include "speech_backend.h"
+#include "tactical_reminder_controller.h"
+#include "tactical_reminder_dialog.h"
 #include "ui_profile.h"
 #include "ui_profile_store.h"
 
+#include "rm_terminal.pb.h"
+
+#include <QAbstractButton>
 #include <QApplication>
 #include <QCoreApplication>
 #include <QDir>
@@ -13,7 +22,9 @@
 #include <QListWidget>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QKeyEvent>
 #include <QPushButton>
+#include <QQuickItem>
 #include <QQuickWidget>
 #include <QTemporaryDir>
 #include <QThread>
@@ -21,6 +32,8 @@
 #include <cstdlib>
 #include <numeric>
 #include <iostream>
+#include <map>
+#include <memory>
 #include <stdexcept>
 #include <set>
 #include <string>
@@ -172,24 +185,30 @@ Config test_config() { return Config{}; }
 // 启动时的方案里没有「装配」:主程序照样能把装配面板放进去,加回画面时按钮都在。
 void a_role_pane_placed_while_off_screen_shows_up_later() {
     Config config = test_config();
-    config.self_robot_id = 1;
+    config.self_robot_id = 6;
     Dashboard dashboard(config);
     dashboard.resize(1440, 900);
-    const UiScheme standard = builtin_scheme(Role::Hero, QStringLiteral("standard")).value();
+    const UiScheme standard = builtin_scheme(Role::Commander, QStringLiteral("standard")).value();
     UiScheme without = standard;
-    without.cells = layout_remove(scheme_layout(Role::Hero, standard).cells, PaneId::Assembly);
+    without.cells = layout_remove(scheme_layout(Role::Commander, standard).cells, PaneId::Dart);
     dashboard.applyUiScheme(without);
     settle(dashboard);
-    check(dashboard.paneCard(PaneId::Assembly) == nullptr && dashboard.roleCard(PaneId::Assembly) != nullptr,
+    check(dashboard.paneCard(PaneId::Dart) == nullptr && dashboard.roleCard(PaneId::Dart) != nullptr,
           "a pane that is off screen still has its card for the seat");
-    check(dashboard.roleCard(PaneId::Dart) == nullptr, "a pane the seat does not have has no card");
+    check(dashboard.roleCard(PaneId::Assembly) == nullptr, "a pane the seat does not have has no card");
     check(dashboard.roleCard(PaneId::SelfCommands) == nullptr, "「本车」 is gone: no seat has it any more");
-    auto* assembly = new QPushButton(QStringLiteral("开始兑换"));
-    dashboard.placePane(PaneId::Assembly, assembly);
+    auto* dart = new QPushButton(QStringLiteral("开闸"));
+    dashboard.placePane(PaneId::Dart, dart);
     dashboard.applyUiScheme(standard);
     settle(dashboard);
-    check(dashboard.paneCard(PaneId::Assembly) != nullptr && assembly->isVisible() && assembly->height() > 0,
+    check(dashboard.paneCard(PaneId::Dart) != nullptr && dart->isVisible() && dart->height() > 0,
           "when the pane comes back on screen its buttons are there");
+
+    Config heavy_config = test_config();
+    heavy_config.self_robot_id = 1;
+    Dashboard heavy(heavy_config);
+    check(heavy.roleCard(PaneId::Assembly) == nullptr,
+          "重装 has no 装配 pane: assembly lives in the H box and the progress strip");
 }
 
 void info_mode_is_map_dominant_with_a_capped_thumbnail() {
@@ -423,6 +442,32 @@ void video_mode_keeps_the_countdown_and_hp() {
     check(countdown->text().contains(QStringLiteral("02:34")),
           "the countdown shows the real remaining time");
     check(hp->text().contains(QStringLiteral("412")), "the HP readout shows the real value");
+}
+
+// 能量机关事件(3、4)不带是哪一方的;增益推算分出来以后,事件栏写清是我方还是敌方。
+void rune_events_name_the_side() {
+    Snapshot snapshot = clear_snapshot();
+    snapshot.self = RobotId{3};
+    EventRecord ours;
+    ours.event_id = 4;
+    ours.text = "小能量机关已激活";
+    ours.received_at = 1000;
+    ours.rune_kind = 1;
+    EventRecord theirs = ours;
+    theirs.received_at = 2000;
+    snapshot.events.push(ours);
+    snapshot.events.push(theirs);
+    const std::map<MonotonicMs, std::uint32_t> sides{{1000, kRed}, {2000, kBlue}};
+    const std::vector<EventFeedRow> rows = build_event_rows(snapshot, kEventPanelRows, &sides);
+    check(rows.size() == 2 && rows[0].text == QStringLiteral("敌方小能量机关已激活（推算）") &&
+              rows[0].banner == EventBanner::Blue,
+          "the enemy's rune event is named and painted in the enemy colour");
+    check(rows.size() == 2 && rows[1].text == QStringLiteral("我方小能量机关已激活") &&
+              rows[1].banner == EventBanner::Positive,
+          "our rune event keeps the green banner");
+    const std::vector<EventFeedRow> plain = build_event_rows(snapshot, kEventPanelRows);
+    check(plain.size() == 2 && plain[0].text == QStringLiteral("小能量机关已激活"),
+          "without attribution the text stays as the protocol says");
 }
 
 // (6): a critical event must be both present and unmistakably coloured.
@@ -792,6 +837,104 @@ void the_overlays_never_swallow_clicks_on_the_reminder_entry() {
           "the reminder entry stays clickable through the victory overlay");
 }
 
+// 结算动画现在是自绘的(自旧版逐帧素材换过来)。素材缺失时旧版只剩一行字,
+// 所以这条断言落在**像素**上:覆盖层必须真的画出阵营色的亮像素,而不是
+// 「属性设对了但画面只有一片压暗层」。
+//
+// 逐帧素材按设计不进仓库(红胜/蓝胜共 550MB),这台机器上也没有,因此一张
+// 只有压暗层的图正是旧实现的真实表现 —— 这条测试守的就是那个退化。
+void the_victory_overlay_draws_the_result_instead_of_only_dimming() {
+    Dashboard dashboard(test_config());
+    dashboard.resize(1440, 900);
+    drive_to_info(dashboard);
+
+    auto* victory = dashboard.findChild<QQuickWidget*>(QStringLiteral("victoryOverlay"));
+    if (!victory) throw std::runtime_error("victoryOverlay not found");
+
+    dashboard.update(settled_snapshot(), nullptr, 11000);
+    settle(dashboard);
+    check(victory->isVisible(), "the victory overlay is up for a decided round");
+
+    QQuickItem* root = victory->rootObject();
+    if (!root) throw std::runtime_error("victory overlay has no root object");
+
+    check(root->property("title").toString() == QStringLiteral("红方胜利"),
+          "the overlay carries the result title");
+    check(root->property("outcome").toString() == QStringLiteral("red"),
+          "the overlay carries the winning side for its colour scheme");
+    // 逐帧播放器已经移除:frameUrls 不该再是覆盖层的输入。
+    check(!root->property("frameUrls").isValid(),
+          "the frame-sequence player is gone from the overlay");
+
+    // 把动画时钟拨到爆发最盛的时刻,再抓一帧。按墙上时间 sleep 会抓到随机一帧。
+    root->setProperty("autoPlay", false);
+    root->setProperty("tMs", 900);
+    settle(dashboard);
+    QCoreApplication::processEvents();
+
+    const QImage shot = grab_rendered(victory);
+    int red_lit = 0;
+    int bright = 0;
+    for (int y = 0; y < shot.height(); y += 3) {
+        for (int x = 0; x < shot.width(); x += 3) {
+            const QColor c = shot.pixelColor(x, y);
+            if (qAlpha(shot.pixel(x, y)) < 40) continue;
+            if (c.red() > 90 && c.red() > c.blue() + 25) ++red_lit;
+            if (c.red() + c.green() + c.blue() > 330) ++bright;
+        }
+    }
+    // 旧实现(缺素材时)这两个计数都接近 0:只有一层 #B3000000 和一行白字。
+    check(red_lit > 2000,
+          "the burst paints a large field of red-dominant pixels for a red win");
+    check(bright > 400, "the badge and title paint bright pixels, not just a dim layer");
+}
+
+// Esc 关掉结算面板,并且在同一次结算里不再弹回来 —— update() 每 250ms 跑一次,
+// 一个会被下一跳覆盖的 bool 等于「关不掉」。换出新结果时必须自动恢复显示:
+// 上一局按过的 Esc 不该把下一局的结算也吞掉。
+void esc_dismisses_the_settlement_until_the_next_result() {
+    Dashboard dashboard(test_config());
+    dashboard.resize(1440, 900);
+    drive_to_info(dashboard);
+
+    auto* victory = dashboard.findChild<QQuickWidget*>(QStringLiteral("victoryOverlay"));
+    if (!victory) throw std::runtime_error("victoryOverlay not found");
+
+    dashboard.update(settled_snapshot(), nullptr, 11000);
+    settle(dashboard);
+    check(victory->isVisible(), "the settlement overlay is up");
+
+    // 真键盘事件走到仪表盘上,而不是直接调一个私有方法:快捷键挂错 context
+    // 或者没挂上,只有这样才看得出来。
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(&dashboard, &press);
+    QCoreApplication::processEvents();
+    check(!victory->isVisible(), "Esc hides the settlement overlay");
+
+    // 同一次结算继续送快照:面板不能自己回来。
+    dashboard.update(settled_snapshot(), nullptr, 11250);
+    settle(dashboard);
+    dashboard.update(settled_snapshot(), nullptr, 11500);
+    settle(dashboard);
+    check(!victory->isVisible(), "the dismissed settlement stays closed while it is the same result");
+
+    // 比赛继续(下一局备战):结果回到 None。
+    dashboard.update(clear_snapshot(), nullptr, 20000);
+    settle(dashboard);
+    check(!victory->isVisible(), "no result means no overlay");
+
+    // 下一局判出蓝胜:这是一次新的结算,必须显示。
+    Snapshot next = settled_snapshot();
+    next.game.winner = present<std::uint32_t>(2);
+    dashboard.update(next, nullptr, 30000);
+    settle(dashboard);
+    check(victory->isVisible(), "a new result shows the overlay again after an earlier Esc");
+    QQuickItem* root = victory->rootObject();
+    if (!root) throw std::runtime_error("victory overlay has no root object");
+    check(root->property("outcome").toString() == QStringLiteral("blue"),
+          "the new result repaints in the new winner's colour");
+}
+
 // 四条链路全断时状态灯文字最长,自检按钮也最长:最小窗口不能因此被撑宽。赛前自检页
 // 自己弹出且盖过弹窗,操作手关掉后本阶段不再弹,开赛自动收起。
 void link_lights_and_self_check_fit_and_follow_the_stage() {
@@ -867,6 +1010,8 @@ void alert_banners_float_and_queue() {
     const QWidget* top = find(dashboard, "topBar");
     check(banner->geometry().top() > top->geometry().bottom(), "the banner sits below the top bar");
     check(dashboard.rect().contains(banner->geometry()), "the banner stays inside the window");
+    check(std::abs(banner->geometry().center().x() - dashboard.rect().center().x()) <= 1,
+          "the banner is centred under the top bar, not pinned to the map");
     check(map->geometry() == map_before, "showing a banner does not move the layout");
 
     dashboard.update(base_snapshot(), nullptr, 14000);
@@ -877,6 +1022,132 @@ void alert_banners_float_and_queue() {
     settle(dashboard);
     check(dashboard.alertBannerText().isEmpty(), "with nothing queued the banner hides");
     check(map->geometry() == map_before, "hiding the banner does not move the layout");
+}
+
+// 赛前卡片:倒计时下面一排大按钮(性能体系、键鼠控制、界面设置),点了和状态条上的小按钮一样;
+// 有性能体系按钮时比分上方不再挂同一句提醒;P 面板开着时整张卡片让开。
+void pre_match_card_offers_the_settings() {
+    QTemporaryDir directory;
+    UiProfileController profiles{UiProfileRepository(directory.path()), Role::Infantry};
+    Config config;
+    config.self_robot_id = 3;
+    Dashboard dashboard(config);
+    dashboard.resize(1440, 900);
+    dashboard.attachUiProfiles(&profiles, {QStringLiteral("base")});
+    int toggled = 0;
+    int opened = 0;
+    dashboard.setKeyboardMouseToggle([&toggled] { ++toggled; });
+    dashboard.setPerformanceHandler([&opened] { ++opened; });
+    dashboard.setPreMatchPerformance(QStringLiteral("还是默认，开赛就锁定"), true);
+    const QString reminder = QStringLiteral("性能体系还是默认（血量优先 + 冷却优先）· 按 P 修改，开赛就锁定");
+    dashboard.setPreMatchReminder(reminder);
+    dashboard.update(pre_match_snapshot(), nullptr, 1000);
+    dashboard.update(pre_match_snapshot(), nullptr, 1100);
+    settle(dashboard);
+    check(dashboard.preMatchButtons() ==
+              QStringList({QStringLiteral("性能体系 · P"), QStringLiteral("键鼠控制 · F9"), QStringLiteral("界面设置")}),
+          "the pre-match card lists the settings the seat has");
+    const QLabel* strip = find_label(dashboard, "alertStrip");
+    check(!strip->isVisible() || !strip->text().contains(QStringLiteral("性能体系")),
+          "the performance reminder is on the card, not repeated above the score");
+
+    auto* performance = dashboard.findChild<QAbstractButton*>(QStringLiteral("preMatchPerformance"));
+    auto* keyboard = dashboard.findChild<QAbstractButton*>(QStringLiteral("preMatchKeyboardMouse"));
+    auto* settings = dashboard.findChild<QAbstractButton*>(QStringLiteral("preMatchUiSettings"));
+    if (!performance || !keyboard || !settings) throw std::runtime_error("pre-match buttons not found");
+    const QWidget* popup = find(dashboard, "popupOverlay");
+    check(popup->isVisible() && performance->isVisible() && keyboard->isVisible() && settings->isVisible(),
+          "the card and its buttons are up before the match");
+    check(performance->height() >= 64 && performance->width() >= 140 &&
+              dashboard.rect().contains(settings->geometry()),
+          "the buttons are big and inside the window");
+    check(performance->geometry().top() > dashboard.height() / 2 - 150 &&
+              performance->geometry().bottom() < dashboard.height() / 2 + 200,
+          "the buttons sit in the card in the middle of the screen");
+    check(dashboard.childAt(performance->geometry().center()) == performance,
+          "the buttons are clickable through the popup layer");
+    performance->click();
+    keyboard->click();
+    check(opened == 1 && toggled == 1, "the card buttons do what the status-bar entries do");
+    settings->click();
+    settle(dashboard);
+    check(dashboard.uiSettingsVisible(), "the card's 界面设置 opens the settings page");
+    dashboard.setUiSettingsVisible(false);
+
+    dashboard.setSettingsPanelOpen(true);
+    dashboard.update(pre_match_snapshot(), nullptr, 1200);
+    settle(dashboard);
+    check(!popup->isVisible() && !performance->isVisible(), "the card gives way while the P panel is open");
+    dashboard.setSettingsPanelOpen(false);
+    dashboard.update(pre_match_snapshot(), nullptr, 1300);
+    settle(dashboard);
+    check(popup->isVisible() && performance->isVisible(), "the card comes back when the P panel closes");
+
+    dashboard.resize(2560, 1440);
+    dashboard.update(pre_match_snapshot(), nullptr, 1400);
+    settle(dashboard);
+    check(performance->height() >= 100, "full screen makes the card buttons bigger");
+
+    // 弹窗至少挂 1 秒,开赛 1 秒以后再看。
+    dashboard.update(base_snapshot(), nullptr, 1500);
+    dashboard.update(base_snapshot(), nullptr, 3000);
+    settle(dashboard);
+    check(!performance->isVisible() && dashboard.preMatchButtons().isEmpty(), "the card buttons go away when the match starts");
+}
+
+// 卡片上点「战术提醒」:提醒窗口开着时整张卡片让开,关掉窗口再回来,和 P 面板一样。
+void pre_match_card_gives_way_to_the_reminder_window() {
+    QTemporaryDir directory;
+    UnavailableSpeechBackend speech(QStringLiteral("测试里没有语音"));
+    ReminderController reminders(std::make_unique<ReminderRepository>(directory.filePath(QStringLiteral("cfg"))),
+                                 &speech, 2200);
+    reminders.start(directory.filePath(QStringLiteral("cache")));
+    Config config;
+    config.self_robot_id = 3;
+    Dashboard dashboard(config);
+    dashboard.resize(1440, 900);
+    dashboard.attachReminders(&reminders);
+    dashboard.update(pre_match_snapshot(), nullptr, 1000);
+    dashboard.update(pre_match_snapshot(), nullptr, 1100);
+    settle(dashboard);
+
+    auto* entry = dashboard.findChild<QAbstractButton*>(QStringLiteral("preMatchReminders"));
+    if (!entry) throw std::runtime_error("preMatchReminders not found");
+    const QWidget* popup = find(dashboard, "popupOverlay");
+    check(popup->isVisible() && entry->isVisible(), "the card offers 战术提醒 before the match");
+    entry->click();
+    auto* window = dashboard.findChild<ReminderDialog*>();
+    check(window && window->isVisible(), "the card's 战术提醒 opens the reminder window");
+
+    dashboard.update(pre_match_snapshot(), nullptr, 1200);
+    settle(dashboard);
+    check(!popup->isVisible() && !entry->isVisible(), "the card gives way while the reminder window is open");
+    window->hide();
+    dashboard.update(pre_match_snapshot(), nullptr, 1300);
+    settle(dashboard);
+    check(popup->isVisible() && entry->isVisible(), "the card comes back when the reminder window closes");
+}
+
+// 操作手把地图从布局里拿掉:横幅照样出现在顶栏下方,全屏时跟着变大。
+void alert_banner_shows_without_a_map() {
+    Dashboard dashboard(test_config());
+    dashboard.resize(2560, 1440);
+    UiScheme mapless = builtin_scheme(dashboard.role(), QStringLiteral("standard")).value();
+    mapless.cells = layout_remove(scheme_layout(dashboard.role(), mapless).cells, PaneId::Map);
+    dashboard.applyUiScheme(mapless);
+    drive_to_info(dashboard);
+    check(dashboard.paneCard(PaneId::Map) == nullptr, "the map is out of the layout");
+    dashboard.showAlert(QStringLiteral("大能量机关可以激活了"), AlertLevel::Info, 10000);
+    dashboard.update(base_snapshot(), nullptr, 10000);
+    settle(dashboard);
+    const QWidget* banner = find(dashboard, "alertBanner");
+    const QWidget* top = find(dashboard, "topBar");
+    check(banner->isVisible() && dashboard.alertBannerText() == QStringLiteral("大能量机关可以激活了"),
+          "without a map the banner still shows");
+    check(banner->geometry().top() > top->geometry().bottom() && dashboard.rect().contains(banner->geometry()),
+          "without a map the banner sits below the top bar inside the window");
+    check(banner->width() >= 1000 && banner->height() > GlowBanner::kHeight,
+          "a full-screen window gets a wider and taller banner");
 }
 
 }  // namespace
@@ -1028,6 +1299,42 @@ void every_role_layout_fits_its_screens() {
 
 // 指挥手点地图:点空地发点位标记、点敌方车发目标标记;0.5 秒内第二次被拦;断线时不发。
 // 其他席位地图不响应点击,但照样画收到的标记。
+// 标记工具条必须整条待在地图卡片里。1280x760 是程序的最小窗口(setMinimumSize),地图
+// 那一列只有约 550 宽;工具条排成一行、最小宽度又比它大的话,最右边那颗开关会被卡片边
+// 裁掉,甚至只剩一个空框。右列按 main.cpp 的做法把飞镖和哨兵面板放进去,宽度才算得真。
+void the_mark_toolbar_stays_inside_the_map_card() {
+    for (const QSize size : {QSize(1280, 760), QSize(1440, 900), QSize(1920, 1080)}) {
+        Config config;
+        config.self_robot_id = 6;
+        Dashboard dashboard(config);
+        if (QWidget* card = dashboard.roleCard(PaneId::Dart)) {
+            auto* dart = new DartPane(card);
+            dashboard.placePane(PaneId::Dart, dart);
+            dart->setView(DartView{});
+        }
+        if (QWidget* card = dashboard.roleCard(PaneId::Sentry)) {
+            auto* sentry = new SentryPane(card);
+            dashboard.placePane(PaneId::Sentry, sentry);
+            sentry->setView(SentryView{});
+        }
+        dashboard.resize(size);
+        Snapshot snapshot = clear_snapshot();
+        snapshot.self = RobotId{6};
+        dashboard.update(snapshot, nullptr, 1000);
+        settle(dashboard);
+
+        const std::string tag = std::to_string(size.width()) + "x" + std::to_string(size.height());
+        MarkToolbar* toolbar = dashboard.markToolbar();
+        const QWidget* card = find(dashboard, "mapCard");
+        check(toolbar != nullptr && card != nullptr, ("commander has a toolbar and a map card: " + tag).c_str());
+        const QRect bar = QRect(toolbar->mapTo(card, QPoint()), toolbar->size());
+        check(card->rect().contains(bar),
+              ("the mark toolbar sits fully inside the map card: " + tag).c_str());
+        check(toolbar->width() >= toolbar->minimumSizeHint().width(),
+              ("the mark toolbar is never squeezed below its minimum width: " + tag).c_str());
+    }
+}
+
 void the_commander_marks_the_map() {
     Config config;
     config.self_robot_id = 6;
@@ -1046,10 +1353,23 @@ void the_commander_marks_the_map() {
     settle(dashboard);
 
     std::vector<std::string> sent;
-    dashboard.setCommandSender([&sent](const char* topic, const std::string& payload) {
+    std::vector<std::string> payloads;
+    dashboard.setCommandSender([&sent, &payloads](const char* topic, const std::string& payload) {
         sent.push_back(std::string(topic) + ":" + std::to_string(payload.size()));
+        payloads.push_back(payload);
         return true;
     });
+    // 最近一条 MapClickCmd 的 is_send_all:0 指定 1 除哨兵 2 含哨兵。
+    const auto last_scope = [&payloads] {
+        rm::MapClickCmd message;
+        if (payloads.empty() || !message.ParseFromString(payloads.back())) return -1;
+        return static_cast<int>(message.is_send_all());
+    };
+    const auto last_recipients = [&payloads] {
+        rm::MapClickCmd message;
+        if (payloads.empty() || !message.ParseFromString(payloads.back())) return std::string();
+        return message.robot_id();
+    };
     MapPane* map = const_cast<MapPane*>(static_cast<const MapPane*>(find(dashboard, "mapPane")));
     const MapViewport view = map_viewport(default_field_extent(), map->width(), map->height());
     const Projected empty_spot = project(default_field_extent(), view, 8.0, 4.0);
@@ -1070,11 +1390,118 @@ void the_commander_marks_the_map() {
     check(sent.size() == 2 && dashboard.markToolbar()->statusText().contains(QStringLiteral("敌方 3 号")),
           "a click on an enemy robot marks that robot");
 
+    // 默认不转发给哨兵:自动哨兵每条标记要花 50 金(规则 5.7.2),不能点一下地图就悄悄花掉。
+    MarkToolbar* toolbar = dashboard.markToolbar();
+    check(last_scope() == 1, "by default a mark goes to everyone except the sentry");
+    check(!toolbar->sentryForwarding(), "sentry forwarding starts off");
+
+    // 开启要二次确认:点一下只报价,再点才真的开。
+    auto* sentry_toggle = toolbar->findChild<QPushButton*>(QStringLiteral("markSentry"));
+    check(sentry_toggle != nullptr, "the toolbar has a sentry forwarding toggle");
+    sentry_toggle->click();
+    check(!toolbar->sentryForwarding() && toolbar->sentryArmed(),
+          "one click only arms the toggle and shows the price");
+    check(sentry_toggle->text().contains(QStringLiteral("50")),
+          "the armed toggle names the price per mark for an automatic sentry");
+    sentry_toggle->click();
+    check(toolbar->sentryForwarding() && !toolbar->sentryArmed(),
+          "confirming turns sentry forwarding on");
+    dashboard.update(snapshot, nullptr, 2200);
+    map->clickAt(QPointF(empty_spot.point.x, empty_spot.point.y));
+    check(sent.size() == 3 && last_scope() == 2, "while forwarding is on a mark includes the sentry");
+
+    // 只发某一台车时,哨兵只能靠写进收件人列表:指定 + 哨兵席位。
+    for (QPushButton* chip : toolbar->findChildren<QPushButton*>())
+        if (chip->text() == QStringLiteral("重装")) chip->click();
+    dashboard.update(snapshot, nullptr, 2800);
+    map->clickAt(QPointF(empty_spot.point.x, empty_spot.point.y));
+    check(sent.size() == 4 && last_scope() == 0, "one named robot encodes the specific scope");
+    const std::string list = last_recipients();
+    check(list.size() == 7 && static_cast<unsigned char>(list[0]) == 1 &&
+              static_cast<unsigned char>(list[1]) == 7,
+          "a specific mark with forwarding on carries that robot and the sentry");
+
+    // 关掉不用确认。
+    sentry_toggle->click();
+    check(!toolbar->sentryForwarding() && !toolbar->sentryArmed(),
+          "turning sentry forwarding off takes a single click, no confirmation");
+    for (QPushButton* chip : toolbar->findChildren<QPushButton*>())
+        if (chip->text() == QStringLiteral("全体")) chip->click();
+    dashboard.update(snapshot, nullptr, 3400);
+    map->clickAt(QPointF(empty_spot.point.x, empty_spot.point.y));
+    check(sent.size() == 5 && last_scope() == 1, "with forwarding off marks skip the sentry again");
+
+    // 半自动哨兵不收干预费,开关要报「免费」而不是 50。
+    snapshot.game.sentry_control = present<std::uint32_t>(1);
+    dashboard.update(snapshot, nullptr, 4000);
+    sentry_toggle->click();
+    check(!sentry_toggle->text().contains(QStringLiteral("50")),
+          "a semi-automatic sentry is not quoted the 50 coin fee");
+    sentry_toggle->click();
+
     Dashboard infantry(test_config());
     infantry.resize(1440, 900);
     check(infantry.markToolbar() == nullptr, "other seats have no mark toolbar");
     MapPane* infantry_map = const_cast<MapPane*>(static_cast<const MapPane*>(find(infantry, "mapPane")));
     check(!infantry_map->clickAt(QPointF(100, 100)), "other seats' maps ignore clicks");
+}
+
+// 指挥手没有自己的图传:图传格子里是队友图传的小墙,点开是铺满图传页的大墙,再点回来。其他席位没有墙。
+void the_commander_watches_a_wall_of_team_video() {
+    Config config;
+    config.self_robot_id = 6;
+    Dashboard dashboard(config);
+    dashboard.resize(1920, 1080);
+    drive_to_info(dashboard);
+    auto* compact = dashboard.findChild<VideoWall*>(QStringLiteral("videoWallCompact"));
+    auto* full = dashboard.findChild<VideoWall*>(QStringLiteral("videoWallFull"));
+    check(compact && full, "the commander has both walls");
+    const QWidget* card = dashboard.paneCard(PaneId::Video);
+    check(card && compact->isVisible() && compact->parentWidget() == card &&
+              !find_pane(dashboard, "infoVideoPane")->isVisible(),
+          "the video cell holds the small wall instead of a single picture");
+    check(compact->feeds().size() == 3 && compact->feeds()[1].label == QStringLiteral("3 号 · 步兵") &&
+              compact->feeds()[1].status == QStringLiteral("还没收到转发"),
+          "before any relay the wall lists 1, 3 and 4 and says it is waiting");
+    check(compact->tileRect(0).y() == compact->tileRect(2).y(), "the small wall is one row in the default cell");
+
+    QImage red(VideoReceiver::frameWidth(), VideoReceiver::frameHeight(), QImage::Format_RGB32);
+    red.fill(Qt::red);
+    std::vector<WallFeed> feeds = compact->feeds();
+    feeds[1].frame = red;
+    dashboard.setWallFeeds(feeds);
+    check(!compact->feeds()[1].frame.isNull() && !full->feeds()[1].frame.isNull(), "both walls get the same frames");
+
+    const QPoint local = compact->rect().center();
+    check(dashboard.childAt(compact->mapTo(&dashboard, local)) == compact, "native hit testing reaches the wall");
+    QMouseEvent press(QEvent::MouseButtonPress, local, compact->mapTo(compact->window(), local),
+                      compact->mapToGlobal(local), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(compact, &press);
+    settle(dashboard);
+    check(dashboard.mode() == UiMode::Video && full->isVisible() && !find_pane(dashboard, "videoFullPane")->isVisible(),
+          "clicking the small wall opens the big one in place of the single picture");
+    check(full->height() > dashboard.height() / 2 && full->tileRect(0).width() > 600,
+          "the big wall fills the video page");
+    check(!find_label(dashboard, "videoOverlayHp")->isVisible() &&
+              find_label(dashboard, "videoOverlayCountdown")->isVisible(),
+          "the commander's video page keeps the countdown but has no HP of its own");
+    const std::string dump = dashboard.layoutDump();
+    check(dump.find("video_wall_full\", \"visible\": true") != std::string::npos, "the layout dump shows the big wall");
+
+    const QPoint back = full->rect().center();
+    QMouseEvent again(QEvent::MouseButtonPress, back, full->mapTo(full->window(), back), full->mapToGlobal(back),
+                      Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(full, &again);
+    settle(dashboard);
+    check(dashboard.mode() == UiMode::Info && compact->isVisible(), "clicking the big wall goes back");
+
+    VideoReceiver silent;
+    dashboard.update(clear_snapshot(), &silent, 5000);
+    check(!dashboard.findChild<QLabel*>(QStringLiteral("alertStrip"))->text().contains(QStringLiteral("图传离线")),
+          "the commander is not told its own (non-existent) video is offline");
+
+    Dashboard infantry(test_config());
+    check(infantry.findChild<VideoWall*>() == nullptr, "ground seats have no wall");
 }
 
 // 界面设置:勾掉一块面板,主界面立刻少一块、文件里记下;换方案;比赛中锁定、赛前解锁;
@@ -1160,7 +1587,9 @@ int main(int argc, char* argv[]) {
         info_mode_is_map_dominant_with_a_capped_thumbnail();
         every_role_layout_fits_its_screens();
         dragged_layouts_fill_the_page();
+        the_mark_toolbar_stays_inside_the_map_card();
         the_commander_marks_the_map();
+        the_commander_watches_a_wall_of_team_video();
         the_layout_fits_the_requested_screen_size();
         the_thumbnail_and_its_stats_never_overlap();
         clicking_video_panes_switches_the_visible_page();
@@ -1169,8 +1598,11 @@ int main(int argc, char* argv[]) {
         video_mode_fills_the_window_and_hides_the_map();
         the_reminder_entry_hugs_its_text_at_the_right_edge();
         the_overlays_never_swallow_clicks_on_the_reminder_entry();
+        the_victory_overlay_draws_the_result_instead_of_only_dimming();
+        esc_dismisses_the_settlement_until_the_next_result();
         video_mode_keeps_the_countdown_and_hp();
         a_critical_event_is_listed_and_coloured();
+        rune_events_name_the_side();
         the_event_time_fits_its_column();
         both_panes_receive_one_identical_frame();
         the_frame_source_is_read_exactly_once();
@@ -1179,6 +1611,9 @@ int main(int argc, char* argv[]) {
         the_popup_also_covers_the_video_page();
         link_lights_and_self_check_fit_and_follow_the_stage();
         alert_banners_float_and_queue();
+        alert_banner_shows_without_a_map();
+        pre_match_card_offers_the_settings();
+        pre_match_card_gives_way_to_the_reminder_window();
         the_ui_settings_page_hides_panes_saves_and_locks();
         check(!qml_error, "all dashboard QML loads and runs without warnings");
     } catch (const std::exception& error) {

@@ -12,6 +12,7 @@
 #include "self_status_pane.h"
 #include "timeline_pane.h"
 #include "battle_analysis_pane.h"
+#include "buff_ledger.h"
 #include "event_feed_pane.h"
 #include "glass.h"
 #include "link_health.h"
@@ -22,19 +23,24 @@
 #include "ui_profile.h"
 #include "ui_mode.h"
 #include "video_receiver.h"
+#include "video_wall.h"
 
 #include <QImage>
 #include <QLabel>
 #include <QQuickWidget>
 #include <QStackedLayout>
 #include <QString>
+#include <QStringList>
+#include <QVariantList>
 #include <QWidget>
+#include <array>
 #include <cstddef>
 #include <functional>
 #include <map>
 #include <optional>
 #include <string>
 
+class QAbstractButton;
 class QComboBox;
 class QPushButton;
 class QSlider;
@@ -250,12 +256,25 @@ public:
     void setKeyboardMouseStatus(const QString& text);
     // P 设置面板的「图传方向」:两块图传都转 180°。
     void setVideoRotated(bool rotated);
+    // 指挥手没有自己的图传:图传格子里是队友图传的小墙,图传页是大墙。两面墙每一拍都喂,和 apply_frame
+    // 一个道理。其他席位没有墙,调了什么都不做。
+    void setWallFeeds(std::vector<WallFeed> feeds);
     // 状态条左边能量机关那一格(只有步兵在比赛中):「F · 长按开启小能量机关 (1)」。按住 F 或按住
     // 这一格一秒开启。text 为空时藏起来;lit 是现在能不能开,progress 是按住的进度。
     void setRuneEntry(const QString& text, bool lit, double progress, const QString& tooltip);
     void setRuneEntryHold(std::function<void(bool down)> hold);
-    // 赛前一直挂在比分上方的提醒(性能体系还是默认),空串去掉。
+    // 赛前一直挂在比分上方的提醒(性能体系还是默认),空串去掉。赛前卡片上有「性能体系」按钮时
+    // 不再单独挂:同一句话已经写在按钮上。
     void setPreMatchReminder(const QString& text);
+    // 赛前卡片(准备、自检、倒计时)上「性能体系 · P」按钮下面那行字,写现在选的是什么;空串时
+    // 不显示这个按钮(不是步兵)。warn 用黄字:还是默认,开赛就锁定。
+    void setPreMatchPerformance(const QString& text, bool warn);
+    // 点赛前卡片上的「性能体系」:打开 P 设置面板。
+    void setPerformanceHandler(std::function<void()> open);
+    // P 设置面板开着时比赛弹窗让开:弹窗画在最上层,不让就盖住面板。
+    void setSettingsPanelOpen(bool open);
+    // 赛前卡片上现在有哪几个大按钮(按钮第一行的字),没显示卡片时为空。
+    QStringList preMatchButtons() const { return pre_match_titles_; }
     // 指挥手地图下的标记工具条,其他席位为 nullptr。
     MarkToolbar* markToolbar() const { return mark_toolbar_; }
     // 这块面板现在在画面里才返回它的卡片,不在时返回 nullptr。
@@ -274,6 +293,8 @@ public:
     // 第 1 件换了、要念出来的那句话;取一次就清空。
     QString takeNextSpeech();
     const std::vector<NextCard>& nextCards() const { return next_cards_; }
+    // 这一帧双方的增益(update() 里算好),主程序把哨兵姿态那一份转给哨兵面板。
+    const BuffBoard& buffBoard() const { return buffs_; }
 
 protected:
     // The popup is outside both page layouts (see popup_ below), so nothing else
@@ -306,6 +327,21 @@ private:
     ChipLabel* alert_strip_;
     QString alert_text_;
     QString pre_match_reminder_;
+    // 赛前卡片:QML 弹窗里画四个大按钮的样子,底下叠同样大小的透明按钮接点击(弹窗那层
+    // 铺满整窗、不接鼠标)。按钮顺序固定:性能体系、键鼠控制、战术提醒、界面设置。
+    void syncPreMatchCard(bool shown);
+    void setPreMatchHover(int key);
+    QString pre_match_performance_;
+    bool pre_match_performance_warn_ = false;
+    std::function<void()> performance_handler_;
+    bool settings_panel_open_ = false;
+    bool pre_match_card_shown_ = false;
+    QString reminder_summary_;
+    std::array<QAbstractButton*, 4> pre_match_hits_{};
+    int pre_match_hover_ = -1;
+    QStringList pre_match_titles_;
+    QVariantList pre_match_model_;
+    QRect pre_match_card_rect_;
 
     // 固定在横幅行右端。刻意不放进 QML 顶部栏:1280 宽度下顶部栏右侧只剩约 19px,
     // 塞进去会压到前哨站徽标。
@@ -355,6 +391,8 @@ private:
     GlassCard* next_popup_ = nullptr;
     NextStepPane* next_popup_pane_ = nullptr;
     NextStepBoard next_board_;
+    BuffTracker buff_tracker_;
+    BuffBoard buffs_;
     std::vector<NextCard> next_cards_;
     bool next_enabled_ = false;
     bool next_popup_mode_ = false;
@@ -401,6 +439,8 @@ private:
     VideoPane* video_full_pane_;
     QLabel* video_countdown_;
     QLabel* video_hp_;
+    VideoWall* wall_compact_ = nullptr;
+    VideoWall* wall_full_ = nullptr;
 
     // Child of the Dashboard itself rather than of either page, so one instance
     // covers both layouts. A per-page copy could disagree about what is blocking,
@@ -415,6 +455,10 @@ private:
     // 而且生命周期由「本局是否已判定胜负」决定,与弹窗的 dwell 规则无关。
     QQuickWidget* victory_ = nullptr;
     GameResult shown_result_ = GameResult::None;
+    // 操作手按 Esc 关掉的是哪一次结算。存结果而不是 bool:同一局结算里面板不再
+    // 弹回来(update() 每 250ms 跑一次,bool 会被下一跳的 raise() 推翻),
+    // 而下一局换出新结果时自动恢复显示。
+    GameResult dismissed_result_ = GameResult::None;
 
     UiModeMachine machine_;
     UiMode logged_mode_ = UiMode::Info;

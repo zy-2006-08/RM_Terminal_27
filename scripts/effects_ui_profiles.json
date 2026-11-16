@@ -1,0 +1,85 @@
+{
+ "version": 1,
+ "last_operator": "默认",
+ "operators": [
+  {
+   "name": "默认",
+   "roles": {
+    "infantry": {
+     "active": "novice",
+     "schemes": [
+      {
+       "id": "novice",
+       "name": "新手 · 带下一步",
+       "hidden": [],
+       "options": {
+        "map_background_percent": 90,
+        "map_show_enemies": true,
+        "map_show_marks": true,
+        "enemy_low_hp_pulse": true,
+        "analysis_control_only": false,
+        "alert_voice": true,
+        "alerts_muted": [],
+        "next_mode": 0,
+        "next_count": 3,
+        "next_size": 1,
+        "next_voice": false,
+        "next_dwell_sec": 3
+       }
+      }
+     ]
+    },
+    "hero": {
+     "active": "novice",
+     "schemes": [
+      {
+       "id": "novice",
+       "name": "新手 · 带下一步",
+       "hidden": [],
+       "options": {
+        "map_background_percent": 90,
+        "map_show_enemies": true,
+        "map_show_marks": true,
+        "enemy_low_hp_pulse": true,
+        "analysis_control_only": false,
+        "alert_voice": true,
+        "alerts_muted": [],
+        "next_mode": 0,
+        "next_count": 3,
+        "next_size": 1,
+        "next_voice": false,
+        "next_dwell_sec": 3
+       }
+      }
+     ]
+    },
+    "commander": {
+     "active": "standard",
+     "schemes": [
+      {
+       "id": "standard",
+       "name": "标准",
+       "hidden": [
+        "next_step"
+       ],
+       "options": {
+        "map_background_percent": 90,
+        "map_show_enemies": true,
+        "map_show_marks": true,
+        "enemy_low_hp_pulse": true,
+        "analysis_control_only": false,
+        "alert_voice": true,
+        "alerts_muted": [],
+        "next_mode": 0,
+        "next_count": 3,
+        "next_size": 1,
+        "next_voice": false,
+        "next_dwell_sec": 3
+       }
+      }
+     ]
+    }
+   }
+  }
+ ]
+}

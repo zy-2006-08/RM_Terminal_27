@@ -23,6 +23,15 @@ int live_code(LiveState live) {
     return 0;
 }
 
+int tone_code(BuffTone tone) {
+    switch (tone) {
+    case BuffTone::Good: return 0;
+    case BuffTone::Bad: return 1;
+    case BuffTone::Neutral: return 2;
+    }
+    return 2;
+}
+
 }  // namespace
 
 QVariantList roster_entry_models(const std::vector<RosterEntry>& entries) {
@@ -41,6 +50,14 @@ QVariantList roster_entry_models(const std::vector<RosterEntry>& entries) {
         map[QStringLiteral("positionStale")] = entry.position_stale;
         map[QStringLiteral("bullets")] = entry.bullets ? *entry.bullets : -1;
         map[QStringLiteral("self")] = entry.is_self;
+        QVariantList buffs;
+        for (const BuffChip& chip : entry.buffs) {
+            QVariantMap item;
+            item[QStringLiteral("text")] = chip.text;
+            item[QStringLiteral("tone")] = tone_code(chip.tone);
+            buffs.append(item);
+        }
+        map[QStringLiteral("buffs")] = buffs;
         out.append(map);
     }
     return out;

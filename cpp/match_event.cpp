@@ -114,6 +114,29 @@ MatchEvent zone_change(std::size_t index, std::uint32_t owner, std::uint32_t con
 
 }  // namespace
 
+std::uint32_t outpost_owner(std::optional<std::uint32_t> zone, std::optional<std::uint32_t> hp,
+                            std::uint32_t home) {
+    if (!zone) return home;
+    switch (*zone) {
+    case 2: return kRed;
+    case 4: return kBlue;
+    case 1:
+    case 3: {
+        if (!hp) return home;
+        const std::uint32_t holder = *zone == 1 ? kRed : kBlue;
+        return *hp == 0 ? holder : opponent_of(holder);
+    }
+    default: return home;
+    }
+}
+
+std::string outpost_destroyed_text(std::uint32_t owner, std::size_t index, std::uint32_t self) {
+    std::string text = side(owner, self) + "前哨站被击毁";
+    const std::uint32_t home = index == 0 ? kRed : kBlue;
+    if (owner != home) text += home == self ? "（在我方一侧，已被敌方占了）" : "（在敌方一侧，是我方占的）";
+    return text;
+}
+
 MatchEvent describe_event(std::int32_t event_id, const std::string& param,
                           std::uint32_t self_faction) {
     const std::uint32_t self = self_faction == kBlue ? kBlue : kRed;
@@ -146,10 +169,14 @@ MatchEvent describe_event(std::int32_t event_id, const std::string& param,
         const auto target = arg(0);
         if (!target || (*target != 11 && *target != 111))
             return raw(event_id, param, "事件参数无法解析");
-        const std::uint32_t owner = *target == 11 ? kRed : kBlue;
+        // 参数按开局位置给(附录二:R 前哨 11,B 前哨 111)。前哨站可能已经重建成对方的,
+        // Store 按击毁前的阵地和血量再判一次归谁。
+        const std::size_t index = *target == 11 ? 0 : 1;
+        const std::uint32_t owner = index == 0 ? kRed : kBlue;
+        event.outpost_index = index;
         event.faction = owner;
         event.level = owner == self ? 3u : 1u;
-        event.text = side(owner, self) + "前哨站被击毁";
+        event.text = outpost_destroyed_text(owner, index, self);
         return event;
     }
     case 3: {
@@ -160,6 +187,9 @@ MatchEvent describe_event(std::int32_t event_id, const std::string& param,
         if (rings) std::snprintf(rings_text, sizeof(rings_text), "%.1f", *rings);
         event.level = 1;
         event.text = "大能量机关激活 " + std::to_string(*arms) + " 臂，平均 " + rings_text + " 环";
+        event.rune_kind = 2;
+        event.rune_arms = *arms > 0 ? static_cast<std::uint32_t>(*arms) : 0u;
+        event.rune_rings = rings && *rings > 0 ? *rings : 0.0;
         return event;
     }
     case 4: {
@@ -167,6 +197,7 @@ MatchEvent describe_event(std::int32_t event_id, const std::string& param,
         if (!kind || (*kind != 1 && *kind != 2)) return raw(event_id, param, "事件参数无法解析");
         event.level = 1;
         event.text = *kind == 1 ? "小能量机关已激活" : "大能量机关已激活";
+        event.rune_kind = static_cast<std::uint32_t>(*kind);
         return event;
     }
     case 5:
@@ -229,7 +260,8 @@ MatchEvent describe_event(std::int32_t event_id, const std::string& param,
     case 15: {
         const auto code = arg(0);
         if (!code) return raw(event_id, param, "事件参数无法解析");
-        event.level = *code == 0 ? 1u : 2u;
+        // 0 成功是好事,6 是操作手自己按 L 退出,不算失败;其余都是装配失败。
+        event.level = *code == 0 ? 1u : *code == 6 ? 0u : 2u;
         event.faction = self;
         event.text = assembly_result(*code);
         return event;
@@ -238,6 +270,7 @@ MatchEvent describe_event(std::int32_t event_id, const std::string& param,
         event.level = 1;
         event.faction = self;
         event.text = "我方重装装上了模块化 42mm 发射机构";
+        event.launcher_installed = true;
         return event;
     default:
         return raw(event_id, param, "未知事件");

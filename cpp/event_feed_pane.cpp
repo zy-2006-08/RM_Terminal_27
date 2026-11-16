@@ -81,7 +81,8 @@ QString event_banner_asset(EventBanner banner) {
     return QString();
 }
 
-std::vector<EventFeedRow> build_event_rows(const Snapshot& snapshot, std::size_t max) {
+std::vector<EventFeedRow> build_event_rows(const Snapshot& snapshot, std::size_t max,
+                                           const std::map<MonotonicMs, std::uint32_t>* rune_sides) {
     const std::vector<EventRecord> records = snapshot.events.recent(max);
     std::vector<EventFeedRow> rows;
     rows.reserve(records.size());
@@ -93,7 +94,17 @@ std::vector<EventFeedRow> build_event_rows(const Snapshot& snapshot, std::size_t
                       .arg(*record.countdown_sec / 60, 2, 10, QLatin1Char('0'))
                       .arg(*record.countdown_sec % 60, 2, 10, QLatin1Char('0'))
                 : QStringLiteral("--");
-        rows.push_back({time, QString::fromStdString(record.text), event_banner(record)});
+        QString text = QString::fromStdString(record.text);
+        EventBanner banner = event_banner(record);
+        // 协议的能量机关事件不带是哪一方的;增益推算分出来以后补上,敌方的按敌方配色。
+        if (rune_sides && snapshot.self && (record.event_id == 3 || record.event_id == 4))
+            if (const auto side = rune_sides->find(record.received_at); side != rune_sides->end()) {
+                const bool ours = side->second == faction_of(snapshot.self->value);
+                text = (ours ? QStringLiteral("我方") : QStringLiteral("敌方")) + text +
+                       (ours ? QString() : QStringLiteral("（推算）"));
+                if (!ours) banner = side->second == kBlue ? EventBanner::Blue : EventBanner::Red;
+            }
+        rows.push_back({time, text, banner});
     }
     return rows;
 }

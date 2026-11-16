@@ -256,6 +256,7 @@ bool Decoder::accept(const std::string& topic, const std::string& bytes, Monoton
         inbound::GameStatus p;
         if (x.has_shooter()) p.selected_shooter = x.shooter();
         if (x.has_chassis()) p.selected_chassis = x.chassis();
+        if (x.has_sentry_control()) p.sentry_control = x.sentry_control();
         return store_.apply(p, now);
     }
     if (topic == "Event") {
@@ -378,12 +379,23 @@ bool Decoder::accept(const std::string& topic, const std::string& bytes, Monoton
     if (topic == "Buff") {
         rm::Buff x;
         if (!parse(x, bytes) || !x.has_buff_type()) return false;
-        // 别的车的增益、终端用不上的增益类型都是合法消息,收下不记。
-        if (x.has_robot_id() && x.robot_id() != 0 && x.robot_id() != self_.value) return true;
-        if (x.buff_type() != kBuffExchangeAmmo) return true;
-        inbound::RobotBuff p;
-        p.can_exchange_ammo = true;
-        return store_.apply(p, self_, now);
+        // 没填车号或填 0 的是自机。
+        const std::uint32_t robot = x.has_robot_id() && x.robot_id() != 0 ? x.robot_id() : self_.value;
+        const std::uint32_t number = robot > 100 ? robot - 100 : robot;
+        if (robot > 111 || number == 0 || number > 11) return false;
+        inbound::BuffMessage message;
+        message.robot_id = robot;
+        message.record.type = x.buff_type();
+        message.record.level = x.buff_level();
+        message.record.max_time = x.buff_max_time();
+        if (x.has_buff_left_time()) message.record.left_time = x.buff_left_time();
+        bool ok = store_.apply(message, now);
+        if (robot == self_.value && x.buff_type() == kBuffExchangeAmmo) {
+            inbound::RobotBuff p;
+            p.can_exchange_ammo = true;
+            ok = store_.apply(p, self_, now) && ok;
+        }
+        return ok;
     }
     if (topic == "RadarInfoToClient") {
         const auto triples = radar_triples(bytes);

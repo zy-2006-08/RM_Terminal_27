@@ -82,7 +82,7 @@ CTRL_USE_REINFORCE = 0x1A    # param = 阵营(1红 2蓝), 消耗 1 次加固机�
 CTRL_BLIND = 0x1B            # param = 阵营(1红 2蓝) x10 + 飞镖目标类型(1-5)
 CTRL_BLIND_CLEAR = 0x1C      # param = 0, 解除手动致盲
 CTRL_SHOOT = 0x1D            # param = 口径(17/42) x100 + 弹丸数
-CTRL_DART_OPEN = 0x1E        # param = 阵营(1红 2蓝), 在 30s/240s 窗口开闸
+CTRL_DART_OPEN = 0x1E        # param = 阵营(1红 2蓝), 30s/240s 起各有 1 次开闸机会
 CTRL_DART_SHOOT = 0x1F       # param = 阵营(1红 2蓝) x10 + 飞镖目标类型(1-5)
 CTRL_PREP = 0x20             # 进入三分钟准备阶段
 CTRL_CHECK = 0x21            # 进入十五秒裁判系统自检
@@ -94,6 +94,11 @@ CTRL_PAY_REVIVE = 0x26       # 金币兑换立即复活(无参数)
 CTRL_CARD = 0x27             # param = 机器人 ID(0=自机),模拟检测到场地交互卡
 CTRL_MARK = 0x28             # param = 标记类型(1攻击 2防御 3警戒),模拟指挥手发一个地图标记
 CTRL_EXCHANGE_POINT = 0x29   # param = 1 车开进兑换点(补给区/基地增益点/前哨站增益点), 0 开出去
+CTRL_ASSEMBLY_ZONE = 0x2A    # param = 1 重装开进己方装配区, 0 开出去
+CTRL_VERIFY_LAUNCHER = 0x2B  # 重装打出验证弹,成功安装模块化 42mm 发射机构(重装专用)
+CTRL_ENEMY_RUNE = 0x2C       # param = 1 敌方激活小能量机关, 2 大能量机关(只发 Event 3/4,我方状态不变)
+CTRL_TERRAIN = 0x2D          # param = 1 高地 2 公路 3 跨越隧道 4 穿越隧道 5 踩了高地下面的卡,自机拿地形增益
+CTRL_RADAR_LOCK = 0x2E       # param = 敌方车号(0 解除),强制雷达把它标成「被标记」,测地图上的标记
 _CTRL_NAMES = {
     CTRL_BEGIN: "开赛",
     CTRL_HOLD: "暂停",
@@ -120,6 +125,11 @@ _CTRL_NAMES = {
     CTRL_PAY_REVIVE: "金币兑换立即复活",
     CTRL_CARD: "模拟检测到场地交互卡",
     CTRL_EXCHANGE_POINT: "车开进/开出兑换点",
+    CTRL_ASSEMBLY_ZONE: "重装开进/开出装配区",
+    CTRL_VERIFY_LAUNCHER: "打验证弹",
+    CTRL_ENEMY_RUNE: "敌方激活能量机关",
+    CTRL_TERRAIN: "自机拿地形跨越增益",
+    CTRL_RADAR_LOCK: "强制雷达标记",
 }
 
 # 阵地顺序与 GameStatus 的四个字段一一对应,写死顺序是因为控制指令按序号寻址。
@@ -187,6 +197,21 @@ def _is_red(robot_id: int) -> bool:
     return robot_id < 100
 
 
+_SIDE_NAMES = {_FACTION_RED: "红方", _FACTION_BLUE: "蓝方"}
+
+
+def _opponent(side: int) -> int:
+    return _FACTION_BLUE if side == _FACTION_RED else _FACTION_RED
+
+
+def _zone_full(side: int) -> int:
+    return _ZONE_RED_FULL if side == _FACTION_RED else _ZONE_BLUE_FULL
+
+
+def _zone_temp(side: int) -> int:
+    return _ZONE_RED_TEMP if side == _FACTION_RED else _ZONE_BLUE_TEMP
+
+
 # 表 5-16/5-17/5-18：重装 400,步兵 200,空中 200,哨兵按自动哨兵 400。
 _ROBOT_MAX_HP = {1: 400, 3: 200, 4: 200, 6: 200, 7: 400}
 
@@ -194,6 +219,8 @@ _ROBOT_MAX_HP = {1: 400, 3: 200, 4: 200, 6: 200, 7: 400}
 _BASE_MAX_HP = 10000
 _OUTPOST_MAX_HP = 1000
 _OUTPOST_REBUILD_HP = 500
+# Event 2 的参数:按开局位置编号,R 前哨 11、B 前哨 111(通信协议附录二)。
+_OUTPOST_EVENT_IDS = ("11", "111")
 # 建筑控制指令的寻址顺序，与 _STRUCTURE_MAX_HP 一一对应。
 _STRUCTURE_NAMES = ("红方基地", "蓝方基地", "红方前哨站", "蓝方前哨站")
 _STRUCTURE_MAX_HP = (_BASE_MAX_HP, _BASE_MAX_HP, _OUTPOST_MAX_HP, _OUTPOST_MAX_HP)
@@ -203,19 +230,22 @@ _STRUCTURE_MAX_HP = (_BASE_MAX_HP, _BASE_MAX_HP, _OUTPOST_MAX_HP, _OUTPOST_MAX_H
 _DART_TARGET_NAMES = ("前哨站", "基地固定目标", "基地随机固定目标",
                       "基地随机移动目标", "基地末端移动目标")
 _DART_HIT_DURATIONS = (10.0, 5.0, 3.0, 2.0)
-# 规则 5.7.3：每局 4 枚；30s/240s 各 1 次开闸机会；开闸 7s，发射 30s，冷却 15s；
-# 同一目标两次命中至少间隔 2s。命中伤害与移动类目标对地面机器人的扣血比例见下表。
+# 规则 5.7.3：每局 4 枚；30s/240s 各给 1 次开闸机会，没用的留着；开闸 7s，发射 30s；
+# 闸门关上后冷却 15s 才能再开；同一目标两次命中至少间隔 2s。命中伤害与移动类目标对地面机器人的扣血比例见下表。
 _DART_MAX_PER_ROUND = 4
 _DART_UNLOCK_SEC = (30.0, 240.0)
 _DART_GATE_OPEN_SEC = 7.0
 _DART_FIRE_WINDOW_SEC = 30.0
-_DART_COOLDOWN_SEC = 15.0
+_DART_GATE_COOLDOWN_SEC = 15.0
 _DART_TARGET_COOLDOWN_SEC = 2.0
 _DART_DAMAGE = (1000, 200, 300, 800, 1250)
 _DART_ROBOT_HP_FRACTION = (0.0, 0.0, 0.0, 0.20, 0.50)
-# 模拟的装配:科技核心每 3 秒走一步(放入/平移/旋转),开始后 30 秒没确认算超时。
+# 模拟的装配(规则手册 5.4.3、表 5-10):开始后科技核心先运动 3 秒到位,之后模拟操作手每 3 秒做完
+# 一步。一到三级开始后 30 秒没确认算超时(模拟器自定),四级要在到位后 45 秒内装完。
+_ASSEMBLY_MOVE_SEC = 3.0
 _ASSEMBLY_STEP_SEC = 3.0
 _ASSEMBLY_TIMEOUT_SEC = 30.0
+_ASSEMBLY_LEVEL4_SEC = 45.0
 # 模拟的能量机关:激活 5 秒后进入已激活,保持 45 秒。
 _RUNE_ACTIVATING_SEC = 5.0
 # 5.6.3：小能量机关在比赛开始、1 分 30 秒各给一次机会，大能量机关在 3 分、4 分 15 秒、5 分 30 秒
@@ -223,6 +253,24 @@ _RUNE_ACTIVATING_SEC = 5.0
 _SMALL_RUNE_AT = (0.0, 90.0)
 _BIG_RUNE_AT = (180.0, 255.0, 330.0)
 _RUNE_ACTIVE_SEC = 45.0
+# 大能量机关(表 5-22、5-23):模拟的我方总是 10 臂、平均 9.2 环 -> 攻击 300%、防御 50%、热量冷却 5 倍,60 秒;
+# 模拟的敌方大能量机关 8 臂、平均 8.5 环 -> 攻击 200%、防御 25%、冷却 3 倍,45 秒。
+_BIG_RUNE_EVENT = "10,9.2"
+_BIG_RUNE_ACTIVE_SEC = 60.0
+_BIG_RUNE_BUFFS = ((1, 300), (2, 50))
+_BIG_RUNE_COOLING_TIMES = 5
+_ENEMY_BIG_RUNE_EVENT = "8,8.5"
+# 5.6.4.5 地形跨越增益:(名字, Buff 类型, 增益值, 秒数)。穿越隧道是 1.5 倍热量冷却,协议里类型 3 发的是
+# 「每秒多冷却多少」,发送时按当前冷却速率换算。拿着一种又拿到另一种时防御变成 50%。
+_TERRAIN = {
+    1: ("高地", 2, 25, 30.0),
+    2: ("公路", 2, 25, 5.0),
+    3: ("跨越隧道", 2, 25, 30.0),
+    4: ("穿越隧道", 3, 0, 120.0),
+}
+_TERRAIN_PRE_HIGHLAND = 5
+# 5.7.1:前 3 分钟、没装上 42mm 的重装防御 50%。
+_HERO_EARLY_SEC = 180.0
 # 非指挥手席位:模拟指挥手每 20 秒(比赛时间)标一次敌方重装。
 _MARK_PERIOD_SEC = 20.0
 # 规则 5.1：17mm 单发 20,42mm 单发 200；规则 5.1.3：单发热量 +10/+100。
@@ -259,8 +307,8 @@ _ROBOT_CLASS_NAMES = {1: "重装", 3: "步兵", 4: "步兵", 6: "空中", 7: "�
 
 
 def _new_dart_state() -> dict:
-    return {"used": 0, "open_at": -1.0, "close_at": -1.0, "cooldown_until": -1.0,
-            "hits": 0, "fixed_hits": 0, "chances": set(), "last_hit": {}}
+    return {"used": 0, "open_at": -1.0, "close_at": -1.0, "openings": 0,
+            "hits": 0, "fixed_hits": 0, "last_hit": {}}
 
 
 def _new_injury() -> dict:
@@ -345,6 +393,22 @@ def dart_blind_duration(fixed_hit_number: int, target_type: int) -> float:
     return _DART_HIT_DURATIONS[min(max(fixed_hit_number - 1, 0), 3)]
 
 
+def sentry_command_cost(command_id: int, match_elapsed: float, automatic: bool) -> int:
+    """规则 5.7.2 + 表 5-7:指挥手一条哨兵指令的总价，和终端 sentry_cost() 一致。
+
+    自动哨兵每次另加 50 干预费；哨兵不适用经验体系，立即复活按 1 级算；补血点补弹协议不带数量，只收干预费。
+    """
+    fee = 50 if automatic else 0
+    remaining = max(0.0, rules.MATCH_SEC - match_elapsed)
+    if command_id == 3:
+        return 150 + fee
+    if command_id == 4:
+        return rules.remote_heal_cost(remaining) + fee
+    if command_id == 6:
+        return rules.pay_revive_cost(remaining, 1) + fee
+    return fee
+
+
 def zone_event(index: int, state: int) -> tuple[int, str] | None:
     """阵地易手的 Event（2.2.7 的 5–8）。index 按 _ZONE_NAMES，state 是绝对编码。
 
@@ -369,6 +433,42 @@ def base_status_code(defended: bool, armor_open: bool) -> int:
 def max_assembly_difficulty(match_seconds: float) -> int:
     """表 5-11：开赛只能选一级，之后每满 1 分钟多解锁一级，3 分钟后一到四级都能选。"""
     return min(4, 1 + int(max(0.0, match_seconds) // 60))
+
+
+def assembly_steps(difficulty: int) -> int:
+    """表 5-10：一级只要放入，二级放入、平移，三级和四级放入、平移、旋转。"""
+    return {1: 1, 2: 2}.get(difficulty, 3)
+
+
+def assembly_ready(difficulty: int, elapsed: float) -> bool:
+    """科技核心到位、这一级要的步骤都做完了，才能确认装配。"""
+    return elapsed >= _ASSEMBLY_MOVE_SEC + _ASSEMBLY_STEP_SEC * assembly_steps(difficulty)
+
+
+def assembly_timed_out(difficulty: int, elapsed: float) -> bool:
+    if difficulty == 4:
+        return elapsed - _ASSEMBLY_MOVE_SEC >= _ASSEMBLY_LEVEL4_SEC
+    return elapsed >= _ASSEMBLY_TIMEOUT_SEC
+
+
+def tech_core_state(difficulty: int | None, elapsed: float) -> dict[str, int]:
+    """TechCoreMotionStateSync 字段 2–5、7、8。difficulty 为 None 表示没在装配。
+
+    科技核心 1 初始位置、2 运动中、3 已到达；剩余时间只在四级装配中有效。"""
+    if difficulty is None:
+        return {"basic_state": 1, "putin_state": 0, "move_state": 0, "rotate_state": 0,
+                "remain_time_all": 0, "remain_time_step": 0}
+    arrived = elapsed >= _ASSEMBLY_MOVE_SEC
+    since = max(0.0, elapsed - _ASSEMBLY_MOVE_SEC)
+    done = min(assembly_steps(difficulty), int(since // _ASSEMBLY_STEP_SEC)) if arrived else 0
+    level4 = difficulty == 4 and arrived
+    return {
+        "basic_state": 3 if arrived else 2,
+        "putin_state": int(done >= 1), "move_state": int(done >= 2), "rotate_state": int(done >= 3),
+        "remain_time_all": max(0, math.ceil(_ASSEMBLY_LEVEL4_SEC - since)) if level4 else 0,
+        "remain_time_step": (math.ceil(_ASSEMBLY_STEP_SEC - since % _ASSEMBLY_STEP_SEC)
+                             if level4 and done < 3 else 0),
+    }
 
 
 class SimulatedMatch:
@@ -413,6 +513,8 @@ class SimulatedMatch:
             self.heat_limit, self.cooling_rate = rules.LAUNCHER_COOLING[0]
             self.launcher_ready = True
             self.ammo = 0
+        # 重装装上 42mm 发射机构(launcher_ready)后,要打出一发被裁判系统测到才算「成功安装」(规则 5.7.1)。
+        self.launcher_verified = _SELF_LOCAL_ID != 1
         self.team_ammo_bought = {17: 0, 42: 0}
         # 自机累计已发弹量(RobotDynamicStatus.total_projectiles_fired),每局清零。
         self.fired_total = 0
@@ -456,6 +558,15 @@ class SimulatedMatch:
         self.blue_base_hp = _BASE_MAX_HP
         self.red_outpost_hp = _OUTPOST_MAX_HP
         self.blue_outpost_hp = _OUTPOST_MAX_HP
+        # 两座前哨站现在归谁(下标 0 是开局在红方一侧的那座)。打掉重建后换主人(规则 5.6.1),
+        # 只有对方能打它,所以控制台和随机掉血把它打到 0 时算主人的对手打的。
+        self.outpost_owner = [_FACTION_RED, _FACTION_BLUE]
+        # 规则 5.7.1 的 M、N:本局对方基地血量、控制度比自机这一方多出来的最大值。
+        self.max_base_gap = 0
+        self.max_control_gap = 0
+        # 控制台按钮的结果(成功、拒绝原因、规则提醒),发在 sim/State 里给控制台显示。
+        self.note = ""
+        self.note_seq = 0
         self.red_economy = _INITIAL_ECONOMY
         self.blue_economy = _INITIAL_ECONOMY
         # 累计获得的经济（GlobalLogisticsStatus.total_economy_obtained），花钱不减。
@@ -499,6 +610,8 @@ class SimulatedMatch:
         self.blue_hits = 0
         self.target_locked = False
         self.target_id = 0
+        # 控制台强制雷达标记的敌方车号(0 = 不强制)。
+        self.radar_lock_override = 0
         self.vision_online = True
         # 5.5.2：步兵不选时默认底盘「血量优先」、发射机构「冷却优先」(枚举都是 1)。
         self.chassis_mode = 1
@@ -525,6 +638,9 @@ class SimulatedMatch:
         self.tech_level = {_FACTION_RED: 0, _FACTION_BLUE: 0}
         # 重装正在进行的装配：难度、开始的比赛秒。
         self.assembly: dict[str, float | int] | None = None
+        # 重装站在己方装配区增益点上（规则手册 5.6.4.7）。终端收不到这一项（只在发给车的 0x0209 里）；
+        # 默认站在上面，方便直接试装配，控制台的开关模拟开出去。
+        self.in_assembly_zone = True
         self.sentry_posture = 1
         self.sentry_powered = False
         self.sentry_last_switch = -99.0
@@ -536,7 +652,13 @@ class SimulatedMatch:
         self.rune_status = 1
         self.rune_arms = 0
         self.rune_until = 0.0
+        self.rune_big = False
         self.rune_used = {"small": 0, "big": 0}
+        # 自机的地形跨越增益:Buff 类型 -> (增益值, 结束的比赛秒, 最大时长)。阵亡清掉(5.6.4.5)。
+        self.terrain: dict[int, tuple[int, float, float]] = {}
+        # 拿到过哪几种地形增益,各自到什么时候:判断「又拿到另一种」用。
+        self.terrain_kinds: dict[int, float] = {}
+        self.terrain_pre_until = 0.0
         # 远程兑换 6 秒后才到账:(到账的比赛秒, "ammo"/"heal", 发数, 下单时的阵亡次数)。
         self.remote_pending: list[tuple[float, str, int, int]] = []
         self.deaths = 0
@@ -580,6 +702,14 @@ class SimulatedMatch:
         self._zone_accum = 0.0
 
     def _jump_to(self, stage_id: int) -> None:
+        # 结算没走完就点了准备/自检/倒计时:先把下一局正式开起来。不然局数不涨、上一局的结果
+        # 一直挂着,下一局打爆基地也判不出胜负,结算报的还是上一局。整场已分出胜负就从第一局重来。
+        if self.match_over:
+            self.reset()
+        else:
+            with self._round_lock:
+                if self.round_end_reason:
+                    self.start_next_round()
         self.hold_at = self.elapsed
         self.t0 = time.monotonic()
         self.holding = False
@@ -898,6 +1028,74 @@ class SimulatedMatch:
             return sum(1 for at in _SMALL_RUNE_AT if me >= at) - self.rune_used["small"]
         return sum(1 for at in _BIG_RUNE_AT if me >= at) - self.rune_used["big"]
 
+    def enemy_rune(self, big: bool) -> str | None:
+        """敌方激活能量机关:只发 Event 3/4(两条事件都不带是哪一方的),我方能量机关状态不变。"""
+        me = self.match_elapsed()
+        if me is None:
+            return "比赛未开始或已结束"
+        if big:
+            self.events.append((3, _ENEMY_BIG_RUNE_EVENT))
+        self.events.append((4, "2" if big else "1"))
+        return None
+
+    def gain_terrain(self, kind: int) -> str | None:
+        """自机拿到一种地形跨越增益(5.6.4.5)。已经拿着另一种时防御变成 50%,时长取两者较大。"""
+        me = self.match_elapsed()
+        if me is None:
+            return "比赛未开始或已结束"
+        if self.hp == 0:
+            return "自机阵亡"
+        if kind == _TERRAIN_PRE_HIGHLAND:
+            self.terrain_pre_until = me + 5.0
+            return None
+        if kind not in _TERRAIN:
+            return f"没有编号 {kind} 的地形增益"
+        _name, buff_type, level, seconds = _TERRAIN[kind]
+        others = [until for held, until in self.terrain_kinds.items() if held != kind and until > me]
+        self.terrain_kinds[kind] = me + seconds
+        self.terrain_pre_until = 0.0
+        if buff_type == 3:
+            self.terrain[3] = (0, me + seconds, seconds)
+        if others:
+            until = max(max(others), me + seconds)
+            self.terrain[2] = (50, until, until - me)
+        elif buff_type == 2:
+            self.terrain[2] = (level, me + seconds, seconds)
+        return None
+
+    def self_buffs(self) -> list[tuple[int, int, int, int]]:
+        """这一秒要发给终端的自机 Buff(2.2.14):(类型, 增益值, 最大时长, 剩余时长),一个来源一条。"""
+        out: list[tuple[int, int, int, int]] = []
+        me = self.match_elapsed()
+        if self.at_exchange_point:
+            out.append((6, 0, 0, 0))
+        if self.hp == 0:
+            self.terrain.clear()
+            self.terrain_kinds.clear()
+            self.terrain_pre_until = 0.0
+        if me is None or self.hp == 0:
+            return out
+        left = lambda until: max(0, int(math.ceil(until - me)))
+        if self.rune_status == 3 and self.rune_until > me:
+            if self.rune_big:
+                for buff_type, level in _BIG_RUNE_BUFFS:
+                    out.append((buff_type, level, int(_BIG_RUNE_ACTIVE_SEC), left(self.rune_until)))
+                out.append((3, int(round(self.cooling_rate * (_BIG_RUNE_COOLING_TIMES - 1))),
+                            int(_BIG_RUNE_ACTIVE_SEC), left(self.rune_until)))
+            else:
+                out.append((2, 25, int(_RUNE_ACTIVE_SEC), left(self.rune_until)))
+        if _SELF_LOCAL_ID == 1 and me < _HERO_EARLY_SEC and not self.launcher_verified:
+            out.append((2, 50, int(_HERO_EARLY_SEC), left(_HERO_EARLY_SEC)))
+        for buff_type, (level, until, longest) in self.terrain.items():
+            if until <= me:
+                continue
+            if buff_type == 3:
+                level = int(round(self.cooling_rate * 0.5))
+            out.append((buff_type, level, int(longest), left(until)))
+        if self.terrain_pre_until > me:
+            out.append((7, 0, 5, left(self.terrain_pre_until)))
+        return out
+
     def note_km(self, frame) -> None:
         self.km_frames.append((time.monotonic(), frame))
 
@@ -951,27 +1149,63 @@ class SimulatedMatch:
         return True, total, current, free, cost, cost <= self.coin
 
     def set_zone(self, index: int, state: int) -> bool:
-        """手动设置阵地状态。返回 False 表示阵地序号或状态值非法。"""
+        """手动设置阵地状态。返回 False 表示阵地序号或状态值非法。
+
+        前哨阵地设成某一方完全控制,而前哨站不是这一方的:按规则只能是前哨站被打掉、
+        重建成这一方的 500 血(5.6.1、表 5-21),所以按这个结果摆,不只改字。
+        """
         if not 0 <= index < len(self.zones) or not 0 <= state < len(_ZONE_STATE_NAMES):
             return False
         if state not in _ZONE_ALLOWED_STATES[index]:
             return False
         before = self.zones[index]
         if state in (_ZONE_RED_TEMP, _ZONE_BLUE_TEMP):
-            own_full = _ZONE_RED_FULL if state == _ZONE_RED_TEMP else _ZONE_BLUE_FULL
-            if self.zones[index] == own_full:
+            side = _FACTION_RED if state == _ZONE_RED_TEMP else _FACTION_BLUE
+            if self.zones[index] == _zone_full(side):
                 return True
+            if index < 2 and self.outpost_owner[index] == side and self._outpost_hp(index) > 0:
+                self.say(f"{_ZONE_NAMES[index]}的前哨站还在、归{_SIDE_NAMES[side]}:要先被对方打掉前哨站,"
+                         f"{_SIDE_NAMES[side]}才会变成临时控制(建筑血量设 0)")
+                return False
+            if index < 2 and self.outpost_owner[index] != side and self._outpost_hp(index) == 0:
+                owner = self.outpost_owner[index]
+                self.say(f"{_ZONE_NAMES[index]}的前哨站已被{_SIDE_NAMES[side]}打掉:{_SIDE_NAMES[owner]} 5 秒不激活就转成"
+                         f"{_SIDE_NAMES[side]}完全控制,要直接摆这个结果请选「{_ZONE_STATE_NAMES[_zone_full(side)]}」")
+                return False
             self.zones[index] = state
             self.zone_progress[index] = _ZONE_PROGRESS_SEC
         else:
-            if index == 0 and self.red_outpost_hp == 0:
-                self.red_outpost_hp = _OUTPOST_REBUILD_HP
-            elif index == 1 and self.blue_outpost_hp == 0:
-                self.blue_outpost_hp = _OUTPOST_REBUILD_HP
+            side = _FACTION_RED if state == _ZONE_RED_FULL else _FACTION_BLUE
+            if index < 2 and self.outpost_owner[index] != side and self._outpost_hp(index) > 0:
+                self.events.append((2, _OUTPOST_EVENT_IDS[index]))
+                self.say(f"{_ZONE_NAMES[index]}改成{_SIDE_NAMES[side]}完全控制:按规则前哨站先被打掉,"
+                         f"再重建成{_SIDE_NAMES[side]}的,500 血")
+                self._rebuild_outpost(index, side)
+            elif index < 2 and self._outpost_hp(index) == 0:
+                self._rebuild_outpost(index, side)
             self.zones[index] = state
             self.zone_progress[index] = 0.0
         self._zone_changed(index, before)
         return True
+
+    def say(self, text: str) -> None:
+        """控制台按钮的结果,经 sim/State 显示在控制台底部。"""
+        self.note = text
+        self.note_seq += 1
+
+    def _outpost_hp(self, index: int) -> int:
+        return self.red_outpost_hp if index == 0 else self.blue_outpost_hp
+
+    def _set_outpost_hp(self, index: int, hp: int) -> None:
+        if index == 0:
+            self.red_outpost_hp = hp
+        else:
+            self.blue_outpost_hp = hp
+
+    def _rebuild_outpost(self, index: int, side: int) -> None:
+        """规则 5.6.1:前哨站重建成 side 拥有的,500 血。"""
+        self.outpost_owner[index] = side
+        self._set_outpost_hp(index, _OUTPOST_REBUILD_HP)
 
     def _zone_changed(self, index: int, before: int) -> None:
         """阵地状态真的变了才发 Event 5–8:持续激活会反复写同一个临时控制。"""
@@ -981,35 +1215,26 @@ class SimulatedMatch:
         if event is not None:
             self.events.append(event)
 
-    def _destroy_outpost(self, red_outpost: bool, attacker: int) -> None:
+    def _destroy_outpost(self, index: int) -> None:
         """前哨站被击毁：按表 5-21 转化阵地控制，按 5.6.1 重建。
 
-        完全控制方被击毁后降为临时控制；5s 内不继续激活，击毁方转为完全控制
-        并把前哨站重建为 500 HP。击毁方本就持有临时控制时直接转为完全控制。
+        只有前哨站主人的对手能打它。对手已经临时控制这块阵地时,打掉就转为对手完全控制,
+        前哨站当场重建成对手的。主人完全控制时被打掉,降为主人临时控制;主人 5 秒不激活,
+        对手完全控制并重建(见 _expire_temp_control)。
         """
-        index = 0 if red_outpost else 1
         state = self.zones[index]
-        owner = _FACTION_RED if state in (_ZONE_RED_TEMP, _ZONE_RED_FULL) else _FACTION_BLUE
-        # Event 2:参数是被击毁的前哨站编号，红方 11、蓝方 111（附录二）。
-        self.events.append((2, "11" if red_outpost else "111"))
-        if owner == attacker:
-            # 击毁方已控制该阵地（完全或临时）时直接转为完全控制并重建，
-            # 包括红方已完全控制蓝方前哨阵地后再次击毁的情况。
-            self.zones[index] = _ZONE_RED_FULL if owner == _FACTION_RED else _ZONE_BLUE_FULL
+        attacker = _opponent(self.outpost_owner[index])
+        # Event 2:参数是被击毁的前哨站编号，R 前哨 11、B 前哨 111（附录二，按开局位置）。
+        self.events.append((2, _OUTPOST_EVENT_IDS[index]))
+        if state in (_zone_temp(attacker), _zone_full(attacker)):
+            self.zones[index] = _zone_full(attacker)
             self.zone_progress[index] = 0.0
-            if red_outpost:
-                self.red_outpost_hp = _OUTPOST_REBUILD_HP
-            else:
-                self.blue_outpost_hp = _OUTPOST_REBUILD_HP
+            self._rebuild_outpost(index, attacker)
         else:
-            if state in (_ZONE_RED_FULL, _ZONE_BLUE_FULL):
-                self.zones[index] = (
-                    _ZONE_RED_TEMP if owner == _FACTION_RED else _ZONE_BLUE_TEMP)
+            if state == _zone_full(self.outpost_owner[index]):
+                self.zones[index] = _zone_temp(self.outpost_owner[index])
             self.zone_progress[index] = _ZONE_PROGRESS_SEC
-            if red_outpost:
-                self.red_outpost_hp = 0
-            else:
-                self.blue_outpost_hp = 0
+            self._set_outpost_hp(index, 0)
         self._zone_changed(index, state)
 
     def set_structure_hp(self, index: int, hp: int) -> bool:
@@ -1017,26 +1242,34 @@ class SimulatedMatch:
 
         前哨站设为 0 必须走击毁流程,否则只改数字会让它永远停在 0,
         既不转化阵地也不重建——面板上看起来就是「打爆了但没反应」。
+        基地有 100% 防御时照样改(摆测试局面要用),但在控制台提醒这不是车打的。
         """
         if not 0 <= index < len(_STRUCTURE_NAMES):
             return False
         hp = max(0, min(_STRUCTURE_MAX_HP[index], hp))
-        if index == 0:
-            self._note_base_damage(_FACTION_RED, self.red_base_hp - hp)
-            self.red_base_hp = hp
-        elif index == 1:
-            self._note_base_damage(_FACTION_BLUE, self.blue_base_hp - hp)
-            self.blue_base_hp = hp
-        elif index == 2:
-            if hp == 0 and self.red_outpost_hp > 0:
-                self._destroy_outpost(True, _FACTION_BLUE)
+        if index in (0, 1):
+            side = _FACTION_RED if index == 0 else _FACTION_BLUE
+            current = self.red_base_hp if index == 0 else self.blue_base_hp
+            if hp < current and self._base_defended(side):
+                self.say(f"{_SIDE_NAMES[side]}前哨阵地还是{_SIDE_NAMES[side]}完全控制,基地有 100% 防御:"
+                         "按规则车打不动,这样掉血只能算飞镖或判罚")
+            self._note_base_damage(side, current - hp)
+            if index == 0:
+                self.red_base_hp = hp
             else:
-                self.red_outpost_hp = hp
+                self.blue_base_hp = hp
+            if self.match_elapsed() is not None:
+                self.track_gaps()
         else:
-            if hp == 0 and self.blue_outpost_hp > 0:
-                self._destroy_outpost(False, _FACTION_RED)
+            outpost = index - 2
+            if hp == 0 and self._outpost_hp(outpost) > 0:
+                self._destroy_outpost(outpost)
+            elif hp > 0 and self._outpost_hp(outpost) == 0:
+                self.say(f"{_STRUCTURE_NAMES[index]}已被打掉:要等阵地转化后重建(500 血),"
+                         "不能直接加血;可以直接把阵地设成某一方完全控制")
+                return False
             else:
-                self.blue_outpost_hp = hp
+                self._set_outpost_hp(outpost, hp)
         # 手动把基地打到 0 也要结束本局,和真实伤害走同一条判定。
         if index in (0, 1) and hp == 0 and self.match_elapsed() is not None:
             self._end_round_by_base_hp()
@@ -1084,18 +1317,73 @@ class SimulatedMatch:
             self.blue_reinforce_chances -= 1
         return None
 
-    def trigger_blind(self, side: int, target_type: int) -> bool:
-        """让 side 一方（被命中、被遮挡的一方）中一发飞镖。返回 False 表示参数非法。
+    def trigger_blind(self, side: int, target_type: int) -> str | None:
+        """让 side 一方（被命中、被遮挡的一方）中一发飞镖。成功返回 None，否则返回原因。
 
         直接记一次命中，不走闸门和冷却：手动注入和时刻表要的就是「这一刻中镖」。
+        扣血和开闸发射命中完全一样（_apply_dart_damage）；飞镖只在比赛中发射，赛外不扣血。
+        比赛中这一发也用掉命中方本局的一枚飞镖（规则 5.7.3 每局 4 枚），和开闸发射共用。
         """
         if side not in (_FACTION_RED, _FACTION_BLUE):
-            return False
+            return "阵营必须是 1(红) 或 2(蓝)"
         if not 1 <= target_type <= len(_DART_TARGET_NAMES):
-            return False
-        self._register_dart_hit(_FACTION_BLUE if side == _FACTION_RED else _FACTION_RED,
-                                target_type)
-        return True
+            return f"目标类型必须是 1-{len(_DART_TARGET_NAMES)}"
+        hitter = _opponent(side)
+        if self.match_elapsed() is not None:
+            state = self.dart[hitter]
+            if state["used"] >= _DART_MAX_PER_ROUND:
+                return f"{_SIDE_NAMES[hitter]}本局飞镖已用完"
+            state["used"] += 1
+            self._apply_dart_damage(hitter, target_type)
+        self._register_dart_hit(hitter, target_type)
+        return None
+
+    def _apply_dart_damage(self, hitter: int, target_type: int) -> int:
+        """按表 5-2 和 5.7.3 结算一发飞镖命中的扣血，返回打在前哨站或基地上的实际伤害。
+
+        前哨站 1000；基地固定目标 200、随机固定 300、随机移动 800、末端移动 1250，
+        飞镖扣血不吃防御增益。移动类目标另外让对方存活的地面机器人各扣自己上限血量的
+        20% / 50%（空中机器人和无敌的除外）。
+        """
+        victim = _FACTION_BLUE if hitter == _FACTION_RED else _FACTION_RED
+        damage = _DART_DAMAGE[target_type - 1]
+        if target_type == 1:
+            # 打的是对方拥有的前哨站;两座都是对方的时候先打开局在对方一侧的那座。
+            home = 0 if victim == _FACTION_RED else 1
+            owned = [i for i in (home, 1 - home) if self.outpost_owner[i] == victim]
+            if not owned:
+                return 0
+            index = owned[0]
+            applied = min(self._outpost_hp(index), damage)
+            self._set_outpost_hp(index, self._outpost_hp(index) - applied)
+            # 已经倒下的前哨站再中镖不扣血，也不能再走一遍击毁流程。
+            if applied and self._outpost_hp(index) == 0:
+                self._destroy_outpost(index)
+            self._deal_damage(victim == _FACTION_RED, applied)
+            return applied
+        dealt = self._damage_structure(victim, damage, bypass_defense=True)
+        fraction = _DART_ROBOT_HP_FRACTION[target_type - 1]
+        if fraction:
+            if (victim == _SELF_FACTION and self.hp > 0
+                    and not self.is_invincible(SELF_ROBOT_ID)):
+                applied = min(self.hp, int(self.max_hp * fraction))
+                self.hp -= applied
+                self._pending_dart += applied
+                self._deal_damage(True, applied)
+                if self.hp == 0:
+                    self._sync_respawn(SELF_ROBOT_ID)
+                    self._register_kill(SELF_ROBOT_ID, _DART_ROBOT_ID[hitter])
+            for rid, hp in self.other_hp.items():
+                # 规则 5.7.3：移动目标只对存活的地面机器人扣血，空中机器人除外。
+                if (hp > 0 and rid % 100 != 6 and not self.is_invincible(rid)
+                        and (_is_red(rid)) == (victim == _FACTION_RED)):
+                    applied = min(hp, int(self.other_max_hp[rid] * fraction))
+                    self.other_hp[rid] = hp - applied
+                    self._deal_damage(victim == _FACTION_RED, applied)
+                    if self.other_hp[rid] == 0:
+                        self._sync_respawn(rid)
+                        self._register_kill(rid, _DART_ROBOT_ID[hitter])
+        return dealt
 
     def _register_dart_hit(self, hitter: int, target_type: int) -> None:
         """飞镖命中的共同后果：遮挡、护甲、Event 9。伤害由调用方按目标结算。"""
@@ -1165,7 +1453,8 @@ class SimulatedMatch:
             self.events.append((11, ""))
 
     def dart_open(self, side: int) -> str | None:
-        """在 30s/240s 开闸窗口内开闸。成功返回 None。"""
+        """开闸(规则 5.7.3):比赛 30 秒、4 分钟各给 1 次机会,没用的留着;闸门关上后冷却 15 秒才能再开。
+        成功返回 None。"""
         if side not in self.dart:
             return "阵营必须是 1(红) 或 2(蓝)"
         me = self.match_elapsed()
@@ -1174,16 +1463,20 @@ class SimulatedMatch:
         state = self.dart[side]
         if state["used"] >= _DART_MAX_PER_ROUND:
             return "本局飞镖已用完"
-        for unlock in _DART_UNLOCK_SEC:
-            if unlock <= me < unlock + _DART_FIRE_WINDOW_SEC and unlock not in state["chances"]:
-                state["chances"].add(unlock)
-                state["open_at"] = me
-                state["close_at"] = me + _DART_GATE_OPEN_SEC + _DART_FIRE_WINDOW_SEC
-                # Event 10 只报「对方飞镖闸门开启」。
-                if side == _ENEMY_FACTION:
-                    self.events.append((10, ""))
-                return None
-        return "当前不在开闸窗口（30s / 240s 起各 30s）"
+        if state["open_at"] >= 0 and me <= state["close_at"]:
+            return "闸门已经开着"
+        if state["openings"] >= sum(1 for unlock in _DART_UNLOCK_SEC if me >= unlock):
+            later = [unlock for unlock in _DART_UNLOCK_SEC if unlock > me]
+            return f"{later[0] - me:.0f} 秒后才有开闸机会" if later else "飞镖闸门开启次数已达上限"
+        if state["close_at"] >= 0 and me < state["close_at"] + _DART_GATE_COOLDOWN_SEC:
+            return f"飞镖发射站冷却中，剩余 {state['close_at'] + _DART_GATE_COOLDOWN_SEC - me:.1f}s"
+        state["openings"] += 1
+        state["open_at"] = me
+        state["close_at"] = me + _DART_GATE_OPEN_SEC + _DART_FIRE_WINDOW_SEC
+        # Event 10 只报「对方飞镖闸门开启」。
+        if side == _ENEMY_FACTION:
+            self.events.append((10, ""))
+        return None
 
     def dart_shoot(self, side: int, target_type: int) -> str | None:
         """发射一枚飞镖。目标类型 1 前哨站 / 2-5 基地目标。成功返回 None。"""
@@ -1200,53 +1493,12 @@ class SimulatedMatch:
             return "闸门未开或发射窗口已关闭"
         if state["used"] >= _DART_MAX_PER_ROUND:
             return "本局飞镖已用完"
-        if me < state["cooldown_until"]:
-            return f"飞镖冷却中，剩余 {state['cooldown_until'] - me:.1f}s"
         last = state["last_hit"].get(target_type, -1e9)
         if me - last < _DART_TARGET_COOLDOWN_SEC:
             return "同一目标 2 秒内不能重复命中"
         state["used"] += 1
-        state["cooldown_until"] = me + _DART_COOLDOWN_SEC
         state["last_hit"][target_type] = me
-        victim = _FACTION_BLUE if side == _FACTION_RED else _FACTION_RED
-        damage = _DART_DAMAGE[target_type - 1]
-        dealt = damage
-        if target_type == 1:
-            if victim == _FACTION_BLUE:
-                applied = min(self.blue_outpost_hp, damage)
-                self.blue_outpost_hp -= applied
-                if self.blue_outpost_hp == 0:
-                    self._destroy_outpost(False, side)
-            else:
-                applied = min(self.red_outpost_hp, damage)
-                self.red_outpost_hp -= applied
-                if self.red_outpost_hp == 0:
-                    self._destroy_outpost(True, side)
-            self._deal_damage(victim == _FACTION_RED, applied)
-            dealt = applied
-        else:
-            dealt = self._damage_structure(victim, damage, bypass_defense=True)
-            fraction = _DART_ROBOT_HP_FRACTION[target_type - 1]
-            if fraction:
-                if (victim == _SELF_FACTION and self.hp > 0
-                        and not self.is_invincible(SELF_ROBOT_ID)):
-                    applied = min(self.hp, int(self.max_hp * fraction))
-                    self.hp -= applied
-                    self._pending_dart += applied
-                    self._deal_damage(True, applied)
-                    if self.hp == 0:
-                        self._sync_respawn(SELF_ROBOT_ID)
-                        self._register_kill(SELF_ROBOT_ID, _DART_ROBOT_ID[side])
-                for rid, hp in self.other_hp.items():
-                    # 规则 5.7.3：移动目标只对存活的地面机器人扣血，空中机器人除外。
-                    if (hp > 0 and rid % 100 != 6 and not self.is_invincible(rid)
-                            and (_is_red(rid)) == (victim == _FACTION_RED)):
-                        applied = min(hp, int(self.other_max_hp[rid] * fraction))
-                        self.other_hp[rid] = hp - applied
-                        self._deal_damage(victim == _FACTION_RED, applied)
-                        if self.other_hp[rid] == 0:
-                            self._sync_respawn(rid)
-                            self._register_kill(rid, _DART_ROBOT_ID[side])
+        dealt = self._apply_dart_damage(side, target_type)
         self._register_dart_hit(side, target_type)
         print(f"[server] {'红方' if side == _FACTION_RED else '蓝方'}飞镖命中"
               f"{_DART_TARGET_NAMES[target_type - 1]}，{dealt} 伤害", flush=True)
@@ -1297,6 +1549,14 @@ class SimulatedMatch:
             return f"该机器人使用 {self.caliber}mm 发射机构"
         if self.heat_permanent_lock:
             return "发射机构已永久锁定"
+        # 重装装上后打出的第一发就是验证弹(规则 5.7.1),不打到人、不算伤害。
+        if not self.launcher_verified:
+            error = self.verify_launcher()
+            if error is not None:
+                return error
+            count -= 1
+            if count == 0:
+                return None
         target = self.target_id
         if not self.target_locked or target == 0 or target not in self.other_hp:
             return "没有锁定的敌方目标"
@@ -1346,21 +1606,84 @@ class SimulatedMatch:
             return 0, 0
         return (1, 0) if self.caliber == 17 else (0, 1)
 
+    def track_gaps(self) -> None:
+        """记下规则 5.7.1 的 M、N:本局对方基地血量、控制度比自机这一方多出来的最大值。"""
+        red = _SELF_FACTION == _FACTION_RED
+        own_base, enemy_base = ((self.red_base_hp, self.blue_base_hp) if red
+                                else (self.blue_base_hp, self.red_base_hp))
+        own_cp, enemy_cp = ((self.red_control_points, self.blue_control_points) if red
+                            else (self.blue_control_points, self.red_control_points))
+        self.max_base_gap = max(self.max_base_gap, enemy_base - own_base)
+        self.max_control_gap = max(self.max_control_gap, enemy_cp - own_cp)
+
+    def launcher_unlock_sec(self) -> float:
+        """规则 5.7.1:比赛进行 300 − M/50 − 2N/3 秒后解锁 42mm 安装权限。"""
+        return max(0.0, 300.0 - self.max_base_gap / 50.0 - 2.0 * self.max_control_gap / 3.0)
+
+    def launcher_permission(self) -> bool:
+        """RobotModuleStatus 字段 11(42mm 安装权限,规则手册 5.7.1):完成三级装配,或到了解锁时间。
+        已经装上的当然有权限。"""
+        if self.tech_level[_SELF_FACTION] >= 3:
+            return True
+        me = self.match_elapsed()
+        if me is not None and me >= self.launcher_unlock_sec():
+            return True
+        return _SELF_LOCAL_ID == 1 and self.launcher_ready
+
     def set_module(self) -> str | None:
-        """重装安装模块化 42mm 发射机构：600 HP、Q0=300、冷却 100/s。"""
+        """控制台「装42mm」:在工作台装上模块化 42mm 发射机构。装上后发射机构上电,能买 42mm 弹;
+        要再打出一发验证弹才算成功安装(verify_launcher)。"""
         if _SELF_LOCAL_ID != 1:
             return "只有重装机器人可安装模块化 42mm 发射机构"
         if self.launcher_ready:
-            return "模块化 42mm 发射机构已安装"
-        gained = rules.HEAVY_MAX_HP - _ROBOT_MAX_HP[1]
+            return ("模块化 42mm 发射机构已经成功安装" if self.launcher_verified
+                    else "已经装上了,还差打一发验证弹")
+        me = self.match_elapsed()
+        if me is None:
+            return "比赛未开始或已结束"
+        if self.hp == 0:
+            return "机器人已阵亡"
+        if not self.launcher_permission():
+            return (f"还没有安装权限:要装成三级装配,或等到比赛第 {self.launcher_unlock_sec():.0f} 秒"
+                    f"(规则 5.7.1,基地血量、控制度落后越多越早),现在第 {me:.0f} 秒")
         self.launcher_ready = True
         self.caliber = 42
         self.heat_limit = rules.HEAVY_HEAT_LIMIT
         self.cooling_rate = rules.HEAVY_COOLING
+        self.say("重装装上了 42mm 发射机构:现在能买 42mm 弹;打出一发验证弹后才算成功安装")
+        return None
+
+    def verify_launcher(self) -> str | None:
+        """装上后打出的第一发:被裁判系统测到,重装才算成功安装(规则 5.7.1,发 Event 16)。
+
+        这一发不计热量、初速和伤害。手册没说它不扣允许发弹量,按 5.4.2「每发射 1 发减 1」照扣;
+        允许发弹量是 0 时打出算超发,模拟器不模拟超发后的 42mm 屏蔽,只提醒。"""
+        if _SELF_LOCAL_ID != 1:
+            return "只有重装机器人可安装模块化 42mm 发射机构"
+        if not self.launcher_ready:
+            return "还没装上 42mm 发射机构:先点「装42mm」"
+        if self.launcher_verified:
+            return "已经成功安装了,不用再打验证弹"
+        me = self.match_elapsed()
+        if me is None:
+            return "比赛未开始或已结束"
+        if self.hp == 0:
+            return "机器人已阵亡"
+        if self.is_weak(SELF_ROBOT_ID):
+            return "复活虚弱中，发射机构锁定"
+        overshoot = self.ammo == 0
+        if not overshoot:
+            self.ammo -= 1
+        self.fired_total += 1
+        self._combat_at = me
+        self.launcher_verified = True
+        gained = rules.HEAVY_MAX_HP - self.max_hp
         self.max_hp = rules.HEAVY_MAX_HP
-        if self.hp > 0:
+        if gained > 0:
             self.hp = min(self.max_hp, self.hp + gained)
         self.events.append((16, ""))
+        self.say("验证弹被测到:重装成功安装 42mm 发射机构(Event 16),上限血量 600"
+                 + (";允许发弹量是 0,按规则 5.4.2 这一发算超发" if overshoot else ",扣 1 发允许发弹量"))
         return None
 
     def stage(self) -> tuple[int, int]:
@@ -1466,7 +1789,10 @@ class SimulatedMatch:
         if self.rng.random() < 0.004:
             self.vision_online = not self.vision_online
 
-        if self.vision_online and self.autoaim:
+        if self.radar_lock_override:
+            self.target_locked = True
+            self.target_id = self.radar_lock_override
+        elif self.vision_online and self.autoaim:
             if self.rng.random() < 0.02:
                 self.target_locked = not self.target_locked
                 if self.target_locked:
@@ -1502,6 +1828,7 @@ class SimulatedMatch:
         self.tick_field_hp()
         self.tick_fortress()
         self.tick_zones()
+        self.track_gaps()
         self.tick_respawn()
         self.track_combat()
         self.tick_remote()
@@ -1529,12 +1856,10 @@ class SimulatedMatch:
             self._zone_changed(index, before)
             return
         holder = _FACTION_RED if self.zones[index] == _ZONE_RED_TEMP else _FACTION_BLUE
-        challenger = _FACTION_BLUE if holder == _FACTION_RED else _FACTION_RED
-        self.zones[index] = _ZONE_BLUE_FULL if challenger == _FACTION_BLUE else _ZONE_RED_FULL
-        if index == 0 and self.red_outpost_hp == 0:
-            self.red_outpost_hp = _OUTPOST_REBUILD_HP
-        elif index == 1 and self.blue_outpost_hp == 0:
-            self.blue_outpost_hp = _OUTPOST_REBUILD_HP
+        challenger = _opponent(holder)
+        self.zones[index] = _zone_full(challenger)
+        if self._outpost_hp(index) == 0:
+            self._rebuild_outpost(index, challenger)
         self._zone_changed(index, before)
 
     def tick_zones(self) -> None:
@@ -1644,18 +1969,14 @@ class SimulatedMatch:
 
         # 按 10Hz 折算:0.02 × 均值 50 × 10 tick ≈ 10 HP/s,1500 血约 150s 倒,比基地略早。
         # `> 0` 是边沿判定,不可省:血量已是 0 时再减仍是 0,只看减后结果会让前哨站倒下后每 tick 重播一次。
-        if self.rng.random() < 0.02 and self.blue_outpost_hp > 0:
-            applied = min(self.blue_outpost_hp, self.rng.randint(20, 80))
-            self.blue_outpost_hp -= applied
-            self._deal_damage(False, applied)
-            if self.blue_outpost_hp == 0:
-                self._destroy_outpost(False, _FACTION_RED)
-        if self.rng.random() < 0.018 and self.red_outpost_hp > 0:
-            applied = min(self.red_outpost_hp, self.rng.randint(20, 80))
-            self.red_outpost_hp -= applied
-            self._deal_damage(True, applied)
-            if self.red_outpost_hp == 0:
-                self._destroy_outpost(True, _FACTION_BLUE)
+        for index, chance in ((1, 0.02), (0, 0.018)):
+            hp = self._outpost_hp(index)
+            if self.rng.random() < chance and hp > 0:
+                applied = min(hp, self.rng.randint(20, 80))
+                self._set_outpost_hp(index, hp - applied)
+                self._deal_damage(self.outpost_owner[index] == _FACTION_RED, applied)
+                if applied == hp:
+                    self._destroy_outpost(index)
 
         if self.rng.random() < 0.02:
             applied = (0 if self._base_defended(_FACTION_BLUE)
@@ -1697,6 +2018,14 @@ class SimulatedMatch:
         self.blue_base_hp = _BASE_MAX_HP
         self.red_outpost_hp = _OUTPOST_MAX_HP
         self.blue_outpost_hp = _OUTPOST_MAX_HP
+        self.outpost_owner = [_FACTION_RED, _FACTION_BLUE]
+        self.max_base_gap = 0
+        self.max_control_gap = 0
+        if _SELF_LOCAL_ID == 1:
+            # 每局开局重装都没装 42mm 发射机构(表 5-16 开局默认 400 血)。
+            self.launcher_ready = False
+            self.launcher_verified = False
+            self.max_hp = _ROBOT_MAX_HP[1]
         self.red_economy = _INITIAL_ECONOMY
         self.blue_economy = _INITIAL_ECONOMY
         self.red_economy_total = _INITIAL_ECONOMY
@@ -1723,7 +2052,11 @@ class SimulatedMatch:
         self.rune_status = 1
         self.rune_arms = 0
         self.rune_until = 0.0
+        self.rune_big = False
         self.rune_used = {"small": 0, "big": 0}
+        self.terrain = {}
+        self.terrain_kinds = {}
+        self.terrain_pre_until = 0.0
         self.remote_pending = []
         self._combat_at = None
         self.last_periodic_mark = -1e9
@@ -1925,16 +2258,29 @@ def main() -> int:
     def handle_assembly(operation: int, difficulty: int) -> None:
         """重装装配(2.2.21):0 开始兑换 1 确认装配 2 取消装配。
 
-        模拟的科技核心每 3 秒走一步(放入→平移→旋转),走完才能确认;开始后 30 秒没确认
-        算超时。结果走 Event 15(0 成功 2 超时 6 主动退出)。"""
+        开始要站在装配区上、活着、不虚弱,难度已开放且装成了上一级。科技核心先运动 3 秒到位,
+        之后每 3 秒做完一步(这一级要的步骤见 assembly_steps),做完才能确认。结果走 Event 15
+        (0 成功 2 超时 3 离开装配区过久 4 重装战亡 6 主动退出)。"""
         me = match.match_elapsed()
         if me is None:
             print("[server] 装配指令被忽略:比赛不在进行", file=sys.stderr)
             return
         if operation == 0:
             limit = max_assembly_difficulty(me)
+            done = match.tech_level[_SELF_FACTION]
+            respawn = match.respawn_state.get(SELF_ROBOT_ID)
             if not 1 <= difficulty <= limit:
                 print(f"[server] 装配难度 {difficulty} 还没解锁(当前最高 {limit})", file=sys.stderr)
+                return
+            if difficulty > done + 1 or (difficulty == 4 and done >= 4):
+                print(f"[server] 装配难度 {difficulty} 不能选(已装成 {done} 级,要先装成上一级,四级只能装成一次)",
+                      file=sys.stderr)
+                return
+            if not match.in_assembly_zone:
+                print("[server] 重装不在装配区,不能开始装配", file=sys.stderr)
+                return
+            if (respawn is not None and respawn["dead"]) or match.is_weak(SELF_ROBOT_ID):
+                print("[server] 重装阵亡或虚弱,不能开始装配", file=sys.stderr)
                 return
             if match.assembly is None:
                 match.assembly = {"difficulty": difficulty, "started": me}
@@ -1944,8 +2290,8 @@ def main() -> int:
             match.assembly = None
             print("[server] 重装取消装配")
         elif operation == 1 and match.assembly is not None:
-            if me - float(match.assembly["started"]) < _ASSEMBLY_STEP_SEC * 3:
-                print("[server] 确认装配被忽略:三步还没走完", file=sys.stderr)
+            if not assembly_ready(int(match.assembly["difficulty"]), me - float(match.assembly["started"])):
+                print("[server] 确认装配被忽略:步骤还没做完", file=sys.stderr)
                 return
             done = int(match.assembly["difficulty"])
             match.tech_level[_SELF_FACTION] = max(match.tech_level[_SELF_FACTION], done)
@@ -1956,17 +2302,16 @@ def main() -> int:
     def handle_sentry(client: mqtt.Client, command_id: int) -> None:
         """哨兵指令(2.2.31)。结果码:0 成功 1 姿态切换冷却中 2 金币不足 3 无效指令。"""
         now = match.match_elapsed() or 0.0
+        cost = sentry_command_cost(command_id, now, match.sentry_auto)
         if command_id not in (1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12):
             result = 3
         elif command_id >= 7 and now - match.sentry_last_switch < 5:
             result = 1
-        elif match.sentry_auto and match.coin < 50:
+        elif match.coin < cost:
             result = 2
         else:
             result = 0
-            # 规则 5.7.2:自动哨兵每接受一次指挥手干预花 50 金币。
-            if match.sentry_auto:
-                match._spend_coins(50)
+            match._spend_coins(cost)
             if command_id >= 7:
                 match.sentry_posture = ((command_id - 7) % 3) + 1
                 match.sentry_powered = command_id >= 10
@@ -1993,6 +2338,13 @@ def main() -> int:
         if now - match.last_map_click < .5 or not ascii_ok:
             print("[server] 地图标记被拒:间隔不足 0.5 秒或字母不允许", file=sys.stderr)
             return
+        sentry_id = 7 if _SELF_FACTION == _FACTION_RED else 107
+        to_sentry = command.is_send_all == 2 or (command.is_send_all == 0 and sentry_id in command.robot_id)
+        fee = 50 if to_sentry and match.sentry_auto else 0
+        if match.coin < fee:
+            print("[server] 地图标记被拒:转发给自动哨兵要 50 金币,余额不足", file=sys.stderr)
+            return
+        match._spend_coins(fee)
         match.last_map_click = now
         print(f"[server] 收到地图标记 类型={command.mode} 模式={command.type} "
               f"({command.map_x:.1f}, {command.map_y:.1f})")
@@ -2030,9 +2382,10 @@ def main() -> int:
         print("[server] 我方开始激活能量机关")
 
     def send_buff() -> None:
-        """2.2.14:站在兑换点上时 1Hz 发 Buff 类型 6「可兑换允许发弹量」,离开后不再发。"""
-        if match.at_exchange_point:
-            _publish(client, T_BUFF, pb.Buff(robot_id=SELF_ROBOT_ID, buff_type=6))
+        """2.2.14:自机身上每一种增益 1Hz 发一条,失去后不再发(站在兑换点上是类型 6)。"""
+        for buff_type, level, longest, left in match.self_buffs():
+            _publish(client, T_BUFF, pb.Buff(robot_id=SELF_ROBOT_ID, buff_type=buff_type, buff_level=level,
+                                              buff_max_time=longest, buff_left_time=left))
 
     def send_mark(client: mqtt.Client, kind: int) -> None:
         """模拟指挥手发一个标记:标在敌方重装身上,所有己方车(含哨兵)都收得到。"""
@@ -2117,10 +2470,17 @@ def main() -> int:
         elif cmd == CTRL_MODULE:
             error = match.set_module()
             if error is None:
-                print(f"[server] 重装已安装 42mm 模块,HP={match.max_hp},"
-                      f"Q0={match.heat_limit}")
+                print(f"[server] 重装装上 42mm 发射机构,还差验证弹,Q0={match.heat_limit}")
             else:
+                match.say(f"装42mm 没成功:{error}")
                 print(f"[server] 安装失败: {error}", file=sys.stderr)
+        elif cmd == CTRL_VERIFY_LAUNCHER:
+            error = match.verify_launcher()
+            if error is None:
+                print(f"[server] 验证弹被测到,重装成功安装 42mm 发射机构,HP={match.hp}/{match.max_hp}")
+            else:
+                match.say(f"打验证弹没成功:{error}")
+                print(f"[server] 验证弹失败: {error}", file=sys.stderr)
         elif cmd == CTRL_BUY:
             caliber, rounds = divmod(param, 10000)
             error = match.buy_ammo(caliber, rounds)
@@ -2161,17 +2521,23 @@ def main() -> int:
             print(f"[server] 随机掉血{'开启' if match.auto_hp else '关闭'}")
         elif cmd == CTRL_SET_ZONE:
             zone, state = divmod(param, 10)
+            said = match.note_seq
             if match.set_zone(zone, state):
                 print(f"[server] {_ZONE_NAMES[zone]} -> {_ZONE_STATE_NAMES[state]}")
             else:
-                print(f"[server] 非法阵地设置 序号={zone} 状态={state}", file=sys.stderr)
+                if match.note_seq == said:
+                    match.say(f"阵地没改:序号 {zone} 不能设成状态 {state}")
+                print(f"[server] 阵地没改 序号={zone} 状态={state}: {match.note}", file=sys.stderr)
         elif cmd == CTRL_SET_STRUCTURE_HP:
             index, hp = divmod(param, 10000)
+            said = match.note_seq
             if match.set_structure_hp(index, hp):
                 print(f"[server] {_STRUCTURE_NAMES[index]} 血量设为 "
                       f"{min(hp, _STRUCTURE_MAX_HP[index])}")
             else:
-                print(f"[server] 非法建筑序号 {index}", file=sys.stderr)
+                if match.note_seq == said:
+                    match.say(f"建筑序号 {index} 不对")
+                print(f"[server] 建筑血量没改 序号={index}: {match.note}", file=sys.stderr)
         elif cmd == CTRL_SET_FORTRESS:
             names = {0: "停止激活", 1: "蓝方在激活红方堡垒", 2: "红方在激活蓝方堡垒", 3: "随机"}
             if match.set_fortress(param):
@@ -2187,13 +2553,14 @@ def main() -> int:
                 print(f"[server] {faction}加固失败: {error}", file=sys.stderr)
         elif cmd == CTRL_BLIND:
             side, target_type = divmod(param, 10)
-            if match.trigger_blind(side, target_type):
+            error = match.trigger_blind(side, target_type)
+            if error is None:
                 faction = "红方" if side == _FACTION_RED else "蓝方"
                 print(f"[server] {faction}中镖 "
                       f"目标={_DART_TARGET_NAMES[target_type - 1]}")
             else:
-                print(f"[server] 非法致盲参数 阵营={side} 类型={target_type}",
-                      file=sys.stderr)
+                match.say(f"中镖没成功:{error}")
+                print(f"[server] 中镖失败: {error}", file=sys.stderr)
         elif cmd == CTRL_BLIND_CLEAR:
             match.clear_blind()
             print("[server] 已解除手动致盲")
@@ -2209,6 +2576,7 @@ def main() -> int:
             if error is None:
                 print(f"[server] {'红方' if param == _FACTION_RED else '蓝方'}飞镖闸门开启")
             else:
+                match.say(f"开闸没成功:{error}")
                 print(f"[server] 开闸失败: {error}", file=sys.stderr)
         elif cmd == CTRL_DART_SHOOT:
             side, target_type = divmod(param, 10)
@@ -2216,17 +2584,48 @@ def main() -> int:
             if error is None:
                 print(f"[server] {'红方' if side == _FACTION_RED else '蓝方'}飞镖已发射")
             else:
+                match.say(f"发射没成功:{error}")
                 print(f"[server] 发射失败: {error}", file=sys.stderr)
         elif cmd == CTRL_MARK:
             if param in (1, 2, 3):
                 send_mark(client, param)
             else:
                 print(f"[server] 非法标记类型 {param}", file=sys.stderr)
+        elif cmd == CTRL_ASSEMBLY_ZONE:
+            match.in_assembly_zone = param != 0
+            print(f"[server] 重装{'开进' if match.in_assembly_zone else '开出'}装配区")
+            # 规则手册 5.6.4.7:装配中离开装配区过久算失败。模拟器开出去就算。
+            if not match.in_assembly_zone and match.assembly is not None:
+                match.events.append((15, "3"))
+                match.assembly = None
         elif cmd == CTRL_EXCHANGE_POINT:
             match.at_exchange_point = param != 0
             print(f"[server] 车{'开进' if match.at_exchange_point else '开出'}兑换点")
             # 获得增益时当场发一次(2.2.14),不等下一个 1 秒。
             send_buff()
+        elif cmd == CTRL_ENEMY_RUNE:
+            error = match.enemy_rune(param == 2)
+            if error is None:
+                print(f"[server] 敌方{'大' if param == 2 else '小'}能量机关已激活(只发事件 3/4)")
+            else:
+                print(f"[server] 敌方开能量机关失败: {error}", file=sys.stderr)
+        elif cmd == CTRL_RADAR_LOCK:
+            if param == 0:
+                match.radar_lock_override = 0
+                print("[server] 解除强制雷达标记")
+            elif param in _ENEMY_IDS:
+                match.radar_lock_override = param
+                print(f"[server] 雷达强制标记 {_robot_name(param)}")
+            else:
+                print(f"[server] 雷达标记的车号不对: {param}", file=sys.stderr)
+        elif cmd == CTRL_TERRAIN:
+            error = match.gain_terrain(param)
+            if error is None:
+                name = "高地差一步" if param == _TERRAIN_PRE_HIGHLAND else _TERRAIN[param][0]
+                print(f"[server] 自机拿到地形增益:{name}")
+                send_buff()
+            else:
+                print(f"[server] 地形增益没拿到: {error}", file=sys.stderr)
 
     match.apply_control = apply_control
 
@@ -2333,7 +2732,7 @@ def main() -> int:
             video_transmission=1,
             capacitor=1 if rng.random() > 0.1 else 0,
             uwb=1, rfid=1, light_strip=1,
-            modular_42mm=1 if _SELF_LOCAL_ID == 1 and match.launcher_ready else 0,
+            modular_42mm=1 if _SELF_LOCAL_ID == 1 and match.launcher_permission() else 0,
         ))
 
     def send_position() -> None:
@@ -2462,9 +2861,10 @@ def main() -> int:
             if me >= match.rune_until:
                 big = me >= 180
                 match.rune_status = 3
-                match.rune_until = me + _RUNE_ACTIVE_SEC
+                match.rune_big = big
+                match.rune_until = me + (_BIG_RUNE_ACTIVE_SEC if big else _RUNE_ACTIVE_SEC)
                 if big:
-                    match.events.append((3, "10,9.2"))
+                    match.events.append((3, _BIG_RUNE_EVENT))
                 match.events.append((4, "2" if big else "1"))
                 print(f"[server] 我方{'大' if big else '小'}能量机关已激活")
         elif me is not None and match.rune_status == 3 and me >= match.rune_until:
@@ -2497,21 +2897,20 @@ def main() -> int:
         if _SELF_LOCAL_ID == 1:
             assembly = match.assembly
             elapsed = 0.0 if assembly is None or now is None else now - float(assembly["started"])
-            if assembly is not None and elapsed >= _ASSEMBLY_TIMEOUT_SEC:
+            respawn = match.respawn_state.get(SELF_ROBOT_ID)
+            if assembly is not None and respawn is not None and respawn["dead"]:
+                match.events.append((15, "4"))
+                match.assembly = None
+                assembly = None
+                print("[server] 重装战亡,装配失败")
+            elif assembly is not None and assembly_timed_out(int(assembly["difficulty"]), elapsed):
                 match.events.append((15, "2"))
                 match.assembly = None
                 assembly = None
                 print("[server] 装配超时")
-            step = int(elapsed // _ASSEMBLY_STEP_SEC) if assembly is not None else 0
-            level4 = assembly is not None and int(assembly["difficulty"]) == 4
             _publish(client, T_TECH_CORE, pb.TechCoreMotionStateSync(
-                maximum_difficulty_level=max_assembly_difficulty(now or 0.0),
-                basic_state=1 if assembly is None else (2 if step < 3 else 3),
-                putin_state=int(step >= 1), move_state=int(step >= 2), rotate_state=int(step >= 3),
-                enemy_core_status=0,
-                remain_time_all=max(0, int(_ASSEMBLY_TIMEOUT_SEC - elapsed)) if level4 else 0,
-                remain_time_step=(max(0, int(_ASSEMBLY_STEP_SEC * (step + 1) - elapsed))
-                                  if level4 and step < 3 else 0)))
+                maximum_difficulty_level=max_assembly_difficulty(now or 0.0), enemy_core_status=0,
+                **tech_core_state(None if assembly is None else int(assembly["difficulty"]), elapsed)))
         if _SELF_LOCAL_ID == 6:
             sentry_id = 7 if _SELF_FACTION == _FACTION_RED else 107
             _publish(client, T_SENTRY_STATUS, pb.SentryStatusSync(
@@ -2553,11 +2952,18 @@ def main() -> int:
             "combat": [match.out_of_combat(), match.out_of_combat_countdown()],
             "respawn": list(match.respawn_status()[:4]),
             "self_ammo": match.ammo,
+            "outpost_owner": list(match.outpost_owner),
+            "launcher": [match.launcher_ready, match.launcher_verified, match.launcher_permission(),
+                         round(match.launcher_unlock_sec())],
+            "note": match.note, "note_seq": match.note_seq,
             "exchange_point": match.at_exchange_point,
+            "assembly_zone": match.in_assembly_zone,
             "km": match.km_summary(),
         }))
 
     workers = [
+        # 50Hz 云台/自瞄/目标状态:雷达的「被标记」就来自这里的 target_locked(以前没人调,模拟器从不标记)。
+        threading.Thread(target=loop, args=(1 / 50, match.tick_fast), daemon=True),
         threading.Thread(target=loop, args=(1 / 10, send_arm_feedback), daemon=True),
         threading.Thread(target=loop, args=(1 / 5, send_game_status), daemon=True),
         threading.Thread(target=loop, args=(1 / 10, send_dynamic), daemon=True),

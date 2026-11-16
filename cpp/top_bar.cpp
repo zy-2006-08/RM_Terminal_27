@@ -7,6 +7,7 @@
 #include <QQuickItem>
 #include <QUrl>
 #include <QVariantMap>
+#include <algorithm>
 
 namespace rm_terminal {
 
@@ -45,7 +46,7 @@ TopBar::TopBar(QWidget* parent) : QQuickWidget(parent) {
     setSource(QUrl(QStringLiteral("qrc:/qml/TopBar.qml")));
 }
 
-void TopBar::setSnapshot(const Snapshot& snapshot) { apply(top_bar_model(snapshot)); }
+void TopBar::setSnapshot(const Snapshot& snapshot, const BuffBoard* buffs) { apply(top_bar_model(snapshot, buffs)); }
 
 void TopBar::apply(const TopBarModel& model) {
     QQuickItem* root = rootObject();
@@ -64,12 +65,12 @@ void TopBar::apply(const TopBarModel& model) {
     root->setProperty("redOutpostMaxHp",
                       model.red.outpost_max_hp ? *model.red.outpost_max_hp : 0u);
     root->setProperty("redOutpostHasHp", model.red.has_outpost_hp());
-    root->setProperty("redOutpostBlue", model.red.outpost_controlled_by_blue);
+    root->setProperty("redOutpostBlue", model.red.outpost_owned_by_blue);
     root->setProperty("blueOutpostHp", model.blue.outpost_hp ? *model.blue.outpost_hp : 0u);
     root->setProperty("blueOutpostMaxHp",
                       model.blue.outpost_max_hp ? *model.blue.outpost_max_hp : 0u);
     root->setProperty("blueOutpostHasHp", model.blue.has_outpost_hp());
-    root->setProperty("blueOutpostBlue", model.blue.outpost_controlled_by_blue);
+    root->setProperty("blueOutpostBlue", model.blue.outpost_owned_by_blue);
 
     // -1 = 没有数据,QML 整行不画。
     const auto code = [](const std::optional<std::uint32_t>& value) {
@@ -77,6 +78,8 @@ void TopBar::apply(const TopBarModel& model) {
     };
     root->setProperty("redBaseStatus", code(model.red.base_status));
     root->setProperty("blueBaseStatus", code(model.blue.base_status));
+    root->setProperty("redDefenseText", model.red.defense_text);
+    root->setProperty("blueDefenseText", model.blue.defense_text);
     root->setProperty("redControl", code(model.red.control_points));
     root->setProperty("blueControl", code(model.blue.control_points));
 
