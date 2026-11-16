@@ -145,6 +145,7 @@ QString alert_kind_title(const QString& kind) {
     if (kind == QLatin1String("energy")) return QStringLiteral("能量机关时间点");
     if (kind == QLatin1String("low_hp")) return QStringLiteral("敌方残血");
     if (kind == QLatin1String("base")) return QStringLiteral("我方基地被攻击");
+    if (kind == QLatin1String("intrusion")) return QStringLiteral("敌方进入我方半场");
     return kind;
 }
 

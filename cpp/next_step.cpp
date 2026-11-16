@@ -1,5 +1,6 @@
 #include "next_step.h"
 
+#include "field_zones.h"
 #include "match_event.h"
 #include "presentation.h"
 #include "radar_intel.h"
@@ -184,6 +185,15 @@ std::vector<NextCard> next_candidates(const Snapshot& snapshot, bool base_hit, c
         card.category = QStringLiteral("防守");
         card.title = QStringLiteral("回防我方堡垒");
         card.reason = QStringLiteral("敌方正在激活：%1 秒 / 10 秒").arg(*fortress);
+        // 雷达看得到站在我方堡垒增益点上的那台,就写是谁。
+        for (const RobotHealth& robot : snapshot.robot_health) {
+            if (robot.faction != theirs) continue;
+            const auto at = position_of(snapshot, robot.id.value);
+            if (!at || zone_at({at->first, at->second}, ours) != FieldZone::Fortress) continue;
+            card.reason = QStringLiteral("敌方 %1在偷：%2 秒 / 10 秒").arg(robot_name(robot.id.value)).arg(*fortress);
+            card.enemy_id = robot.id.value;
+            break;
+        }
         // 规则 5.6.4.9:在激活对方堡垒的车 100% 易伤,对方基地护甲展开后就没有了。
         if (our_base_status && *our_base_status != kArmorDeployed) card.reason += QStringLiteral("，它 100% 易伤");
         card.speech = QStringLiteral("敌方在偷堡垒，回防");

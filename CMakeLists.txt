@@ -47,7 +47,8 @@ add_library(terminal_presentation cpp/presentation.cpp cpp/ui_mode.cpp cpp/ui_mo
     cpp/match_alerts.cpp cpp/match_alerts.h
     cpp/layout_profile.cpp cpp/layout_profile.h
     cpp/map_marks.cpp cpp/map_marks.h cpp/next_step.cpp cpp/next_step.h
-    cpp/buff_ledger.cpp cpp/buff_ledger.h)
+    cpp/buff_ledger.cpp cpp/buff_ledger.h
+    cpp/field_zones.cpp cpp/field_zones.h)
 target_link_libraries(terminal_presentation PUBLIC terminal_domain terminal_logging Qt6::Core)
 
 # 操作手个性化界面:方案模型、藏面板后的补位规则、存盘。只链 Qt6::Core,

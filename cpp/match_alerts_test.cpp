@@ -44,6 +44,16 @@ int count(const std::vector<rm_terminal::MatchAlert>& alerts, AlertKind kind) {
     return n;
 }
 
+rm_terminal::MapRobot radar_robot(std::uint32_t id, double x, double y) {
+    rm_terminal::MapRobot robot;
+    robot.id = rm_terminal::RobotId{id};
+    robot.faction = rm_terminal::faction_of(id);
+    robot.from_radar = true;
+    set(robot.position.x, x);
+    set(robot.position.y, y);
+    return robot;
+}
+
 MatchAlerts red_alerts(rm_terminal::MatchAlertSettings settings = {}) {
     settings.self_faction = 1;
     return MatchAlerts(settings);
@@ -216,6 +226,93 @@ void fortress_thief_text() {
     set<std::int32_t>(snapshot.game.red_fortress_activation_sec, 1);
     const QString plain = banner_of(deployed.observe(snapshot, 250));
     check(plain == QStringLiteral("敌方在激活我方堡垒"), "armor deployed: no vulnerability to mention");
+
+    // 雷达看得到站在我方堡垒增益点上的那台:直接写是谁。
+    auto named = red_alerts();
+    set<std::uint32_t>(snapshot.game.red_base_status, 1u);
+    set<std::int32_t>(snapshot.game.red_fortress_activation_sec, 0);
+    named.observe(snapshot, 0);
+    snapshot.map_robots.push_back(radar_robot(103, 6.5, 7.4));
+    snapshot.map_robots.push_back(radar_robot(104, 20.0, 3.0));
+    set<std::int32_t>(snapshot.game.red_fortress_activation_sec, 1);
+    const QString who = banner_of(named.observe(snapshot, 250));
+    check(who == QStringLiteral("敌方 3 号步兵在激活我方堡垒 · 易伤100%"), "the robot on our fortress is named");
+}
+
+QString intrusion_banner(const std::vector<rm_terminal::MatchAlert>& out) {
+    for (const auto& alert : out)
+        if (alert.kind == AlertKind::Intrusion) return alert.banner;
+    return QString();
+}
+
+void intrusion_names_the_route() {
+    // 敌方 3 号在蓝方半场 x=16 往红方走,在 y=7 过中线:中央高地。
+    auto alerts = red_alerts();
+    auto snapshot = in_match(120);
+    snapshot.map_robots = {radar_robot(103, 16.0, 7.0)};
+    check(intrusion_banner(alerts.observe(snapshot, 1000)).isEmpty(), "still in its own half");
+    snapshot.map_robots = {radar_robot(103, 14.1, 7.0)};
+    check(intrusion_banner(alerts.observe(snapshot, 1500)).isEmpty(), "within 0.3 m of the midline: not yet");
+    snapshot.map_robots = {radar_robot(103, 13.2, 7.2)};
+    check(intrusion_banner(alerts.observe(snapshot, 2000)) == QStringLiteral("敌方 3 号步兵从中央高地坡进入我方半场"),
+          "crossing the middle band is the central highland");
+    snapshot.map_robots = {radar_robot(103, 13.9, 7.2)};
+    alerts.observe(snapshot, 2500);
+    snapshot.map_robots = {radar_robot(103, 14.5, 7.2)};
+    alerts.observe(snapshot, 3000);
+    snapshot.map_robots = {radar_robot(103, 13.0, 7.2)};
+    check(intrusion_banner(alerts.observe(snapshot, 4000)).isEmpty(), "back and forth within 15 s: once");
+
+    // 4 号从下面那头过中线:隧道。
+    snapshot.map_robots = {radar_robot(104, 15.5, 1.0)};
+    alerts.observe(snapshot, 5000);
+    snapshot.map_robots = {radar_robot(104, 12.8, 1.2)};
+    check(intrusion_banner(alerts.observe(snapshot, 5800)) == QStringLiteral("敌方 4 号步兵从隧道进入我方半场"),
+          "crossing at the bottom end is the tunnel");
+
+    // 雷达跟丢了 5 秒,再看到就已经在我方半场:不写来路。
+    snapshot.map_robots = {radar_robot(101, 16.0, 7.0)};
+    alerts.observe(snapshot, 6000);
+    snapshot.map_robots = {radar_robot(101, 10.0, 7.0)};
+    check(intrusion_banner(alerts.observe(snapshot, 11000)) == QStringLiteral("敌方 1 号重装进入我方半场"),
+          "lost track: no route");
+
+    // 雷达情报里我方公路上方的跨越点有车:以它为准。
+    snapshot.map_robots = {radar_robot(107, 16.0, 7.0)};
+    alerts.observe(snapshot, 12000);
+    snapshot.map_robots = {radar_robot(107, 13.0, 7.0)};
+    snapshot.radar_intel.emplace();
+    snapshot.radar_intel->field_fresh = true;
+    snapshot.radar_intel->crossings = 1u << 3;
+    check(intrusion_banner(alerts.observe(snapshot, 12500)) == QStringLiteral("敌方 7 号哨兵从起伏路段进入我方半场"),
+          "radar crossing bits win over the position guess");
+
+    // 一直在我方半场里、从没见它在自己那半场:不报。
+    auto fresh_start = red_alerts();
+    snapshot.radar_intel.reset();
+    snapshot.map_robots = {radar_robot(103, 10.0, 7.0)};
+    check(intrusion_banner(fresh_start.observe(snapshot, 1000)).isEmpty(), "already inside when we started: quiet");
+}
+
+void field_zones() {
+    using rm_terminal::FieldZone;
+    using rm_terminal::zone_at;
+    check(zone_at({2.46, 7.5}, 1) == FieldZone::BaseBuff, "red base buff");
+    check(zone_at({25.54, 7.5}, 2) == FieldZone::BaseBuff && !zone_at({25.54, 7.5}, 1), "blue base is blue's only");
+    check(zone_at({6.57, 7.5}, 1) == FieldZone::Fortress && zone_at({21.43, 7.5}, 2) == FieldZone::Fortress,
+          "fortress on both sides");
+    check(zone_at({10.6, 7.5}, 1) == FieldZone::CentralHighland && zone_at({17.4, 7.5}, 2) == FieldZone::CentralHighland,
+          "central highland strips");
+    check(zone_at({1.0, 1.0}, 1) == FieldZone::SupplyZone && zone_at({27.0, 14.0}, 2) == FieldZone::SupplyZone,
+          "supply zones in the corners");
+    check(zone_at({1.4, 12.2}, 1) == FieldZone::HighPoint, "red high point");
+    check(zone_at({14.0, 7.5}, 1) == FieldZone::AssemblyZone && zone_at({14.0, 7.5}, 2) == FieldZone::AssemblyZone,
+          "assembly zone is shared");
+    check(!zone_at({14.0, 3.0}, 1), "the middle of the road is nobody's zone");
+    check(rm_terminal::route_at_midline(7.5) == rm_terminal::FieldRoute::Highland &&
+              rm_terminal::route_at_midline(1.0) == rm_terminal::FieldRoute::Tunnel &&
+              rm_terminal::route_at_midline(14.0) == rm_terminal::FieldRoute::Tunnel,
+          "midline bands");
 }
 
 void enemy_low_hp_per_robot() {
@@ -254,7 +351,7 @@ void disabled_kinds_and_phrases() {
         bool known = false;
         for (const auto kind : {AlertKind::OutpostTemp, AlertKind::ControlBehind, AlertKind::Fortress,
                                 AlertKind::DartGate, AlertKind::Energy,
-                                AlertKind::EnemyLowHp, AlertKind::BaseAttacked})
+                                AlertKind::EnemyLowHp, AlertKind::BaseAttacked, AlertKind::Intrusion})
             known = known || rm_terminal::alert_kind_name(kind) == name;
         check(known, "every config kind name maps to an alert kind");
     }
@@ -286,6 +383,8 @@ int main() {
     alerts_follow_the_seat();
     fortress_and_base();
     fortress_thief_text();
+    intrusion_names_the_route();
+    field_zones();
     enemy_low_hp_per_robot();
     disabled_kinds_and_phrases();
     banner_queue_orders_and_expires();

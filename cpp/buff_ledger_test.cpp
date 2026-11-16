@@ -378,6 +378,38 @@ void outside_match_is_empty() {
     check(board.chips.count(103) == 0, "a new round does not read as a revival");
 }
 
+void place(Snapshot& s, std::uint32_t id, double x, double y) {
+    rm_terminal::MapRobot robot;
+    robot.id = RobotId{id};
+    robot.faction = rm_terminal::faction_of(id);
+    robot.from_radar = true;
+    set(robot.position.x, x);
+    set(robot.position.y, y);
+    s.map_robots.push_back(robot);
+}
+
+// 按雷达位置推的增益点:红方 3 号终端,比赛第 200 秒(重装开局防御已经没了)。
+void zones_by_position() {
+    BuffTracker tracker;
+    Snapshot s = match();
+    place(s, 4, 10.6, 7.5);      // 队友在红方中央高地增益点上
+    place(s, 103, 17.4, 7.5);    // 敌方在蓝方中央高地增益点上
+    place(s, 7, 2.46, 7.5);      // 我方哨兵在基地增益点上
+    place(s, 101, 27.0, 14.0);   // 敌方重装在蓝方补给区
+    place(s, 104, 6.5, 7.4);     // 敌方 4 号在偷我方堡垒
+    set<std::int32_t>(s.game.red_fortress_activation_sec, 3);
+    set<std::uint32_t>(s.game.red_base_status, 1u);
+    const BuffBoard board = tracker.update(s, 1000);
+    check(has_chip(board, 4, QStringLiteral("约防御25%"), BuffTone::Good), "teammate on the central highland strip");
+    check(has_chip(board, 103, QStringLiteral("约防御25%"), BuffTone::Good), "enemy on its central highland strip");
+    check(has_chip(board, 7, QStringLiteral("约防御50%"), BuffTone::Good), "our sentry on the base buff point");
+    check(has_chip(board, 101, QStringLiteral("约无敌"), BuffTone::Good) &&
+              has_chip(board, 101, QStringLiteral("约回血10%"), BuffTone::Good),
+          "enemy hero in its supply zone is invincible");
+    check(has_chip(board, 104, QStringLiteral("约易伤100%"), BuffTone::Bad), "the robot stealing our fortress");
+    check(board.chips.count(3) == 0, "self never uses position guesses");
+}
+
 }  // namespace
 
 int main() {
@@ -397,6 +429,7 @@ int main() {
     already_active_when_opened();
     opened_mid_rune_then_enemy_activates();
     outside_match_is_empty();
+    zones_by_position();
     if (failures == 0) std::printf("buff_ledger: all checks passed\n");
     return failures == 0 ? 0 : 1;
 }

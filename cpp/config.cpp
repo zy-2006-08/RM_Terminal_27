@@ -73,7 +73,7 @@ const QStringList& alert_kind_names() {
     static const QStringList names{
         QStringLiteral("outpost"), QStringLiteral("control"), QStringLiteral("fortress"),
         QStringLiteral("dart"),    QStringLiteral("energy"),
-        QStringLiteral("low_hp"),  QStringLiteral("base")};
+        QStringLiteral("low_hp"),  QStringLiteral("base"), QStringLiteral("intrusion")};
     return names;
 }
 

@@ -1,5 +1,6 @@
 #include "buff_ledger.h"
 
+#include "field_zones.h"
 #include "match_event.h"
 #include "radar_intel.h"
 
@@ -142,6 +143,49 @@ void apply_intel(Effects& e, const EnemyIntel& intel) {
     if (intel.attack_percent > 0) e.attack.offer(times_percent(static_cast<std::int32_t>(intel.attack_percent)), std::nullopt, false);
     e.cooling_plus.offer(static_cast<int>(intel.cooling), std::nullopt, false);
     e.heal.offer(static_cast<int>(intel.heal_percent), std::nullopt, false);
+}
+
+std::optional<FieldPoint> map_position(const Snapshot& snapshot, std::uint32_t id) {
+    for (const MapRobot& robot : snapshot.map_robots) {
+        if (robot.id.value != id) continue;
+        const auto x = fresh(robot.position.x);
+        const auto y = fresh(robot.position.y);
+        if (x && y) return FieldPoint{*x, *y};
+    }
+    return std::nullopt;
+}
+
+// 按雷达位置推的场地增益点(field_zones.h,规则 5.6.4)。站上去不一定激活了(要检测到场地交互卡),
+// 全都算「约」。
+void apply_zone(Effects& e, FieldPoint at, std::uint32_t faction, std::uint32_t number, const GameFields<Field>& game) {
+    const bool red = faction == kRed;
+    const std::optional<FieldZone> zone = zone_at(at, faction);
+    if (zone) switch (*zone) {
+    case FieldZone::BaseBuff:
+    case FieldZone::HighPoint: e.defense.offer(50, std::nullopt, true); break;
+    case FieldZone::CentralHighland: e.defense.offer(25, std::nullopt, true); break;
+    case FieldZone::Fortress: {
+        // 自己的前哨阵地不在自己手里时,自己的堡垒增益点才生效。
+        const auto outpost = valid(red ? game.red_outpost_zone : game.blue_outpost_zone);
+        const bool own_outpost = outpost && (red ? (*outpost == 1 || *outpost == 2) : (*outpost == 3 || *outpost == 4));
+        if (outpost && !own_outpost) e.defense.offer(50, std::nullopt, true);
+        break;
+    }
+    case FieldZone::SupplyZone:
+        e.heal.offer(10, std::nullopt, true);
+        if (number == 1) e.invincible.offer(1, std::nullopt, true);
+        break;
+    case FieldZone::AssemblyZone:
+        if (number == 1) e.maybe_invincible = true;
+        break;
+    case FieldZone::OutpostBuff: break;
+    }
+    // 站在对方堡垒增益点上、对方堡垒正被激活、对方基地护甲还没展开:100% 易伤。
+    const bool other_red = !red;
+    const auto activation = valid(other_red ? game.red_fortress_activation_sec : game.blue_fortress_activation_sec);
+    const auto other_base = valid(other_red ? game.red_base_status : game.blue_base_status);
+    if (zone_at(at, opponent_of(faction)) == FieldZone::Fortress && activation && *activation > 0 && other_base != 2u)
+        e.vulnerable.offer(100, std::nullopt, true);
 }
 
 void apply_posture(Effects& e, const SentryPostureInfo& sentry) {
@@ -533,6 +577,8 @@ BuffBoard BuffTracker::update(const Snapshot& snapshot, MonotonicMs now) {
                 if (number == 1 && elapsed && *elapsed < kHeroEarlySec && !(own && snapshot.launcher_installed))
                     e.defense.offer(50, kHeroEarlySec - *elapsed, !own);
                 if (own && number == 7 && board.sentry) apply_posture(e, *board.sentry);
+                if (!is_self)
+                    if (const auto at = map_position(snapshot, id)) apply_zone(e, *at, faction, number, snapshot.game);
             }
             if (!own)
                 for (const MapRobot& robot : snapshot.map_robots)

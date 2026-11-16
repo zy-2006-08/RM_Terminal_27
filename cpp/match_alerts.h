@@ -1,6 +1,7 @@
 #pragma once
 
 #include "domain.h"
+#include "field_zones.h"
 #include "seat.h"
 
 #include <QString>
@@ -14,7 +15,7 @@
 namespace rm_terminal {
 
 // 比赛中的事件提醒:前哨阵地易手、控制度落后、敌方在激活我方堡垒、飞镖闸门、能量机关、
-// 敌方残血、我方基地被攻击。纯逻辑 —— 输入快照,输出这一刻新触发的提醒,不碰界面和
+// 敌方残血、我方基地被攻击、敌方进入我方半场(写从哪条路来)。纯逻辑 —— 输入快照,输出这一刻新触发的提醒,不碰界面和
 // 音频,所以「同一次临时控制只提醒一次」这类规则都能在单元测试里逐条钉住。
 //
 // 时间点按《RoboMaster 2027 超级对抗赛比赛规则手册》V1.0.0(20261015):
@@ -31,6 +32,7 @@ enum class AlertKind {
     Energy,
     EnemyLowHp,
     BaseAttacked,
+    Intrusion,
 };
 
 // 横幅颜色和排队优先级。
@@ -71,6 +73,11 @@ struct MatchAlertSettings {
 constexpr double kLowHpRatio = 0.25;
 constexpr double kLowHpRearmRatio = 0.5;
 constexpr MonotonicMs kBaseAttackedQuietMs = 10000;
+// 入侵:离中线这么远才算进了哪一方的半场(雷达在中线附近抖不会来回报);同一台敌车这么久只报一次;
+// 过中线前最后一次在它那半场的位置超过这么久,就不推来路了。
+constexpr double kIntrusionMarginM = 0.3;
+constexpr MonotonicMs kIntrusionQuietMs = 15000;
+constexpr MonotonicMs kIntrusionTrackMs = 3000;
 // 时间点只在刚越过的 5 秒内触发:时钟跳过去(重连、模拟器跳转)时补报几分钟前的
 // 「能量机关可以激活了」只会误导。
 constexpr std::int32_t kTimelineFreshSec = 5;
@@ -97,6 +104,15 @@ private:
     bool control_armed_ = true;
     // 每台敌方机器人一个开关:报过残血就关,血量回到一半以上或阵亡后再打开。
     std::map<std::uint32_t, bool> low_hp_armed_;
+    struct Intruder {
+        bool inside = false;
+        FieldPoint last_outside;
+        std::optional<MonotonicMs> last_outside_at;
+        std::optional<MonotonicMs> last_alert;
+    };
+    std::map<std::uint32_t, Intruder> intruders_;
+    FieldRoute last_radar_route_ = FieldRoute::Unknown;
+    std::optional<MonotonicMs> last_radar_route_at_;
 };
 
 // 横幅排队。同时来几条时按级别排(严重的先),同级先来先播;每条显示 kBannerShowMs;

@@ -312,6 +312,14 @@ void fortress_thief_is_vulnerable() {
     set<std::uint32_t>(s.game.red_base_status, 2);
     card = find(s, NextRule::DefendFortress);
     check(card && !card->reason.contains(QStringLiteral("易伤")), "armor already deployed: no vulnerability");
+
+    // 雷达看得到站在我方堡垒增益点上的那台:写是谁,花名册那一行挂上卡片编号。
+    set<std::uint32_t>(s.game.red_base_status, 1);
+    set(s.map_robots[0].position.x, 6.6);
+    set(s.map_robots[0].position.y, 7.5);
+    card = find(s, NextRule::DefendFortress);
+    check(card && card->reason.startsWith(QStringLiteral("敌方 3 号步兵在偷：4 秒 / 10 秒")) && card->enemy_id == 103u,
+          "the robot on our fortress is named");
 }
 
 }  // namespace
