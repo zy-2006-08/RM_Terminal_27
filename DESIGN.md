@@ -58,7 +58,9 @@ up to 1920×1080. Top bar 106 px.
   three text lines below (flip point red when we are projected to lose, buffs, next timeline mark). Short
   cards drop the plot before any text. Rules live in `大局判断表.md`.
 - Next step (`next_step.{h,cpp}`): fixed rule table in five groups (save life, defend, seize
-  chances, resupply, score). Top 1–3 cards; a card stays at least the dwell time; a more urgent
+  chances, resupply, score). One exception to the table order: while a heal card is up, a focus-fire
+  card whose target the rounds on hand can finish (within 4 heat cycles) goes just ahead of it.
+  Top 1–3 cards; a card stays at least the dwell time; a more urgent
   item may cut in; a resolved item leaves at once. Card numbers match roster badges. Shot counts
   include our attack buff and the enemy structure defense; no shooting cards while we are weak.
 - Revive popup follows the official client and sits below the next-step cards.
@@ -88,9 +90,10 @@ kept and set aside, never overwritten). Locked from the start of a match until t
 pre-match stage, also across disconnects.
 
 ## 7. Scope and verification limits
-Next-step thresholds (30 % HP, 50 rounds / 5 for the hero, 45 s after the rune opens, base hit
-within 5 s) are unverified initial values; rune times reuse the alert timeline and are not yet
-checked against the 2027 manual; "which zone to take" ignores distance (no 2027 field map).
+Next-step thresholds (25 % HP, 50 rounds / 5 for the hero, 4 heat cycles to count as a kill,
+45 s after the rune opens, base hit within 5 s) are unverified initial values; rune times are
+checked against manual 5.6.3; "which zone to take" ignores distance (the field coordinates in
+`field_zones` are not used by that rule yet).
 The global font size, panel opacity and animation switches shown in mockup 8 are not built.
 Verified by ctest (offscreen), the acceptance scripts against the simulator and Xvfb
 screenshots; not yet on the operators' own Wayland/GPU screens.
