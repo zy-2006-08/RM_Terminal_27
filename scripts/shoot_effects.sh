@@ -78,7 +78,9 @@ done_shot() { wait "$SHOT"; echo "$1 -> $?"; }
 # 第一块：增益。
 scene_buffs() {
     # 步兵：大能量机关（攻击×3）+ 敌方小机关 + 地形 + 敌方 4 号复活 + 雷达标记 + 蓝方基地 300 血
+    # 第一块拍的是没有雷达情报时按规则推的样子，模拟器的雷达情报先关掉。
     start_sim 3
+    ctl radar-intel off
     ctl structure 1 300
     ctl buy 17 100
     ctl zone 1 2
@@ -121,7 +123,55 @@ scene_buffs() {
     stop_sim
 }
 
-declare -F "scene_$BLOCK" > /dev/null || fail "用法: bash scripts/shoot_effects.sh {buffs}"
+# 敌方 4 号读条复活：打掉以后读条立刻走完，复活后无敌且虚弱。
+revive_enemy_4() {
+    ctl hp 104 0
+    sleep 1
+    ctl revive 104
+}
+
+# 第二块：雷达情报。同一局面拍有情报、没情报、情报断了三种。
+scene_radar() {
+    start_sim 3
+    for size in 1440x900 1280x760 1920x1080; do
+        revive_enemy_4
+        capture 3 "$size" 9000 "infantry-$size.png"
+        sleep 3
+        ctl enemy-rune small
+        ctl radar-lock 104
+        done_shot "infantry $size"
+    done
+
+    ctl radar-intel off
+    revive_enemy_4
+    capture 3 1440x900 9000 infantry-no-intel-1440x900.png
+    sleep 3
+    ctl enemy-rune small
+    ctl radar-lock 104
+    done_shot "no intel"
+
+    ctl radar-intel on
+    revive_enemy_4
+    capture 3 1440x900 12000 infantry-stale-1440x900.png
+    sleep 3
+    ctl enemy-rune small
+    ctl radar-lock 104
+    sleep 2
+    ctl radar-intel off
+    done_shot stale
+    stop_sim
+
+    # 重装也收得到；指挥手没有 0x0310，还是按规则推（等官方组网答疑）。
+    start_sim 1
+    revive_enemy_4
+    capture 1 1440x900 9000 hero-1440x900.png
+    sleep 3
+    ctl enemy-rune small
+    done_shot hero
+    stop_sim
+}
+
+declare -F "scene_$BLOCK" > /dev/null || fail "用法: bash scripts/shoot_effects.sh {buffs|radar}"
 mkdir -p "$OUT"
 mosquitto -p "$P" > "$RUN/logs/mosquitto.log" 2>&1 &
 PIDS+=("$!")
