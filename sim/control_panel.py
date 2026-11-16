@@ -402,6 +402,10 @@ for terrain_name, terrain_key in (("自机过高地", "highland"), ("过公路",
                                   ("跨隧道", "tunnel"), ("穿隧道", "through"), ("高地差一步", "pre")):
     button(buff_row, terrain_name,
            lambda k=terrain_key, n=terrain_name: act(f"地形增益({n})", "terrain", k)).pack(side="left", padx=2)
+button(buff_row, "雷达情报停",
+       lambda: act("雷达情报停发", "radar-intel", "off")).pack(side="left", padx=2)
+button(buff_row, "雷达情报恢复",
+       lambda: act("雷达情报恢复", "radar-intel", "on")).pack(side="left", padx=2)
 
 
 # ---------------- 链路：测终端断线时的反应 ----------------

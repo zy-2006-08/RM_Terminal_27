@@ -6,6 +6,7 @@ import json
 import math
 import os
 import random
+import struct
 import sys
 import threading
 import time
@@ -99,6 +100,8 @@ CTRL_VERIFY_LAUNCHER = 0x2B  # 重装打出验证弹,成功安装模块化 42mm 
 CTRL_ENEMY_RUNE = 0x2C       # param = 1 敌方激活小能量机关, 2 大能量机关(只发 Event 3/4,我方状态不变)
 CTRL_TERRAIN = 0x2D          # param = 1 高地 2 公路 3 跨越隧道 4 穿越隧道 5 踩了高地下面的卡,自机拿地形增益
 CTRL_RADAR_LOCK = 0x2E       # param = 敌方车号(0 解除),强制雷达把它标成「被标记」,测地图上的标记
+CTRL_RADAR_INTEL = 0x2F      # param = 1 车经 0x0310 带雷达情报(默认), 0 停发,终端 3 秒后写「过期」
+CTRL_REVIVE = 0x30           # param = 车号,阵亡的车读条立刻走完复活(无敌且虚弱),省得等 30 秒
 _CTRL_NAMES = {
     CTRL_BEGIN: "开赛",
     CTRL_HOLD: "暂停",
@@ -130,6 +133,8 @@ _CTRL_NAMES = {
     CTRL_ENEMY_RUNE: "敌方激活能量机关",
     CTRL_TERRAIN: "自机拿地形跨越增益",
     CTRL_RADAR_LOCK: "强制雷达标记",
+    CTRL_RADAR_INTEL: "雷达情报开关",
+    CTRL_REVIVE: "读条立刻复活",
 }
 
 # 阵地顺序与 GameStatus 的四个字段一一对应,写死顺序是因为控制指令按序号寻址。
@@ -654,6 +659,12 @@ class SimulatedMatch:
         self.rune_until = 0.0
         self.rune_big = False
         self.rune_used = {"small": 0, "big": 0}
+        # 敌方能量机关(enemy-rune 开的):雷达情报里敌方的防御、攻击按它算。
+        self.enemy_rune_until = 0.0
+        self.enemy_rune_big = False
+        # 模拟雷达把信息波转给车、车放进 0x0310(雷达情报格式.md);radar-intel off 模拟雷达断了。
+        self.radar_intel_on = True
+        self.radar_intel_seq = 0
         # 自机的地形跨越增益:Buff 类型 -> (增益值, 结束的比赛秒, 最大时长)。阵亡清掉(5.6.4.5)。
         self.terrain: dict[int, tuple[int, float, float]] = {}
         # 拿到过哪几种地形增益,各自到什么时候:判断「又拿到另一种」用。
@@ -1036,7 +1047,57 @@ class SimulatedMatch:
         if big:
             self.events.append((3, _ENEMY_BIG_RUNE_EVENT))
         self.events.append((4, "2" if big else "1"))
+        self.enemy_rune_big = big
+        self.enemy_rune_until = me + (_BIG_RUNE_ACTIVE_SEC if big else _RUNE_ACTIVE_SEC)
         return None
+
+    def enemy_intel_robot(self, robot_id: int, me: float) -> tuple[int, int, int, int, int, int]:
+        """一台敌车在 0x0A05 里的数:(回血, 冷却, 防御, 易伤, 攻击, 主要状态)。按规则编的。"""
+        number = robot_id % 100
+        defense = attack = 0
+        if self.enemy_rune_until > me:
+            defense = dict(_BIG_RUNE_BUFFS)[2] if self.enemy_rune_big else 25
+            attack = dict(_BIG_RUNE_BUFFS)[1] if self.enemy_rune_big else 0
+        if number == 1 and me < _HERO_EARLY_SEC:
+            defense = max(defense, 50)
+        if number == 7:
+            defense = max(defense, 50)  # 敌方哨兵一直是防御姿态
+        if self.other_hp.get(robot_id, 0) == 0:
+            state = 1
+        elif self.is_invincible(robot_id):
+            state = 3 if self.is_weak(robot_id) else 2
+        else:
+            state = 0
+        return 0, 0, defense, 0, attack, state
+
+    def radar_intel_packet(self) -> bytes | None:
+        """雷达经 0x0301 转给车的 81 字节(雷达情报格式.md)。数是编的:发弹量和金币随比赛时间变。"""
+        me = self.match_elapsed()
+        if me is None or not self.radar_intel_on:
+            return None
+        self.radar_intel_seq = (self.radar_intel_seq + 1) & 0xFFFF
+        order = sorted(_ENEMY_IDS, key=lambda rid: rid % 100)
+        start = {1: (20, 30.0), 3: (300, 2.0), 4: (260, 2.5), 7: (500, 1.0)}
+        ammo = [max(0, base - int(me / per)) for base, per in (start[rid % 100] for rid in order)]
+        total = _INITIAL_ECONOMY + sum(amount for at, amount in _ECONOMY_MILESTONES if me >= at)
+        gold = max(0, total - 50 * int(me / 20))
+        # 增益点都「对方没控制这块阵地」(4/3);阵地控制按模拟器的阵地状态换成「对方」的写法。
+        buff_points = (4 << 1) | (4 << 4) | (4 << 7) | (4 << 10) | (3 << 14) | (3 << 16) | (4 << 18) | (4 << 21)
+        enemy_full = _ZONE_BLUE_FULL if _SELF_FACTION == _FACTION_RED else _ZONE_RED_FULL
+        enemy_temp = _ZONE_BLUE_TEMP if _SELF_FACTION == _FACTION_RED else _ZONE_RED_TEMP
+        crossings = 0
+        for shift, zone in zip((22, 24, 26, 28), self.zones):
+            crossings |= (0 if zone == enemy_full else 1 if zone == enemy_temp else 2) << shift
+        buffs = bytearray(47)
+        for slot, state_slot, rid in zip((0, 14, 21, 28), (36, 38, 39, 40), order):
+            heal, cooling, defense, vulnerable, attack, state = self.enemy_intel_robot(rid, me)
+            struct.pack_into("<BHBBH", buffs, slot, heal, cooling, defense, vulnerable, attack)
+            buffs[state_slot] = state
+        buffs[35] = 2
+        header = b"RI" + bytes([1, 0]) + struct.pack("<4H", self.radar_intel_seq, 50, 50, 50)
+        return (header + struct.pack("<5H", ammo[0], ammo[1], ammo[2], 0, ammo[3])
+                + struct.pack("<HHII", min(gold, 0xFFFF), min(total, 0xFFFF), buff_points, crossings)
+                + bytes(buffs))
 
     def gain_terrain(self, kind: int) -> str | None:
         """自机拿到一种地形跨越增益(5.6.4.5)。已经拿着另一种时防御变成 50%,时长取两者较大。"""
@@ -2054,6 +2115,8 @@ class SimulatedMatch:
         self.rune_until = 0.0
         self.rune_big = False
         self.rune_used = {"small": 0, "big": 0}
+        self.enemy_rune_until = 0.0
+        self.enemy_rune_big = False
         self.terrain = {}
         self.terrain_kinds = {}
         self.terrain_pre_until = 0.0
@@ -2618,6 +2681,16 @@ def main() -> int:
                 print(f"[server] 雷达强制标记 {_robot_name(param)}")
             else:
                 print(f"[server] 雷达标记的车号不对: {param}", file=sys.stderr)
+        elif cmd == CTRL_RADAR_INTEL:
+            match.radar_intel_on = param != 0
+            print(f"[server] 雷达情报{'恢复' if match.radar_intel_on else '停发'}")
+        elif cmd == CTRL_REVIVE:
+            state = match.respawn_state.get(param)
+            if state is not None and state["dead"]:
+                match._revive(param, False)
+                print(f"[server] {_robot_name(param)} 读条复活")
+            else:
+                print(f"[server] {param} 没有在读条", file=sys.stderr)
         elif cmd == CTRL_TERRAIN:
             error = match.gain_terrain(param)
             if error is None:
@@ -2686,7 +2759,13 @@ def main() -> int:
         else:
             joints = match.arm_joints or [0.0] * 6
             flag = 1
-        _publish(client, T_CUSTOM_BYTE_BLOCK, pb.CustomByteBlock(data=feedback_payload(joints, flag)))
+        payload = feedback_payload(joints, flag)
+        # 雷达情报只发给有操作手终端的车(重装、步兵);指挥手要等官方组网答疑。
+        if _SELF_LOCAL_ID in (1, 3, 4):
+            intel = match.radar_intel_packet()
+            if intel is not None:
+                payload = payload.ljust(32, b"\0") + intel
+        _publish(client, T_CUSTOM_BYTE_BLOCK, pb.CustomByteBlock(data=payload))
 
     def send_game_status() -> None:
         stage, remain = match.stage()

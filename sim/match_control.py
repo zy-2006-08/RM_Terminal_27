@@ -60,6 +60,7 @@ from sim.match_server import (
     CTRL_RESET, CTRL_RESUME, CTRL_SEEK, CTRL_SET_FORTRESS, CTRL_SET_HP,
     CTRL_SET_STRUCTURE_HP, CTRL_SET_ZONE, CTRL_SHOOT, CTRL_SPEED,
     CTRL_USE_REINFORCE, CTRL_VERIFY_LAUNCHER, CTRL_ENEMY_RUNE, CTRL_TERRAIN, CTRL_RADAR_LOCK,
+    CTRL_RADAR_INTEL, CTRL_REVIVE,
 )
 
 _ACTIONS = {
@@ -97,6 +98,8 @@ _ACTIONS = {
     "enemy-rune": (CTRL_ENEMY_RUNE, "敌方激活能量机关"),
     "terrain": (CTRL_TERRAIN, "自机拿地形增益"),
     "radar-lock": (CTRL_RADAR_LOCK, "强制雷达标记"),
+    "radar-intel": (CTRL_RADAR_INTEL, "雷达情报开关"),
+    "revive": (CTRL_REVIVE, "读条立刻复活"),
 }
 _TERRAIN_NAMES = {"highland": 1, "road": 2, "tunnel": 3, "through": 4, "pre": 5}
 _NEEDS_VALUE = {"seek": 1.0, "speed": 10.0}
@@ -241,6 +244,17 @@ def main() -> int:
         except ValueError:
             print("radar-lock 需要敌方车号,例如: radar-lock 104(0 解除)", file=sys.stderr)
             return 2
+    elif action == "revive":
+        try:
+            param = int(args[1])
+        except (IndexError, ValueError):
+            print("revive 需要车号,例如: revive 104", file=sys.stderr)
+            return 2
+    elif action == "radar-intel":
+        if len(args) < 2 or args[1] not in ("on", "off"):
+            print("radar-intel 需要 on(车带雷达情报) 或 off(停发)", file=sys.stderr)
+            return 2
+        param = 1 if args[1] == "on" else 0
     elif action == "terrain":
         if len(args) < 2 or args[1] not in _TERRAIN_NAMES:
             print(f"terrain 需要 {'/'.join(_TERRAIN_NAMES)}", file=sys.stderr)
