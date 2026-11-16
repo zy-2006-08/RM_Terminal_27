@@ -46,6 +46,11 @@ up to 1920×1080. Top bar 106 px.
   server's real values without 「约」 or seconds, plus the enemy sentry's posture; enemy rows get
   「弹丸 N」. The enemy panel title carries a badge note: cyan 「雷达情报」, amber
   「雷达情报过期 N秒」 once the newest section is over 3 s old (chips then fall back to estimates).
+- Overview (`overview.{h,cpp}`, `overview_pane.{h,cpp}`): the commander's analysis card becomes 「大局」.
+  Top line pairs two verdicts (now / at 7:00) coloured by who wins; the middle plot is our control lead
+  per second (fill above the zero line in our colour, below in theirs) with a dashed projection to the end;
+  three text lines below (flip point red when we are projected to lose, buffs, next timeline mark). Short
+  cards drop the plot before any text. Rules live in `大局判断表.md`.
 - Next step (`next_step.{h,cpp}`): fixed rule table in five groups (save life, defend, seize
   chances, resupply, score). Top 1–3 cards; a card stays at least the dwell time; a more urgent
   item may cut in; a resolved item leaves at once. Card numbers match roster badges. Shot counts
