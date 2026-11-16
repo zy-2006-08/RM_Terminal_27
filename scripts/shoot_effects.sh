@@ -208,7 +208,49 @@ scene_field() {
     stop_sim
 }
 
-declare -F "scene_$BLOCK" > /dev/null || fail "用法: bash scripts/shoot_effects.sh {buffs|radar|field}"
+# 指挥手大局的一段走势:红方先完全控制蓝方前哨阵地 30 秒(每秒 +1),再丢掉、蓝方完全控制红方前哨阵地
+# 60 秒。10 倍速跑完,临时控制 5 秒不激活会退回去,所以只用完全控制。
+overview_story() {
+    ctl zone 0 2
+    ctl zone 1 4
+    ctl zone 2 2
+    ctl zone 3 4
+    sleep 3
+    ctl zone 1 2
+    ctl speed 10
+    sleep 3
+    ctl zone 1 4
+    ctl zone 0 4
+    sleep 6
+    ctl speed 1
+}
+
+# 第四块:指挥手的大局,再把同一局打完看赛后复盘网页。
+scene_overview() {
+    start_sim 6
+    for size in 1440x900 1280x760 1920x1080; do
+        ctl seek 200
+        capture 6 "$size" 19000 "commander-$size.png"
+        overview_story
+        done_shot "commander $size"
+    done
+
+    ctl seek 200
+    capture 6 1440x900 40000 commander-settlement-1440x900.png
+    overview_story
+    ctl seek 412
+    done_shot settlement
+    stop_sim
+    local report
+    report=$(ls -t "$XDG_DATA_HOME"/*/reports/*.html 2>/dev/null | head -1)
+    [ -n "$report" ] || fail "没写出复盘报告"
+    cp "$report" "$OUT/report-sample.html"
+    google-chrome --headless=new --disable-gpu --hide-scrollbars --window-size=1100,2600 \
+        --screenshot="$OUT/report-sample.png" "file://$OUT/report-sample.html" > /dev/null 2>&1
+    echo "report -> $(basename "$report")"
+}
+
+declare -F "scene_$BLOCK" > /dev/null || fail "用法: bash scripts/shoot_effects.sh {buffs|radar|field|overview}"
 mkdir -p "$OUT"
 mosquitto -p "$P" > "$RUN/logs/mosquitto.log" 2>&1 &
 PIDS+=("$!")
