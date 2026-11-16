@@ -18,13 +18,14 @@
 # Syntax: key=value, one per line. Blank lines and lines starting with # are
 # ignored. Whitespace around keys and values is trimmed.
 
-# MQTT broker host for the local simulator.
+# MQTT broker host. 127.0.0.1 is the local simulator; on the match network the
+# official server is 192.168.12.1 (2027 protocol).
 mqtt_host=127.0.0.1
 
-# MQTT broker port. 2026 protocol baseline is 3333.
+# MQTT broker port. 2027 protocol: 3333.
 mqtt_port=3333
 
-# H.265 video UDP listen port. 2026 protocol baseline is 3334.
+# H.265 video UDP listen port. 2027 protocol: 3334.
 udp_port=3334
 
 # Seat (2027 operator stations): red 1 hero, 3/4 infantry, 6 commander; blue +100.

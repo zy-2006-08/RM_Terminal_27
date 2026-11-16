@@ -54,7 +54,7 @@ required to change them. Copy `rm_terminal.conf.sample` and edit it.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `mqtt_host` | `127.0.0.1` | MQTT broker host for the local simulator |
+| `mqtt_host` | `127.0.0.1` | MQTT broker host: `127.0.0.1` for the local simulator, `192.168.12.1` for the official server |
 | `mqtt_port` | `3333` | MQTT broker port (2027 protocol: server `192.168.12.1:3333`) |
 | `udp_port` | `3334` | H.265 video UDP listen port (2027 protocol) |
 | `self_robot_id` | (unset) | Seat: `1` hero, `3`/`4` infantry, `6` commander, blue `+100`. Unset = ask with the seat picker; `--seat` and `RM_SELF_ID` override it |
@@ -641,8 +641,8 @@ macOS only.
 
 | Platform | Build | CTest | Dynamic run (simulator, dual mode, video) |
 | --- | --- | --- | --- |
-| macOS (arm64, Homebrew Qt6) | verified | verified, Debug and Release | verified |
-| Ubuntu 26.04 (x86_64, Qt 6.10.2, Wayland) | verified, Release | verified, 34/34 + `mode_regression_e2e` + `link_faults_e2e` | verified |
+| macOS (arm64, Homebrew Qt6) | verified before the 2027 protocol migration | verified before the migration, Debug and Release | verified before the migration |
+| Ubuntu 26.04 (x86_64, Qt 6.10.2, Wayland) | verified, Release | verified, 47/47 default suite (2026-11-16); `mode_regression_e2e` + `link_faults_e2e` last run 2026-10-31 | verified |
 
 Ubuntu was verified on 2026-10-23 at commit `d1730fe`: Release build, the 25-test
 default CTest suite, `--safe-smoke`, `python -m unittest` over `sim/`,
@@ -675,6 +675,13 @@ the simulator, and F9 + held W + 600 px of mouse motion + left click + one wheel
 recorded off the broker as 297 frames at 73 Hz summing to exactly +600 px, ending with an
 all-released frame after Esc. The simulator's own robot now waits for 确认复活 after its
 revive bar fills (protocol 2.2.25, item 3); other robots still revive on their own.
+
+On 2026-11-16, with the next-step change that puts a finishable focus-fire card ahead of healing,
+the same machine ran the Release build and the 47-test default suite, plus an offscreen
+`--screenshot` of seat 3 against the simulator with the robot at 15 % HP and a 20 HP enemy in radar
+sight: the cards read focus fire, heal, small energy mechanism. The acceptance scripts were not
+re-run for that change. Nothing has been run against an official server, or on macOS since the
+2027 migration.
 
 A recording cut off mid-record (crash, `kill -9`, power loss) still replays: the
 player stops at the last complete record and the status bar says
