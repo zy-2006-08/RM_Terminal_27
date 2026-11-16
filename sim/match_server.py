@@ -102,6 +102,8 @@ CTRL_TERRAIN = 0x2D          # param = 1 高地 2 公路 3 跨越隧道 4 穿越
 CTRL_RADAR_LOCK = 0x2E       # param = 敌方车号(0 解除),强制雷达把它标成「被标记」,测地图上的标记
 CTRL_RADAR_INTEL = 0x2F      # param = 1 车经 0x0310 带雷达情报(默认), 0 停发,终端 3 秒后写「过期」
 CTRL_REVIVE = 0x30           # param = 车号,阵亡的车读条立刻走完复活(无敌且虚弱),省得等 30 秒
+CTRL_PLACE = 0x31            # param = 车号 x1000000 + x(分米) x1000 + y(分米),x 写 999 放回去接着绕
+CTRL_INTRUDE = 0x32          # param = 敌方车号 x10 + 路线(1 中央高地 2 隧道 3 起伏路段),4 秒过中线
 _CTRL_NAMES = {
     CTRL_BEGIN: "开赛",
     CTRL_HOLD: "暂停",
@@ -135,6 +137,8 @@ _CTRL_NAMES = {
     CTRL_RADAR_LOCK: "强制雷达标记",
     CTRL_RADAR_INTEL: "雷达情报开关",
     CTRL_REVIVE: "读条立刻复活",
+    CTRL_PLACE: "摆位置",
+    CTRL_INTRUDE: "敌方过中线",
 }
 
 # 阵地顺序与 GameStatus 的四个字段一一对应,写死顺序是因为控制指令按序号寻址。
@@ -306,6 +310,18 @@ _STAGE_SETTLEMENT = 5
 
 _FIELD_LENGTH_M = 28.0
 _FIELD_WIDTH_M = 15.0
+# intrude 过中线的 y(我方是红方时;蓝方按场地中心转 180°)。终端的分法见 cpp/field_zones.cpp:
+# 中线上 1.94–13.07 米是中央高地,两头是隧道;起伏路段要靠雷达情报的跨越点(bit 3)才认得出。
+_INTRUDE_Y = {"highland": 10.5, "tunnel": 1.0, "road": 3.0}
+_CROSSING_BIT = {"highland": 1 << 1, "road": 1 << 3, "tunnel": 1 << 13}
+
+
+def _on_fortress(pose: tuple[float, float], side: int) -> bool:
+    """这一点在不在 side 那一方的堡垒增益点上(堡垒_新 的外包盒,场地坐标.md)。"""
+    x, y = pose
+    if side != _FACTION_RED:
+        x, y = _FIELD_LENGTH_M - x, _FIELD_WIDTH_M - y
+    return 5.29 <= x <= 7.86 and 6.31 <= y <= 8.69
 
 # 必须与 cpp/presentation.cpp robot_class_name() 逐字一致，否则事件文本与花名册对同一台车的称呼会不同。
 _ROBOT_CLASS_NAMES = {1: "重装", 3: "步兵", 4: "步兵", 6: "空中", 7: "哨兵"}
@@ -685,6 +701,8 @@ class SimulatedMatch:
             robot_id: (self.rng.uniform(0, math.tau), self.rng.uniform(0.11, 0.31))
             for robot_id in (*_FRIENDLY_IDS, *_ENEMY_IDS)
         }
+        # place / intrude 摆的位置:车号 -> {"points": [(比赛时基, x, y)], "until": 放回去的时刻, "route": 路线}。
+        self.scripted: dict[int, dict] = {}
 
     @property
     def elapsed(self) -> float:
@@ -1062,13 +1080,18 @@ class SimulatedMatch:
             defense = max(defense, 50)
         if number == 7:
             defense = max(defense, 50)  # 敌方哨兵一直是防御姿态
+        vulnerable = 0
+        pose = self.scripted_pose(robot_id, self.elapsed)
+        if (pose is not None and self.fortress_attack == _SELF_FACTION and not self.armor_open[_SELF_FACTION]
+                and _on_fortress(pose, _SELF_FACTION)):
+            vulnerable = 100  # 规则 5.6.4.9:正在激活对方堡垒的车 100% 易伤
         if self.other_hp.get(robot_id, 0) == 0:
             state = 1
         elif self.is_invincible(robot_id):
             state = 3 if self.is_weak(robot_id) else 2
         else:
             state = 0
-        return 0, 0, defense, 0, attack, state
+        return 0, 0, defense, vulnerable, attack, state
 
     def radar_intel_packet(self) -> bytes | None:
         """雷达经 0x0301 转给车的 81 字节(雷达情报格式.md)。数是编的:发弹量和金币随比赛时间变。"""
@@ -1085,7 +1108,7 @@ class SimulatedMatch:
         buff_points = (4 << 1) | (4 << 4) | (4 << 7) | (4 << 10) | (3 << 14) | (3 << 16) | (4 << 18) | (4 << 21)
         enemy_full = _ZONE_BLUE_FULL if _SELF_FACTION == _FACTION_RED else _ZONE_RED_FULL
         enemy_temp = _ZONE_BLUE_TEMP if _SELF_FACTION == _FACTION_RED else _ZONE_RED_TEMP
-        crossings = 0
+        crossings = self.crossing_bits()
         for shift, zone in zip((22, 24, 26, 28), self.zones):
             crossings |= (0 if zone == enemy_full else 1 if zone == enemy_temp else 2) << shift
         buffs = bytearray(47)
@@ -2234,10 +2257,67 @@ class SimulatedMatch:
             phase, speed = self._robot_phases[robot_id]
             faction = _SELF_FACTION if robot_id in _FRIENDLY_IDS else (
                 _FACTION_BLUE if _SELF_FACTION == _FACTION_RED else _FACTION_RED)
-            x = _FIELD_LENGTH_M / 2 + (_FIELD_LENGTH_M / 2 - 2.0) * math.sin(e * speed + phase)
-            y = _FIELD_WIDTH_M / 2 + (_FIELD_WIDTH_M / 2 - 1.5) * math.cos(e * speed * 0.8 + phase)
+            scripted = self.scripted_pose(robot_id, e)
+            if scripted is not None:
+                x, y = scripted
+            else:
+                # 平时各在自己半场里绕;过中线会触发终端的入侵提醒,只在 intrude 时才过。
+                home = _FIELD_LENGTH_M / 4 if faction == _FACTION_RED else _FIELD_LENGTH_M * 3 / 4
+                x = home + 5.5 * math.sin(e * speed + phase)
+                y = _FIELD_WIDTH_M / 2 + (_FIELD_WIDTH_M / 2 - 1.5) * math.cos(e * speed * 0.8 + phase)
             poses.append((robot_id, faction, x, y, math.degrees(math.sin(e * speed + phase))))
         return poses
+
+    def scripted_pose(self, robot_id: int, e: float) -> tuple[float, float] | None:
+        """place / intrude 摆的位置:按比赛时基在路线点之间插值,走完停在终点,到 until 放回去。"""
+        plan = self.scripted.get(robot_id)
+        if plan is None:
+            return None
+        if plan["until"] is not None and e > plan["until"]:
+            self.scripted.pop(robot_id, None)
+            return None
+        points = plan["points"]
+        if e <= points[0][0]:
+            return points[0][1], points[0][2]
+        for (t0, x0, y0), (t1, x1, y1) in zip(points, points[1:]):
+            if e <= t1:
+                k = (e - t0) / (t1 - t0) if t1 > t0 else 1.0
+                return x0 + k * (x1 - x0), y0 + k * (y1 - y0)
+        return points[-1][1], points[-1][2]
+
+    def place(self, robot_id: int, x: float | None, y: float | None) -> str | None:
+        """把一台车摆在场地上某一点(协议坐标,米);x 为 None 时放回去接着绕。"""
+        if robot_id not in (*_FRIENDLY_IDS, *_ENEMY_IDS):
+            return "只能摆自机以外的场上机器人"
+        if x is None:
+            self.scripted.pop(robot_id, None)
+            return None
+        self.scripted[robot_id] = {"points": [(self.elapsed, x, y)], "until": None, "route": None}
+        return None
+
+    def intrude(self, robot_id: int, route: str) -> str | None:
+        """敌方一台车 4 秒内从它那半场过中线进我方半场,停 12 秒再放回去。
+        route 只决定从哪儿过:highland 中间、tunnel 下面那头、road 偏下;雷达情报的跨越点跟着它报。"""
+        if robot_id not in _ENEMY_IDS:
+            return "只能让敌方的车过中线"
+        if route not in _INTRUDE_Y:
+            return f"路线只有 {'/'.join(_INTRUDE_Y)}"
+        red_self = _SELF_FACTION == _FACTION_RED
+        y = _INTRUDE_Y[route] if red_self else _FIELD_WIDTH_M - _INTRUDE_Y[route]
+        x0, x1 = (17.5, 10.5) if red_self else (10.5, 17.5)
+        e = self.elapsed
+        self.scripted[robot_id] = {"points": [(e, x0, y), (e + 4.0, x1, y)], "until": e + 16.0, "route": route}
+        return None
+
+    def crossing_bits(self) -> int:
+        """雷达情报 0x0A04 偏移 8 里我方这边的跨越点:正在 intrude 的车离中线 1 米以内时按它的路线报。"""
+        bits = 0
+        for robot_id, plan in list(self.scripted.items()):
+            route = plan.get("route")
+            pose = self.scripted_pose(robot_id, self.elapsed)
+            if route is not None and pose is not None and abs(pose[0] - _FIELD_LENGTH_M / 2) <= 1.0:
+                bits |= _CROSSING_BIT[route]
+        return bits
 
 
 def _publish(client: mqtt.Client, topic: str, msg) -> None:
@@ -2684,6 +2764,23 @@ def main() -> int:
         elif cmd == CTRL_RADAR_INTEL:
             match.radar_intel_on = param != 0
             print(f"[server] 雷达情报{'恢复' if match.radar_intel_on else '停发'}")
+        elif cmd == CTRL_PLACE:
+            robot_id, rest = divmod(param, 1_000_000)
+            x_dm, y_dm = divmod(rest, 1000)
+            error = match.place(robot_id, None if x_dm == 999 else x_dm / 10, y_dm / 10)
+            if error is None:
+                print(f"[server] {_robot_name(robot_id)} "
+                      f"{'放回去' if x_dm == 999 else f'摆到 ({x_dm / 10:.1f}, {y_dm / 10:.1f})'}")
+            else:
+                print(f"[server] 摆位置失败: {error}", file=sys.stderr)
+        elif cmd == CTRL_INTRUDE:
+            robot_id, code = divmod(param, 10)
+            route = {1: "highland", 2: "tunnel", 3: "road"}.get(code, "")
+            error = match.intrude(robot_id, route)
+            if error is None:
+                print(f"[server] {_robot_name(robot_id)} 过中线({route})")
+            else:
+                print(f"[server] 过中线失败: {error}", file=sys.stderr)
         elif cmd == CTRL_REVIVE:
             state = match.respawn_state.get(param)
             if state is not None and state["dead"]:

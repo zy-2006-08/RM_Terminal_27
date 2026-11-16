@@ -60,6 +60,29 @@ assert robot(m.radar_intel_packet(), 1)[5] == 1
 m._revive(ENEMY[1], False)
 assert robot(m.radar_intel_packet(), 1)[5] == 3, robot(m.radar_intel_packet(), 1)
 
+# 平时各在自己半场里绕;intrude 4 秒过中线,过的那一会儿雷达情报报我方这边的跨越点。
+m = at_match_second(120)
+for rid, faction, x, _y, _yaw in m.fabricated_other_poses():
+    assert (x < 14) == (faction == ms._FACTION_RED), (rid, x)
+assert m.intrude(ENEMY[1], "tunnel") is None
+m.seek(m.elapsed + 2.0)
+m.hold()
+x, _y = m.scripted_pose(ENEMY[1], m.elapsed)
+assert abs(x - 14.0) < 0.01, x
+assert struct.unpack_from("<I", m.radar_intel_packet(), 30)[0] & (1 << 13)
+m.seek(m.elapsed + 3.0)
+m.hold()
+assert not struct.unpack_from("<I", m.radar_intel_packet(), 30)[0] & 0x3FFFFF
+assert m.intrude(ms._FRIENDLY_IDS[0], "tunnel") is not None
+
+# 摆到我方堡垒上、敌方在偷我方堡垒:雷达情报里这台易伤 100。
+red_self = ms._SELF_FACTION == ms._FACTION_RED
+assert m.place(ENEMY[1], 6.57 if red_self else 21.43, 7.5) is None
+assert m.set_fortress(ms._SELF_FACTION)
+assert robot(m.radar_intel_packet(), 1)[3] == 100, robot(m.radar_intel_packet(), 1)
+assert m.place(ENEMY[1], None, None) is None
+assert robot(m.radar_intel_packet(), 1)[3] == 0
+
 # 停发。
 m.radar_intel_on = False
 assert m.radar_intel_packet() is None

@@ -60,7 +60,7 @@ from sim.match_server import (
     CTRL_RESET, CTRL_RESUME, CTRL_SEEK, CTRL_SET_FORTRESS, CTRL_SET_HP,
     CTRL_SET_STRUCTURE_HP, CTRL_SET_ZONE, CTRL_SHOOT, CTRL_SPEED,
     CTRL_USE_REINFORCE, CTRL_VERIFY_LAUNCHER, CTRL_ENEMY_RUNE, CTRL_TERRAIN, CTRL_RADAR_LOCK,
-    CTRL_RADAR_INTEL, CTRL_REVIVE,
+    CTRL_RADAR_INTEL, CTRL_REVIVE, CTRL_PLACE, CTRL_INTRUDE,
 )
 
 _ACTIONS = {
@@ -100,7 +100,10 @@ _ACTIONS = {
     "radar-lock": (CTRL_RADAR_LOCK, "强制雷达标记"),
     "radar-intel": (CTRL_RADAR_INTEL, "雷达情报开关"),
     "revive": (CTRL_REVIVE, "读条立刻复活"),
+    "place": (CTRL_PLACE, "摆位置"),
+    "intrude": (CTRL_INTRUDE, "敌方过中线"),
 }
+_ROUTE_CODES = {"highland": 1, "tunnel": 2, "road": 3}
 _TERRAIN_NAMES = {"highland": 1, "road": 2, "tunnel": 3, "through": 4, "pre": 5}
 _NEEDS_VALUE = {"seek": 1.0, "speed": 10.0}
 
@@ -243,6 +246,29 @@ def main() -> int:
             param = int(args[1]) if len(args) > 1 else 0
         except ValueError:
             print("radar-lock 需要敌方车号,例如: radar-lock 104(0 解除)", file=sys.stderr)
+            return 2
+    elif action == "place":
+        try:
+            robot_id = int(args[1])
+            if args[2] == "off":
+                x_dm, y_dm = 999, 0
+            else:
+                x_dm, y_dm = round(float(args[2]) * 10), round(float(args[3]) * 10)
+                if not (0 <= x_dm <= 280 and 0 <= y_dm <= 150):
+                    raise ValueError
+        except (IndexError, ValueError):
+            print("place 需要车号和坐标(米),例如: place 103 6.5 7.5;放回去: place 103 off", file=sys.stderr)
+            return 2
+        param = robot_id * 1_000_000 + x_dm * 1000 + y_dm
+    elif action == "intrude":
+        if len(args) < 3 or args[2] not in _ROUTE_CODES:
+            print(f"intrude 需要敌方车号和路线 {'/'.join(_ROUTE_CODES)},例如: intrude 103 tunnel",
+                  file=sys.stderr)
+            return 2
+        try:
+            param = int(args[1]) * 10 + _ROUTE_CODES[args[2]]
+        except ValueError:
+            print("intrude 的车号要是数字", file=sys.stderr)
             return 2
     elif action == "revive":
         try:

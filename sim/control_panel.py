@@ -31,6 +31,15 @@ from sim.constants import (MQTT_PORT, SELF_ROBOT_ID, SERVER_HOST, T_ROBOT_RESPAW
 PY = ROOT / ".venv" / "bin" / "python"
 CTRL = ROOT / "sim" / "match_control.py"
 
+
+def ms_enemy(number: int) -> int:
+    return number + 100 if SELF_ROBOT_ID < 100 else number
+
+
+def our_fortress() -> tuple[str, str]:
+    """我方堡垒增益点的中心(协议坐标,米),见 场地坐标.md。"""
+    return ("6.6", "7.5") if SELF_ROBOT_ID < 100 else ("21.4", "7.5")
+
 # 场上有血量的 8 台(2027:1 重装 3/4 步兵 7 哨兵)。指挥手(6)没有血量,坐 6 号时只列出来看。
 ROBOTS = [
     ("红1 重装", 1), ("红3 步兵", 3), ("红4 步兵", 4), ("红7 哨兵", 7),
@@ -406,6 +415,19 @@ button(buff_row, "雷达情报停",
        lambda: act("雷达情报停发", "radar-intel", "off")).pack(side="left", padx=2)
 button(buff_row, "雷达情报恢复",
        lambda: act("雷达情报恢复", "radar-intel", "on")).pack(side="left", padx=2)
+
+# 敌方 3 号过中线进我方半场(终端横幅写从哪条路来);站到我方堡垒上(配合「堡垒」按钮认出是哪一台)。
+intrude_row = tk.Frame(dart)
+intrude_row.pack(pady=(0, 4))
+tk.Label(intrude_row, text="入侵").pack(side="left")
+for route_name, route_key in (("从中央高地", "highland"), ("从隧道", "tunnel"), ("从起伏路段", "road")):
+    button(intrude_row, route_name,
+           lambda k=route_key, n=route_name: act(f"敌方 3 号{n}过中线",
+                                                 "intrude", str(ms_enemy(3)), k)).pack(side="left", padx=2)
+button(intrude_row, "站到我方堡垒",
+       lambda: act("敌方 3 号站到我方堡垒上", "place", str(ms_enemy(3)), *our_fortress())).pack(side="left", padx=2)
+button(intrude_row, "放回去",
+       lambda: act("敌方 3 号放回去", "place", str(ms_enemy(3)), "off")).pack(side="left", padx=2)
 
 
 # ---------------- 链路：测终端断线时的反应 ----------------
