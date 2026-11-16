@@ -93,7 +93,7 @@ controller_baud=115200
 mqtt_keepalive_s=5
 
 # Event alerts to switch off, comma separated: outpost, control, fortress, dart,
-# energy, low_hp, base. All are on by default.
+# energy, low_hp, base, intrusion (enemy crosses into our half). All are on by default.
 #alerts_disabled=dart,energy
 
 # Control-point deficit that triggers the 控制度落后 alert.
