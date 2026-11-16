@@ -482,8 +482,14 @@ void GlowBanner::paintEvent(QPaintEvent*) {
         painter.fillRect(QRectF(w * 0.08, y, w * 0.84, 1), edge);
     }
 
-    QFont font = theme::labelPx(std::max(22, qRound(h * 0.45)), QFont::Bold);
+    // 字太长先缩字号(最小 18),还放不下才省略:横幅里要紧的往往在后半句(「从隧道进入我方半场」)。
+    int pixel = std::max(22, qRound(h * 0.45));
+    QFont font = theme::labelPx(pixel, QFont::Bold);
     font.setLetterSpacing(QFont::AbsoluteSpacing, 2);
+    while (pixel > 18 && QFontMetricsF(font).horizontalAdvance(text_) > w - 80) {
+        font = theme::labelPx(--pixel, QFont::Bold);
+        font.setLetterSpacing(QFont::AbsoluteSpacing, 2);
+    }
     const QFontMetricsF metrics(font);
     const qreal text_width = std::min(metrics.horizontalAdvance(text_), w - 80);
     const qreal icon_width = icon_.isNull() ? 0 : icon_.width() / icon_.devicePixelRatio() + 16;
