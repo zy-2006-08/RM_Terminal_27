@@ -146,6 +146,12 @@ bool Recorder::active() const {
     return active_;
 }
 
+std::optional<std::int64_t> Recorder::elapsedMs() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!active_) return std::nullopt;
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started_).count();
+}
+
 bool Recorder::failed() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return failed_;

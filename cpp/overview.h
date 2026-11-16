@@ -34,6 +34,8 @@ struct MatchNote {
     std::int32_t elapsed = 0;
     std::optional<std::int32_t> countdown;
     QString text;
+    // 这件事在录像里的位置(开录以后的毫秒),复盘报告据此切「前 10 秒到后 5 秒」的片段。
+    std::optional<std::int64_t> recording_ms;
 };
 
 // 一局的流水:每秒一笔样本,加上战场事件和提醒。换局或回到准备阶段就清掉重记。
@@ -43,6 +45,8 @@ public:
     bool observe(const Snapshot& snapshot);
     // 提醒横幅也记进流水(复盘报告的关键事件里有)。
     void note(const QString& text);
+    // 录像现在录到第几毫秒,每个周期在 observe 之前设一次;不在录时传空。
+    void setRecordingMs(std::optional<std::int64_t> ms) { recording_ms_ = ms; }
 
     const std::vector<MatchSample>& samples() const { return samples_; }
     const std::vector<MatchNote>& notes() const { return notes_; }
@@ -62,6 +66,7 @@ private:
     std::optional<std::uint32_t> stage_;
     std::optional<std::uint32_t> winner_, end_reason_;
     std::optional<std::int32_t> countdown_;
+    std::optional<std::int64_t> recording_ms_;
     MonotonicMs last_event_at_ = 0;
     bool reported_ = false;
 };

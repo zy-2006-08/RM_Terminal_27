@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 
 namespace rm_terminal {
 
@@ -39,6 +40,8 @@ public:
     void stop();
 
     bool active() const;
+    // 开录以后过了多少毫秒,和录像里记录的时间是同一条轴;没在录时为空。复盘报告据此给关键事件切片段。
+    std::optional<std::int64_t> elapsedMs() const;
     bool failed() const;
     QString path() const;
     QString error() const;

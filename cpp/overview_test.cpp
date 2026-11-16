@@ -1,6 +1,10 @@
 #include "match_report.h"
 #include "overview.h"
 
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+
 #include <cstdio>
 
 namespace {
@@ -149,6 +153,41 @@ void report_page() {
     check(html.contains(QStringLiteral("/tmp/x.rmrec")), "recording path");
 }
 
+void clips_json_and_index() {
+    MatchLog log;
+    log.observe(at(1, 0, 0, 0));
+    log.setRecordingMs(3000);
+    log.observe(at(4, 0, 0, 0));
+    log.setRecordingMs(25500);
+    log.observe(at(4, 1, 0, 0, {2, 1, 2, 4}));
+    log.note(QStringLiteral("敌方 3 号步兵从隧道进入我方半场"));
+    Snapshot end = at(5, 2, 2, 0, {2, 1, 2, 4});
+    log.observe(end);
+    rm_terminal::ReportContext context;
+    context.self_id = 3;
+    context.recording = QStringLiteral("/tmp/x.rmrec");
+    context.finished_at = QDateTime(QDate(2026, 11, 16), QTime(14, 35, 42));
+    const auto clips = rm_terminal::report_clips(log, context);
+    check(clips.size() == 1 && clips[0].from_s == 15 && clips[0].to_s == 31 && clips[0].mp4 == QStringLiteral("clips/片段-01.mp4"),
+          "a clip from 10 s before to 5 s after, file name numbered");
+    context.recording.clear();
+    check(rm_terminal::report_clips(log, context).empty(), "no recording: no clips");
+    context.recording = QStringLiteral("/tmp/x.rmrec");
+
+    const QString dir = QDir::temp().filePath(QStringLiteral("rm-overview-test-%1").arg(QCoreApplication::applicationPid()));
+    QDir(dir).removeRecursively();
+    QString error;
+    const QString page = rm_terminal::write_match_report(dir, log, context, &error);
+    check(page.endsWith(QStringLiteral("2026-11-16_14-35-42_第1局.html")), "report file name");
+    QFile json(QDir(dir).filePath(QStringLiteral("2026-11-16_14-35-42_第1局.json")));
+    check(json.open(QIODevice::ReadOnly) && QString::fromUtf8(json.readAll()).contains(QStringLiteral("clips/2026-11-16_14-35-42_第1局-01.mp4")),
+          "the summary lists the clip under the report's own name");
+    QFile index(QDir(dir).filePath(QStringLiteral("index.html")));
+    check(index.open(QIODevice::ReadOnly) && QString::fromUtf8(index.readAll()).contains(QStringLiteral("2026-11-16_14-35-42_第1局.html")),
+          "the comparison page links the report");
+    QDir(dir).removeRecursively();
+}
+
 }  // namespace
 
 int main() {
@@ -158,6 +197,7 @@ int main() {
     projection_and_flip();
     base_falls_first();
     report_page();
+    clips_json_and_index();
     if (failures == 0) std::puts("overview_test: all passed");
     return failures == 0 ? 0 : 1;
 }

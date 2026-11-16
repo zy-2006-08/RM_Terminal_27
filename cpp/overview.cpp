@@ -188,7 +188,8 @@ bool MatchLog::observe(const Snapshot& snapshot) {
     const std::vector<EventRecord> events = snapshot.events.recent(snapshot.events.size());
     for (auto it = events.rbegin(); it != events.rend(); ++it)
         if (it->received_at > last_event_at_)
-            notes_.push_back({*elapsed, it->countdown_sec ? it->countdown_sec : countdown_, QString::fromStdString(it->text)});
+            notes_.push_back({*elapsed, it->countdown_sec ? it->countdown_sec : countdown_, QString::fromStdString(it->text),
+                              recording_ms_});
     if (!events.empty()) last_event_at_ = std::max(last_event_at_, events.front().received_at);
 
     if (!samples_.empty() && samples_.back().elapsed >= *elapsed) return finished;
@@ -219,7 +220,7 @@ bool MatchLog::observe(const Snapshot& snapshot) {
 
 void MatchLog::note(const QString& text) {
     if (stage_ != kStageMatch || samples_.empty()) return;
-    notes_.push_back({samples_.back().elapsed, countdown_, text});
+    notes_.push_back({samples_.back().elapsed, countdown_, text, recording_ms_});
 }
 
 Overview build_overview(const Snapshot& snapshot, const BuffBoard& buffs, const MatchLog& log, MonotonicMs now) {
