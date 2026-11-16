@@ -42,6 +42,10 @@ up to 1920×1080. Top bar 106 px.
   side: the one our RuneStatusSync turns active within 3 s of is ours, the rest the enemy's.
   Rows tall enough get a chip line under the bar; short rows put the chips left of the HP number.
   A chip that does not fit is dropped whole, most urgent first (invincible, weak, defense).
+  With fresh radar intel (`radar_intel.{h,cpp}`, layout in `雷达情报格式.md`) enemy chips show the
+  server's real values without 「约」 or seconds, plus the enemy sentry's posture; enemy rows get
+  「弹丸 N」. The enemy panel title carries a badge note: cyan 「雷达情报」, amber
+  「雷达情报过期 N秒」 once the newest section is over 3 s old (chips then fall back to estimates).
 - Next step (`next_step.{h,cpp}`): fixed rule table in five groups (save life, defend, seize
   chances, resupply, score). Top 1–3 cards; a card stays at least the dwell time; a more urgent
   item may cut in; a resolved item leaves at once. Card numbers match roster badges. Shot counts
