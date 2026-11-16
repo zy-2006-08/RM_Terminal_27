@@ -1,5 +1,6 @@
 #include "map_pane.h"
 
+#include "clock.h"
 #include "presentation.h"
 #include "theme.h"
 
@@ -190,6 +191,154 @@ QColor faction_color(std::uint32_t faction) {
     }
 }
 
+namespace {
+
+QPointF field_px(const FieldExtent& field, const MapViewport& view, FieldPoint p) {
+    const Projected q = project(field, view, p.x, p.y);
+    return {q.point.x, q.point.y};
+}
+
+QColor with_alpha(QColor colour, double alpha) {
+    colour.setAlphaF(std::clamp(alpha, 0.0, 1.0));
+    return colour;
+}
+
+// 字放在点的下方;点已经在地图下面四成里了就放上方,免得出框。
+QPointF tag_point(const MapViewport& view, QPointF at, double offset) {
+    return at.y() > view.y + view.height * 0.6 ? at - QPointF(0, offset + 14) : at + QPointF(0, offset);
+}
+
+void effect_tag(QPainter& painter, QPointF at, const QString& text, const QColor& ink, double alpha) {
+    const QFontMetrics metrics(painter.font());
+    const QRect box = metrics.boundingRect(text).translated(QPoint(static_cast<int>(at.x() - metrics.horizontalAdvance(text) / 2.0),
+                                                                    static_cast<int>(at.y()))).adjusted(-5, -2, 5, 2);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(6, 10, 18, static_cast<int>(215 * alpha)));
+    painter.drawRoundedRect(box, 3, 3);
+    painter.setPen(with_alpha(ink, alpha));
+    painter.drawText(box, Qt::AlignCenter, text);
+}
+
+// 一层动画。area 为真时画铺在地上的(阵地换手、堡垒被偷),画在机器人下面;否则画飞镖、波纹这些,盖在最上面。
+void paint_effects(QPainter& painter, const FieldExtent& field, const MapViewport& view,
+                   const std::vector<MapEffect>& effects, MonotonicMs t, bool area) {
+    const double base = std::max(12.0, view.height * 0.06);
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setFont(theme::labelPx(std::max(theme::kMinLabelPx, static_cast<int>(std::lround(view.height * 0.042))),
+                                   QFont::DemiBold));
+    for (const MapEffect& e : effects) {
+        const bool is_area = e.kind == MapEffectKind::ZoneFlip || e.kind == MapEffectKind::FortressSteal;
+        if (is_area != area) continue;
+        const double age = static_cast<double>(t - e.started);
+        const double k = e.duration > 0 ? std::clamp(age / static_cast<double>(e.duration), 0.0, 1.0) : 0.0;
+        const QColor ink = faction_color(e.faction).lighter(135);
+        const QPointF at = field_px(field, view, e.at);
+        QPolygonF outline;
+        for (const FieldPoint& p : e.outline) outline << field_px(field, view, p);
+        switch (e.kind) {
+        case MapEffectKind::ZoneFlip: {
+            const double fade = 1.0 - k;
+            painter.setPen(QPen(with_alpha(ink, fade), 2.5));
+            painter.setBrush(with_alpha(faction_color(e.faction), 0.55 * fade));
+            painter.drawPolygon(outline);
+            painter.setBrush(Qt::NoBrush);
+            painter.drawEllipse(at, base * (0.8 + 0.6 * k), base * (0.8 + 0.6 * k));
+            effect_tag(painter, tag_point(view, at, base * 1.2), e.label, ink, fade);
+            break;
+        }
+        case MapEffectKind::FortressSteal: {
+            const double pulse = 0.5 + 0.5 * std::sin(static_cast<double>(t % 100000) / 180.0);
+            painter.setPen(QPen(with_alpha(ink, 0.6 + 0.4 * pulse), 2.5));
+            painter.setBrush(with_alpha(faction_color(e.faction), 0.18 + 0.22 * pulse));
+            painter.drawPolygon(outline);
+            const double r = base * 1.5;
+            const QRectF box(at.x() - r, at.y() - r, 2 * r, 2 * r);
+            painter.setBrush(Qt::NoBrush);
+            painter.setPen(QPen(QColor(0, 0, 0, 140), 6));
+            painter.drawEllipse(box);
+            painter.setPen(QPen(ink, 4, Qt::SolidLine, Qt::FlatCap));
+            painter.drawArc(box, 90 * 16, -static_cast<int>(std::lround(e.progress * 360 * 16)));
+            effect_tag(painter, tag_point(view, at, r + 4), e.label, ink, 1.0);
+            break;
+        }
+        case MapEffectKind::DartFlight: {
+            const QPointF from = field_px(field, view, e.from);
+            const double flight = std::clamp(age / static_cast<double>(kDartFlightMs), 0.0, 1.0);
+            // 二次贝塞尔:控制点在两点连线中点往上抬,像抛出去的弧。
+            const QPointF mid = (from + at) / 2.0;
+            const QPointF control(mid.x(), std::max(view.y + base, mid.y() - std::hypot(at.x() - from.x(), at.y() - from.y()) * 0.45));
+            const auto curve = [&](double u) {
+                return (1 - u) * (1 - u) * from + 2 * (1 - u) * u * control + u * u * at;
+            };
+            if (flight < 1.0) {
+                constexpr int kSteps = 24;
+                for (int i = 0; i < kSteps; ++i) {
+                    const double u0 = flight * i / kSteps;
+                    const double u1 = flight * (i + 1) / kSteps;
+                    painter.setPen(QPen(with_alpha(ink, 0.15 + 0.85 * (i + 1) / kSteps), 3.0, Qt::SolidLine, Qt::RoundCap));
+                    painter.drawLine(curve(u0), curve(u1));
+                }
+                const QPointF head = curve(flight);
+                QRadialGradient glow(head, base * 0.7);
+                glow.setColorAt(0, QColor(255, 244, 214));
+                glow.setColorAt(1, with_alpha(ink, 0));
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(glow);
+                painter.drawEllipse(head, base * 0.7, base * 0.7);
+            } else {
+                const double hit = std::clamp((age - kDartFlightMs) / static_cast<double>(kDartImpactMs), 0.0, 1.0);
+                for (const double lag : {0.0, 0.3}) {
+                    const double phase = std::clamp(hit - lag, 0.0, 1.0);
+                    painter.setBrush(Qt::NoBrush);
+                    painter.setPen(QPen(with_alpha(QColor(255, 214, 120), 1.0 - phase), 3.0));
+                    painter.drawEllipse(at, base * (0.4 + 2.2 * phase), base * (0.4 + 2.2 * phase));
+                }
+                effect_tag(painter, tag_point(view, at, base * 2.4), e.label, QColor(255, 214, 120), 1.0 - hit * 0.6);
+            }
+            break;
+        }
+        case MapEffectKind::DartGate: {
+            for (int j = 0; j < 3; ++j) {
+                const double phase = std::fmod(age / 900.0 + j / 3.0, 1.0);
+                painter.setBrush(Qt::NoBrush);
+                painter.setPen(QPen(with_alpha(ink, (1.0 - phase) * (1.0 - k * 0.5)), 2.5));
+                painter.drawEllipse(at, base * (0.5 + 1.6 * phase), base * (0.5 + 1.6 * phase));
+            }
+            effect_tag(painter, tag_point(view, at, base * 2.2), e.label, ink, 1.0 - k * 0.5);
+            break;
+        }
+        case MapEffectKind::RuneBurst: {
+            const double spin = age / 1000.0 * 3.14159;
+            for (int arm = 0; arm < 5; ++arm) {
+                const double angle = spin + arm * 2 * 3.14159 / 5;
+                const QPointF dir(std::cos(angle), std::sin(angle));
+                painter.setPen(QPen(with_alpha(ink, 1.0 - k), 3.0, Qt::SolidLine, Qt::RoundCap));
+                painter.drawLine(at + dir * base * 0.6, at + dir * base * (1.4 + 0.8 * k));
+            }
+            painter.setBrush(Qt::NoBrush);
+            painter.setPen(QPen(with_alpha(ink, 1.0 - k), 2.0));
+            painter.drawEllipse(at, base * (1.0 + 2.0 * k), base * (1.0 + 2.0 * k));
+            effect_tag(painter, at - QPointF(0, base * 2.6), e.label, ink, 1.0 - k * 0.5);
+            break;
+        }
+        case MapEffectKind::BaseHit: {
+            for (const double lag : {0.0, 0.45}) {
+                const double phase = std::clamp(k - lag, 0.0, 1.0) / (1.0 - lag);
+                painter.setBrush(Qt::NoBrush);
+                painter.setPen(QPen(with_alpha(theme::kDanger, 1.0 - phase), 3.0));
+                painter.drawEllipse(at, base * (0.6 + 1.8 * phase), base * (0.6 + 1.8 * phase));
+            }
+            effect_tag(painter, at - QPointF(0, base * 1.9), e.label, theme::kDangerText, 1.0 - k * 0.5);
+            break;
+        }
+        }
+    }
+    painter.restore();
+}
+
+}  // namespace
+
 std::vector<MapMarker> markers_from(const std::vector<MapRobot>& robots) {
     std::vector<MapMarker> markers;
     markers.reserve(robots.size());
@@ -247,6 +396,17 @@ MapStatus map_status(const std::vector<MapMarker>& markers, const FieldExtent& f
 MapPane::MapPane(QWidget* parent) : QWidget(parent), background_opacity_(kBackgroundOpacity) {
     setMinimumSize(160, 86);
     setAutoFillBackground(false);
+    effect_timer_.setInterval(33);
+    QObject::connect(&effect_timer_, &QTimer::timeout, this, [this] { update(); });
+}
+
+void MapPane::setEffects(std::vector<MapEffect> effects, MonotonicMs now) {
+    effects_ = std::move(effects);
+    effects_now_ = now;
+    effects_wall_ = monotonic_now();
+    if (effects_.empty()) effect_timer_.stop();
+    else if (!effect_timer_.isActive()) effect_timer_.start();
+    update();
 }
 
 void MapPane::setRobots(const std::vector<MapRobot>& robots) {
@@ -296,6 +456,9 @@ void MapPane::paintEvent(QPaintEvent*) {
         painter.drawText(QRect(view.x, view.y, view.width, view.height), Qt::AlignCenter,
                          QStringLiteral("无位置数据"));
     }
+
+    const MonotonicMs effect_t = effects_now_ + (monotonic_now() - effects_wall_);
+    if (!effects_.empty() && view.width > 0) paint_effects(painter, field_, view, effects_, effect_t, true);
 
     // 能量机关增益的倒计时圈画在机器人下面:车停在能量机关旁边时不能被圈盖住。
     if (!rune_rings_.empty() && view.width > 0) {
@@ -446,6 +609,8 @@ void MapPane::paintEvent(QPaintEvent*) {
         }
         painter.restore();
     }
+    // 飞镖、波纹这些一下子的动画盖在机器人和标记上面。
+    if (!effects_.empty() && view.width > 0) paint_effects(painter, field_, view, effects_, effect_t, false);
     painter.setFont(label_font);
 
     // 自下而上叠在场地上:故障行是例外情况,给它预留常驻高度会在常态下留一条黑缝。
@@ -469,8 +634,7 @@ void MapPane::paintEvent(QPaintEvent*) {
         line(kAlertText, QStringLiteral("自机位置不可用 · 单机 RobotPosition 未收到"));
 
     if (base_alert_) {
-        // 场地图已换成 2027 的,但基地在图上的坐标还没写进代码,所以闪我方那一半的边框并标在
-        // 我方一侧;要在基地处闪,得先把基地坐标写进来。
+        // 闪我方那一半的边框,一眼看得出是自己家;基地那一点的波纹是 map_effects 画的。
         const QColor red(255, 100, 100, base_alert_bright_ ? 235 : 100);
         painter.setPen(QPen(red, 3));
         painter.setBrush(QColor(255, 100, 100, base_alert_bright_ ? 28 : 10));

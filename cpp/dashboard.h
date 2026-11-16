@@ -434,6 +434,7 @@ private:
     // 只有指挥手有:战场数据分析那一格换成大局。
     OverviewPane* overview_ = nullptr;
     const MatchLog* match_log_ = nullptr;
+    MapEffectTracker map_effects_;
     SelfStatusPane* self_status_ = nullptr;
     TimelinePane* timeline_ = nullptr;
 

@@ -2,6 +2,7 @@
 
 #include "domain.h"
 #include "field_map.h"
+#include "map_effects.h"
 #include "map_marks.h"
 
 #include <QColor>
@@ -9,6 +10,7 @@
 #include <QSize>
 #include <QString>
 #include <QStringList>
+#include <QTimer>
 #include <QWidget>
 #include <cstdint>
 #include <functional>
@@ -94,6 +96,10 @@ public:
     void setLowHealth(const std::vector<std::uint32_t>& ids);
     void setSentryPath(const std::vector<std::pair<double, double>>& points);
     void setRuneRings(const std::vector<RuneRing>& rings);
+    // 事件动画(map_effects.h)。now 是这一批算出来的时刻:动画按它往后用本机时钟走,
+    // 回放时也对得上。有动画时地图每 33 毫秒重画一次,没有就停。
+    void setEffects(std::vector<MapEffect> effects, MonotonicMs now);
+    const std::vector<MapEffect>& effects() const { return effects_; }
 
     // 操作手的界面设置:场地底图不透明度(0.2–1.0),画不画敌方机器人和地图标记。
     // 藏起来的敌方只是不画,地图下方的「位置缺失」文字照常,点选敌方标记照常。
@@ -121,6 +127,10 @@ private:
     std::vector<std::uint32_t> low_health_;
     std::vector<std::pair<double, double>> sentry_path_;
     std::vector<RuneRing> rune_rings_;
+    std::vector<MapEffect> effects_;
+    MonotonicMs effects_now_ = 0;
+    MonotonicMs effects_wall_ = 0;
+    QTimer effect_timer_;
     ClickHandler click_handler_;
     std::uint32_t own_faction_ = 1;
     FieldExtent field_ = default_field_extent();

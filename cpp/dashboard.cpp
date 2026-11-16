@@ -1619,6 +1619,7 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
     setPaneHeader(PaneId::Analysis, overview_ ? overview_->overview().rates : analysis_->headerText());
     video_stats_->setText(video_panel_text(video, &video_faults_, now));
     map_->setRobots(snapshot.map_robots);
+    map_->setEffects(map_effects_.update(snapshot, buffs_, now), now);
     {
         std::vector<RuneRing> rings;
         for (const std::uint32_t faction : {kRed, kBlue}) {
