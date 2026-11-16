@@ -171,7 +171,44 @@ scene_radar() {
     stop_sim
 }
 
-declare -F "scene_$BLOCK" > /dev/null || fail "用法: bash scripts/shoot_effects.sh {buffs|radar}"
+# 第三块：场地坐标。入侵横幅三条路各一张，再摆位置看按位置推的增益和偷堡垒的是谁。
+scene_field() {
+    start_sim 3
+    for route in ${FIELD_ROUTES-highland tunnel road}; do
+        ctl place 103 off
+        capture 3 1440x900 8500 "intrusion-$route-1440x900.png"
+        sleep 4
+        ctl intrude 103 "$route"
+        done_shot "intrusion $route"
+    done
+    ctl place 103 off
+
+    # 按位置推的标签要关掉雷达情报才看得到（有情报时敌方用实际数）。
+    ctl radar-intel off
+    ctl place 4 10.6 7.5
+    ctl place 7 2.5 7.5
+    ctl place 104 17.4 7.5
+    ctl place 101 27.0 14.0
+    ctl place 103 6.6 7.5
+    for size in 1440x900 1280x760 1920x1080; do
+        # 堡垒提醒在「开始激活」那一刻报,终端要先开着、看到 3 号已经站在我方堡垒上。
+        ctl fortress 0
+        capture 3 "$size" 7000 "positions-$size.png"
+        sleep 4
+        ctl fortress 1
+        done_shot "positions $size"
+    done
+    stop_sim
+
+    start_sim 6
+    capture 6 1440x900 8500 commander-intrusion-1440x900.png
+    sleep 4
+    ctl intrude 103 tunnel
+    done_shot "commander intrusion"
+    stop_sim
+}
+
+declare -F "scene_$BLOCK" > /dev/null || fail "用法: bash scripts/shoot_effects.sh {buffs|radar|field}"
 mkdir -p "$OUT"
 mosquitto -p "$P" > "$RUN/logs/mosquitto.log" 2>&1 &
 PIDS+=("$!")

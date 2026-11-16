@@ -38,6 +38,17 @@ def font(size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(path, size)
 
 
+def wrap(text: str, face: ImageFont.FreeTypeFont, width: int) -> list[str]:
+    lines, line = [], ""
+    for char in text:
+        if line and face.getlength(line + char) > width:
+            lines.append(line)
+            line = char.lstrip()
+        else:
+            line += char
+    return lines + [line] if line else lines
+
+
 def crop(folder: Path, part: dict) -> Image.Image:
     x, y, w, h = part["box"]
     image = Image.open(folder / part["src"]).convert("RGB").crop((x, y, x + w, y + h))
@@ -54,34 +65,39 @@ def main() -> int:
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
     title_font, label_font = font(30), font(22)
 
-    blocks: list[tuple[str, list[Image.Image]]] = []
+    # 每块图上面是它自己的说明,按图的宽度折行(至少 360 像素宽)。
+    blocks: list[list[tuple[list[str], Image.Image]]] = []
     number = 0
     for entry in spec["parts"]:
-        group = entry["row"] if "row" in entry else [entry]
-        images = [crop(folder, part) for part in group]
-        labels = []
-        for part in group:
+        row = []
+        for part in entry["row"] if "row" in entry else [entry]:
             number += 1
-            labels.append(f"{chr(0x2460 + number - 1)} {part['label']}")
-        blocks.append(("    ".join(labels), images))
+            image = crop(folder, part)
+            text = f"{chr(0x2460 + number - 1)} {part['label']}"
+            row.append((wrap(text, label_font, max(image.width, 360)), image))
+        blocks.append(row)
 
-    width = max(sum(i.width for i in images) + GAP * (len(images) - 1) for _, images in blocks) + 2 * MARGIN
+    def row_width(row):
+        return sum(max(image.width, 360) for _, image in row) + GAP * (len(row) - 1)
+
+    width = max(max(row_width(row) for row in blocks) + 2 * MARGIN, int(title_font.getlength(spec["title"])) + 2 * MARGIN)
     height = MARGIN + 44
-    for _, images in blocks:
-        height += 34 + max(i.height for i in images) + GAP * 2
+    for row in blocks:
+        height += 30 * max(len(lines) for lines, _ in row) + 6 + max(image.height for _, image in row) + GAP * 2
     sheet = Image.new("RGB", (width, height), BACKGROUND)
     draw = ImageDraw.Draw(sheet)
     draw.text((MARGIN, MARGIN), spec["title"], font=title_font, fill=ACCENT)
     y = MARGIN + 44
-    for label, images in blocks:
-        draw.text((MARGIN, y), label, font=label_font, fill=TEXT)
-        y += 34
+    for row in blocks:
+        label_height = 30 * max(len(lines) for lines, _ in row) + 6
         x = MARGIN
-        for image in images:
-            sheet.paste(image, (x, y))
-            draw.rectangle((x - 1, y - 1, x + image.width, y + image.height), outline=ACCENT)
-            x += image.width + GAP
-        y += max(i.height for i in images) + GAP * 2
+        for lines, image in row:
+            for i, line in enumerate(lines):
+                draw.text((x, y + 30 * i), line, font=label_font, fill=TEXT)
+            sheet.paste(image, (x, y + label_height))
+            draw.rectangle((x - 1, y + label_height - 1, x + image.width, y + label_height + image.height), outline=ACCENT)
+            x += max(image.width, 360) + GAP
+        y += label_height + max(image.height for _, image in row) + GAP * 2
     sheet.save(folder / spec["sheet"])
     print(f"{folder / spec['sheet']}  {number} 块")
     return 0
