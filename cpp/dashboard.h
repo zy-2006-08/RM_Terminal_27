@@ -12,6 +12,7 @@
 #include "self_status_pane.h"
 #include "timeline_pane.h"
 #include "battle_analysis_pane.h"
+#include "overview_pane.h"
 #include "buff_ledger.h"
 #include "event_feed_pane.h"
 #include "glass.h"
@@ -215,6 +216,8 @@ public:
     void showAlert(const QString& text, AlertLevel level, MonotonicMs now);
     // 我方基地被攻击:地图上闪 kBaseFlashMs。
     void flashBase(MonotonicMs now);
+    // 这一局每秒的记录(主程序那份),指挥手的大局画趋势线用。
+    void setMatchLog(const MatchLog* log) { match_log_ = log; }
     QString alertBannerText() const;
 
     // 回放控制栏只在回放模式出现。用回调而不是 Dashboard 信号,避免这个只做
@@ -428,6 +431,9 @@ private:
     RosterPanel* ally_roster_;
     RosterPanel* enemy_roster_;
     BattleAnalysisPane* analysis_;
+    // 只有指挥手有:战场数据分析那一格换成大局。
+    OverviewPane* overview_ = nullptr;
+    const MatchLog* match_log_ = nullptr;
     SelfStatusPane* self_status_ = nullptr;
     TimelinePane* timeline_ = nullptr;
 

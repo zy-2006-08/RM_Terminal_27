@@ -819,7 +819,17 @@ Dashboard::Dashboard(const Config& config, QWidget* parent)
     analysis_ = new BattleAnalysisPane(analysis_box);
     analysis_->setObjectName(QStringLiteral("battleAnalysisPane"));
     analysis_->setOwnFaction(own_faction_);
-    analysis_box->body()->addWidget(analysis_, 1);
+    // 指挥手看大局(大局判断表.md):这一格换成趋势和输赢推算,战场数据分析留着不画。
+    if (role_ == Role::Commander) {
+        analysis_box->setTitle(QStringLiteral("大局"));
+        overview_ = new OverviewPane(analysis_box);
+        overview_->setObjectName(QStringLiteral("overviewPane"));
+        overview_->setOwnFaction(own_faction_);
+        analysis_box->body()->addWidget(overview_, 1);
+        analysis_->setVisible(false);
+    } else {
+        analysis_box->body()->addWidget(analysis_, 1);
+    }
 
     // 「下一步」三张卡:中间一列最上面。「有急事才弹出」时格子里不放,急事来了浮在战场数据
     // 分析上面,处理完自动收起。
@@ -1176,7 +1186,7 @@ void Dashboard::applyUiScheme(const UiScheme& scheme, bool editing) {
     map_->setDisplayOptions(options.map_background_percent / 100.0, options.map_show_enemies,
                             options.map_show_marks, own_faction_);
     analysis_->setControlOnly(options.analysis_control_only);
-    setPaneHeader(PaneId::Analysis, analysis_->headerText());
+    setPaneHeader(PaneId::Analysis, overview_ ? overview_->overview().rates : analysis_->headerText());
     ally_roster_->setLowHealthPulse(options.enemy_low_hp_pulse);
     enemy_roster_->setLowHealthPulse(options.enemy_low_hp_pulse);
 }
@@ -1574,6 +1584,7 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
     map_->setLowHealth(low_health);
     updateNextStep(snapshot, now);
     analysis_->setMetrics(build_analysis_metrics(snapshot, &buffs_, now));
+    if (overview_ && match_log_) overview_->setOverview(build_overview(snapshot, buffs_, *match_log_, now));
     self_status_->setEntry(self_entry(snapshot));
     {
         const auto elapsed = snapshot.game.stage_elapsed_sec;
@@ -1605,7 +1616,7 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
                                                       "color:%2'>%3</span>&nbsp;条")
                                            .arg(theme::numericFamily(), theme::kTextBright.name())
                                            .arg(event_rows.size()));
-    setPaneHeader(PaneId::Analysis, analysis_->headerText());
+    setPaneHeader(PaneId::Analysis, overview_ ? overview_->overview().rates : analysis_->headerText());
     video_stats_->setText(video_panel_text(video, &video_faults_, now));
     map_->setRobots(snapshot.map_robots);
     {

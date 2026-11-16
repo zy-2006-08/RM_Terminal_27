@@ -28,6 +28,7 @@
 #include "input_method_guard.h"
 #include "link_health.h"
 #include "match_alerts.h"
+#include "match_report.h"
 #include "next_step.h"
 #include "rm_terminal.pb.h"
 #include "logging.h"
@@ -606,6 +607,11 @@ int main(int argc, char* argv[]) {
                             reminders.config().rate_wpm);
 
     rm_terminal::Dashboard dashboard(cfg);
+    // 这一局每秒一笔的流水:指挥手的大局画趋势线,每局结束当场写复盘网页(大局判断表.md)。
+    rm_terminal::MatchLog match_log;
+    dashboard.setMatchLog(&match_log);
+    const QString reports =
+        QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)).filePath(QStringLiteral("reports"));
     dashboard.attachReminders(&reminders);
     const rm_terminal::Role seat_role = rm_terminal::Seat::fromRobotId(cfg.self_robot_id)
                                             ? rm_terminal::Seat::fromRobotId(cfg.self_robot_id)->role()
@@ -1147,7 +1153,8 @@ int main(int argc, char* argv[]) {
                       &seat_matched, &logged_event_at, &logged_sentry_result_at,
                       &logged_dart, &logged_mark_at, self_commands, revive_popup, &keyboard_mouse,
                       &self_log, purchases, &self_dead, &pause_keyboard_mouse, settings_panel, seat_role,
-                      &performance_phrase, &last_stage, &rune_key, &rune_step, team_panel, injury_panel]() {
+                      &performance_phrase, &last_stage, &rune_key, &rune_step, team_panel, injury_panel,
+                      &match_log, &reports]() {
         // One clock read per tick, shared by the snapshot and the mode machine:
         // two reads would hand the machine an instant the snapshot never saw.
         const rm_terminal::MonotonicMs now = rm_terminal::monotonic_now();
@@ -1188,6 +1195,7 @@ int main(int argc, char* argv[]) {
                      QStringLiteral("gate=%1").arg(dart_now.second)});
             logged_dart = dart_now;
         }
+        const bool round_over = match_log.observe(snapshot);
         for (const auto& alert : match_alerts.observe(snapshot, now)) {
             rm_terminal::StructuredLog::write(
                 rm_terminal::LogLevel::info, QStringLiteral("alert"),
@@ -1195,8 +1203,22 @@ int main(int argc, char* argv[]) {
                  QStringLiteral("level=%1").arg(rm_terminal::alert_level_name(alert.level)),
                  QStringLiteral("text=%1").arg(alert.banner)});
             dashboard.showAlert(alert.banner, alert.level, now);
+            match_log.note(alert.banner);
             if (alert.kind == rm_terminal::AlertKind::BaseAttacked) dashboard.flashBase(now);
             if (!replay && alert_voice_on) reminders.announce(alert_voice.pathFor(alert.speech));
+        }
+        if (round_over && !replay && snapshot.self) {
+            rm_terminal::ReportContext context;
+            context.self_id = snapshot.self->value;
+            context.recording = recorder.active() ? recorder.path() : QString();
+            context.finished_at = QDateTime::currentDateTime();
+            QString report_error;
+            const QString report = rm_terminal::write_match_report(reports, match_log, context, &report_error);
+            rm_terminal::StructuredLog::write(
+                report.isEmpty() ? rm_terminal::LogLevel::warning : rm_terminal::LogLevel::info,
+                QStringLiteral("match_report"),
+                {report.isEmpty() ? QStringLiteral("error=%1").arg(report_error) : QStringLiteral("path=%1").arg(report)});
+            if (!report.isEmpty()) qInfo().noquote() << "match report:" << report;
         }
         dashboard.update(snapshot, &video, now);
         if (!wall.empty()) {
