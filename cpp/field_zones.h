@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 namespace rm_terminal {
 
@@ -32,6 +33,12 @@ bool in_half(FieldPoint point, std::uint32_t faction, double margin = 0);
 
 // 这个点在 faction 那一方的哪块地方。装配区在场地正中,两方都算。
 std::optional<FieldZone> zone_at(FieldPoint point, std::uint32_t faction);
+
+// 地图动画要用的几个点:faction 那一方的飞镖发射井、前哨站、基地、堡垒的中心;能量机关在正中。
+enum class Landmark { DartLauncher, Outpost, Base, Fortress, Rune };
+FieldPoint landmark(Landmark which, std::uint32_t faction);
+// 增益区的轮廓(多边形顶点),只有基地增益点、堡垒、中央高地增益点有;别的返回空。
+std::vector<FieldPoint> zone_outline(FieldZone zone, std::uint32_t faction);
 
 // 敌人过中线走的哪条路:中线上中央高地占着中间那一大段,上下两头是隧道。
 enum class FieldRoute { Unknown, Highland, Tunnel, Road };

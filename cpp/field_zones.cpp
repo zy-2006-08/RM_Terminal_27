@@ -71,6 +71,33 @@ std::optional<FieldZone> zone_at(FieldPoint point, std::uint32_t faction) {
     return std::nullopt;
 }
 
+FieldPoint landmark(Landmark which, std::uint32_t faction) {
+    FieldPoint red;
+    switch (which) {
+    case Landmark::DartLauncher: red = {1.31, 14.19}; break;  // 红飞镖发射井外包盒中心
+    case Landmark::Outpost: red = kOutpost; break;
+    case Landmark::Base: red = {2.46, 7.5}; break;
+    case Landmark::Fortress: red = {(kFortress.x0 + kFortress.x1) / 2, (kFortress.y0 + kFortress.y1) / 2}; break;
+    case Landmark::Rune: return {kFieldMidX, kFieldWidth / 2};
+    }
+    return to_red_side(red, faction);
+}
+
+std::vector<FieldPoint> zone_outline(FieldZone zone, std::uint32_t faction) {
+    std::vector<FieldPoint> red;
+    switch (zone) {
+    case FieldZone::BaseBuff: red = kBaseBuff; break;
+    case FieldZone::CentralHighland: red = kCentralStrip; break;
+    case FieldZone::Fortress:
+        red = {{kFortress.x0, kFortress.y0}, {kFortress.x1, kFortress.y0}, {kFortress.x1, kFortress.y1},
+               {kFortress.x0, kFortress.y1}};
+        break;
+    default: return {};
+    }
+    for (FieldPoint& p : red) p = to_red_side(p, faction);
+    return red;
+}
+
 FieldRoute route_at_midline(double y) {
     return y >= kHighlandLow && y <= kHighlandHigh ? FieldRoute::Highland : FieldRoute::Tunnel;
 }

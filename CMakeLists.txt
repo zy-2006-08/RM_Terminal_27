@@ -49,7 +49,8 @@ add_library(terminal_presentation cpp/presentation.cpp cpp/ui_mode.cpp cpp/ui_mo
     cpp/map_marks.cpp cpp/map_marks.h cpp/next_step.cpp cpp/next_step.h
     cpp/buff_ledger.cpp cpp/buff_ledger.h
     cpp/field_zones.cpp cpp/field_zones.h
-    cpp/overview.cpp cpp/overview.h cpp/match_report.cpp cpp/match_report.h)
+    cpp/overview.cpp cpp/overview.h cpp/match_report.cpp cpp/match_report.h
+    cpp/map_effects.cpp cpp/map_effects.h)
 target_link_libraries(terminal_presentation PUBLIC terminal_domain terminal_logging Qt6::Core)
 
 # 操作手个性化界面:方案模型、藏面板后的补位规则、存盘。只链 Qt6::Core,
@@ -265,6 +266,9 @@ if(BUILD_TESTING)
     add_executable(buff_ledger_test cpp/buff_ledger_test.cpp)
     target_link_libraries(buff_ledger_test PRIVATE terminal_presentation)
     add_test(NAME buff_ledger COMMAND buff_ledger_test)
+    add_executable(map_effects_test cpp/map_effects_test.cpp)
+    target_link_libraries(map_effects_test PRIVATE terminal_presentation)
+    add_test(NAME map_effects COMMAND map_effects_test)
     add_executable(overview_test cpp/overview_test.cpp)
     target_link_libraries(overview_test PRIVATE terminal_presentation)
     add_test(NAME overview COMMAND overview_test)
