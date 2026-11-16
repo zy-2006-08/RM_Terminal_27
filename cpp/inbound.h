@@ -60,4 +60,11 @@ struct PathPlan {
 
 using MapClick = MapMark;
 
+// CustomByteBlock 里解出来的一包雷达情报。*_age_ms 是终端收到时这段已经多旧(雷达填的毫秒
+// 加车填的转发延迟),空 = 雷达还没收到过这段,这段的内容不能用。body 的时刻和新鲜度由 Store 填。
+struct RadarIntel {
+    std::optional<std::uint32_t> ammo_age_ms, field_age_ms, buffs_age_ms;
+    ::rm_terminal::RadarIntel body;
+};
+
 }

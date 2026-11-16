@@ -15,6 +15,9 @@ Item {
     property string badge: ""
     // 右侧小字往左让出多少(界面设置页里给齿轮和叉留地方)。
     property real badgeInset: 0
+    // 说明文字左边再放一句状态,例如敌方那一栏的「雷达情报」。空就不显示。
+    property string badgeNote: ""
+    property color badgeNoteColor: Theme.textSecondary
     default property alias content: body.data
 
     GlassShape {
@@ -57,7 +60,17 @@ Item {
         anchors.rightMargin: 14 + root.badgeInset
         height: 40
         spacing: 6
-        visible: root.badge !== "" || root.badgeLabel !== ""
+        visible: root.badge !== "" || root.badgeLabel !== "" || root.badgeNote !== ""
+        Text {
+            anchors.verticalCenter: parent.verticalCenter
+            visible: root.badgeNote !== ""
+            rightPadding: 4
+            text: root.badgeNote
+            color: root.badgeNoteColor
+            font.family: Theme.labelFamily
+            font.pixelSize: 13
+            font.weight: Font.Medium
+        }
         Text {
             anchors.verticalCenter: parent.verticalCenter
             text: root.badgeLabel

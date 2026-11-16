@@ -19,6 +19,9 @@ Item {
     property var ranks: ({})
     // 界面设置页开着:标题栏右边的「存活」往左让,给齿轮和叉留地方。
     property real toolInset: 0
+    // 敌方那一栏:「雷达情报」或「雷达情报过期 12秒」(intelStale 为真,标黄)。
+    property string intelNote: ""
+    property bool intelStale: false
 
     Image {
         anchors.fill: parent
@@ -49,6 +52,8 @@ Item {
         badgeLabel: counts.known > 0 ? "存活" : ""
         badge: counts.known > 0 ? counts.alive + "/" + counts.known : ""
         badgeInset: root.toolInset
+        badgeNote: root.intelNote
+        badgeNoteColor: root.intelStale ? Theme.warn : Theme.cyan
 
         Column {
             id: rows

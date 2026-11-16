@@ -30,7 +30,7 @@ struct RosterEntry {
     LiveState live = LiveState::NoData;
     std::optional<std::uint32_t> hp;
     std::optional<std::uint32_t> max_hp;
-    // 只有己方:剩余累计发弹量(GlobalUnitStatus.robot_bullets)。
+    // 己方:剩余累计发弹量(GlobalUnitStatus.robot_bullets);敌方:雷达情报里的允许发弹量。
     std::optional<std::int32_t> bullets;
 
     // 以下只有自机有:RobotDynamicStatus / RobotStaticStatus / RobotModuleStatus /

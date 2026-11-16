@@ -22,6 +22,7 @@ public:
     bool apply(const inbound::RobotRespawnStatus& patch, std::optional<RobotId> source, MonotonicMs now);
     bool apply(const inbound::RobotBuff& patch, std::optional<RobotId> source, MonotonicMs now);
     bool apply(const inbound::BuffMessage& patch, MonotonicMs now);
+    bool apply(const inbound::RadarIntel& patch, MonotonicMs now);
     bool apply(const inbound::RobotInjury& patch, std::optional<RobotId> source, MonotonicMs now);
     bool apply(const inbound::RadarSet& patch, MonotonicMs now);
     bool apply(const inbound::TechCoreStatus& patch, MonotonicMs now);

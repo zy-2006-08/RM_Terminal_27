@@ -1559,6 +1559,11 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
     ally_roster_->setEntries(with_buffs(build_roster(snapshot, ally_faction)));
     const std::vector<RosterEntry> enemies = with_buffs(build_roster(snapshot, enemy_faction));
     enemy_roster_->setEntries(enemies);
+    {
+        bool intel_stale = false;
+        const QString intel_note = radar_intel_note(snapshot, &intel_stale);
+        enemy_roster_->setIntelNote(intel_note, intel_stale);
+    }
     // 地图上残血敌人的红光和花名册的残血提示是同一条规则:活着、有血量、不超过四分之一。
     std::vector<std::uint32_t> low_health;
     if (mine)

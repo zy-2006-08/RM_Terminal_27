@@ -23,7 +23,7 @@ Item {
     property string robotClass: ""
     property bool hasPosition: false
     property bool positionStale: false
-    // 只有己方有:剩余累计发弹量(GlobalUnitStatus.robot_bullets),-1 = 没有数据。
+    // 己方是剩余累计发弹量(GlobalUnitStatus.robot_bullets),敌方是雷达情报里的允许发弹量,-1 = 没有数据。
     property int bullets: -1
     // 「下一步」给这台车标的编号,空串不画。
     property string rank: ""

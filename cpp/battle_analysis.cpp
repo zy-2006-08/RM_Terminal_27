@@ -49,6 +49,13 @@ std::vector<AnalysisMetric> build_analysis_metrics(const Snapshot& snapshot, con
     economy.has_enemy = false;
     if (const auto total = as_int(g.total_economy))
         economy.note = QStringLiteral("累计 %1").arg(*total);
+    // 敌方剩余金币只在雷达情报里有(0x0A04)。
+    if (known && snapshot.radar_intel && snapshot.radar_intel->field_fresh) {
+        economy.label = QStringLiteral("经济");
+        economy.enemy_value = snapshot.radar_intel->gold;
+        economy.has_enemy = true;
+        economy.note.clear();
+    }
     metrics.push_back(economy);
 
     metrics.push_back({QStringLiteral("总伤害"),

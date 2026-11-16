@@ -88,6 +88,7 @@ void Store::resetRound() {
     state_.dart_hits = DartTally{};
     state_.launcher_installed = false;
     state_.buffs.clear();
+    state_.radar_intel.reset();
     enemy_fixed_dart_hits_ = 0;
     blind_until_.reset();
     blind_target_ = 0;
@@ -256,6 +257,41 @@ bool Store::apply(const inbound::BuffMessage& patch, MonotonicMs now) {
     list.push_back(record);
     return true;
 }
+bool Store::apply(const inbound::RadarIntel& patch, MonotonicMs now) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!advance(now)) return false;
+    RadarIntel& intel = state_.radar_intel ? *state_.radar_intel : state_.radar_intel.emplace();
+    const RadarIntel& in = patch.body;
+    intel.seq = in.seq;
+    // 车会以 50Hz 反复转发同一包:算出来的时刻不比手里的新,这一段就不动。
+    const auto take = [now](std::optional<MonotonicMs>& at, const std::optional<std::uint32_t>& age_ms) {
+        if (!age_ms) return false;
+        const MonotonicMs candidate = now - static_cast<MonotonicMs>(*age_ms);
+        if (at && candidate <= *at) return false;
+        at = candidate;
+        return true;
+    };
+    if (take(intel.ammo_at, patch.ammo_age_ms))
+        for (std::size_t i = 0; i < intel.robots.size(); ++i) intel.robots[i].allowed_ammo = in.robots[i].allowed_ammo;
+    if (take(intel.field_at, patch.field_age_ms)) {
+        intel.gold = in.gold;
+        intel.total_gold = in.total_gold;
+        intel.buff_points = in.buff_points;
+        intel.crossings = in.crossings;
+    }
+    if (take(intel.buffs_at, patch.buffs_age_ms)) {
+        for (std::size_t i = 0; i < intel.robots.size(); ++i) {
+            const std::uint32_t ammo = intel.robots[i].allowed_ammo;
+            intel.robots[i] = in.robots[i];
+            intel.robots[i].allowed_ammo = ammo;
+        }
+        intel.sentry_posture = in.sentry_posture;
+        intel.armor_x = in.armor_x;
+        intel.armor_y = in.armor_y;
+        intel.armor_radius = in.armor_radius;
+    }
+    return true;
+}
 bool Store::apply(const inbound::RobotInjury& patch, std::optional<RobotId> source, MonotonicMs now) {
     std::lock_guard<std::mutex> lock(mutex_);
     return valid_source(source) && advance(now) && convert(state_.robots[*source].injury, patch, now);
@@ -384,6 +420,19 @@ Snapshot Store::snapshot(MonotonicMs now) const {
                                   [&](const BuffRecord& record) { return now - record.received_at >= threshold_; }),
                    list.end());
         it = list.empty() ? copy.buffs.erase(it) : std::next(it);
+    }
+    if (copy.radar_intel) {
+        RadarIntel& intel = *copy.radar_intel;
+        std::optional<MonotonicMs> newest;
+        const auto fresh = [&](const std::optional<MonotonicMs>& at) {
+            if (!at) return false;
+            newest = newest ? std::max(*newest, *at) : *at;
+            return now - *at <= kRadarIntelFreshMs;
+        };
+        intel.ammo_fresh = fresh(intel.ammo_at);
+        intel.field_fresh = fresh(intel.field_at);
+        intel.buffs_fresh = fresh(intel.buffs_at);
+        if (newest) intel.age_ms = std::max<MonotonicMs>(0, now - *newest);
     }
 
     // 遮挡是本机按事件推算的,不随某条消息老化:正在遮挡时一定可信;没在遮挡时,

@@ -1,6 +1,7 @@
 #include "buff_ledger.h"
 
 #include "match_event.h"
+#include "radar_intel.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -61,6 +62,7 @@ struct Effects {
     bool weak = false;
     bool marked = false;
     bool highland_pending = false;
+    QString posture;
 };
 
 QString chip_text(QString body, const Value& value) {
@@ -84,6 +86,7 @@ std::vector<BuffChip> chips_of(const Effects& e) {
         shown.estimated = e.vulnerable.estimated || (e.defense.amount > 0 && e.defense.estimated);
         chips.push_back({chip_text(QStringLiteral("易伤%1%").arg(-net), shown), BuffTone::Bad});
     }
+    if (!e.posture.isEmpty()) chips.push_back({e.posture, BuffTone::Neutral});
     if (e.attack.amount > 100)
         chips.push_back({chip_text(QStringLiteral("攻击×%1").arg(times_text(e.attack.amount)), e.attack), BuffTone::Good});
     if (e.cooling_plus.amount > 0)
@@ -127,6 +130,18 @@ void apply_rune(Effects& e, const RuneBuff& rune, MonotonicMs now) {
     e.defense.offer(rune.defense_percent, seconds, rune.estimated);
     e.attack.offer(rune.attack_percent, seconds, rune.estimated);
     e.cooling_times.offer(rune.cooling_times * 100, seconds, rune.estimated);
+}
+
+// 雷达情报里的是服务器算好的实际值(已经含能量机关、地形、姿态),不再按规则推。
+// 协议不给剩余时长,标签不写秒。
+void apply_intel(Effects& e, const EnemyIntel& intel) {
+    if (intel.state == 2 || intel.state == 3) e.invincible.offer(1, std::nullopt, false);
+    if (intel.state == 3) e.weak = true;
+    e.defense.offer(static_cast<int>(intel.defense_percent), std::nullopt, false);
+    e.vulnerable.offer(static_cast<int>(intel.vulnerable_percent), std::nullopt, false);
+    if (intel.attack_percent > 0) e.attack.offer(times_percent(static_cast<std::int32_t>(intel.attack_percent)), std::nullopt, false);
+    e.cooling_plus.offer(static_cast<int>(intel.cooling), std::nullopt, false);
+    e.heal.offer(static_cast<int>(intel.heal_percent), std::nullopt, false);
 }
 
 void apply_posture(Effects& e, const SentryPostureInfo& sentry) {
@@ -198,6 +213,29 @@ QString sentry_posture_effect(std::uint32_t posture, bool powered, bool weakened
                           : QStringLiteral("功率×1.5 · 冷却1/3 · 易伤25%");
     default: return QString();
     }
+}
+
+QString sentry_posture_name(std::uint32_t posture) {
+    switch (posture) {
+    case 1: return QStringLiteral("进攻姿态");
+    case 2: return QStringLiteral("防御姿态");
+    case 3: return QStringLiteral("移动姿态");
+    case 4: return QStringLiteral("强化进攻");
+    case 5: return QStringLiteral("强化防御");
+    case 6: return QStringLiteral("强化移动");
+    default: return QString();
+    }
+}
+
+QString radar_intel_note(const Snapshot& snapshot, bool* stale) {
+    if (stale) *stale = false;
+    if (!snapshot.radar_intel || !snapshot.radar_intel->age_ms) return QString();
+    const RadarIntel& intel = *snapshot.radar_intel;
+    if (intel.buffs_fresh || intel.ammo_fresh || intel.field_fresh) return QStringLiteral("雷达情报");
+    if (stale) *stale = true;
+    const MonotonicMs age = *intel.age_ms;
+    if (age >= 60000) return QStringLiteral("雷达情报过期 %1分钟").arg(age / 60000);
+    return QStringLiteral("雷达情报过期 %1秒").arg(age / 1000);
 }
 
 void BuffTracker::reset() {
@@ -483,8 +521,12 @@ BuffBoard BuffTracker::update(const Snapshot& snapshot, MonotonicMs now) {
             Effects e;
             const auto records = snapshot.buffs.find(id);
             const bool from_server = records != snapshot.buffs.end() || (is_self && self_buffs_seen_);
+            const EnemyIntel* intel = own ? nullptr : enemy_buff_intel(snapshot, id);
             if (records != snapshot.buffs.end()) apply_records(e, records->second, now);
-            if (!from_server) {
+            if (intel) {
+                apply_intel(e, *intel);
+                if (number == 7) e.posture = sentry_posture_name(snapshot.radar_intel->sentry_posture);
+            } else if (!from_server) {
                 const SideBuffs& side = own ? mine : other;
                 if (side.rune) apply_rune(e, *side.rune, now);
                 if (own && tech >= 3) e.defense.offer(tech >= 4 ? 50 : 25, std::nullopt, false);
@@ -497,7 +539,7 @@ BuffBoard BuffTracker::update(const Snapshot& snapshot, MonotonicMs now) {
                     if (robot.id.value == id && robot.highlight != 0 && robot.position.x.freshness == Freshness::Fresh)
                         e.marked = true;
 
-            if (const auto revival = revivals_.find(id); revival != revivals_.end()) {
+            if (const auto revival = revivals_.find(id); revival != revivals_.end() && !intel) {
                 const Revival& r = revival->second;
                 if (is_self) {
                     const bool touched = touched_at >= r.at;

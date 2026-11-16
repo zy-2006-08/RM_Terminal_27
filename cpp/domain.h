@@ -197,6 +197,38 @@ struct BuffRecord {
     MonotonicMs received_at = 0;
 };
 
+// 雷达情报(格式见 雷达情报格式.md):信息波 0x0A03–0x0A05 只发给雷达,雷达经 0x0301 转给车,
+// 车放进 0x0310 带给终端。全是敌方的。每段超过这么久没更新就算过期。
+constexpr MonotonicMs kRadarIntelFreshMs = 3000;
+
+// 一台敌车:0x0A05 的一段加 0x0A03 的一项。百分比照协议原样:defense 50 是 50% 防御,
+// vulnerable 30 是 30% 易伤;attack 可能发 150 也可能发 50(读法见 buff_ledger.cpp)。
+struct EnemyIntel {
+    std::uint32_t heal_percent = 0;
+    std::uint32_t cooling = 0;  // 每秒多冷却多少
+    std::uint32_t defense_percent = 0;
+    std::uint32_t vulnerable_percent = 0;
+    std::uint32_t attack_percent = 0;
+    std::uint32_t state = 0;  // 0 存活 1 战亡 2 无敌不虚弱 3 无敌且虚弱
+    std::uint32_t allowed_ammo = 0;
+};
+
+struct RadarIntel {
+    std::uint32_t seq = 0;
+    // 雷达收到这三段信息波的时刻(本机时钟,已扣掉雷达和车转发的延迟)。空 = 还没收到过。
+    std::optional<MonotonicMs> ammo_at, field_at, buffs_at;
+    // Store 取快照时算好:这段现在能不能用,以及最新的一段有多旧。
+    bool ammo_fresh = false, field_fresh = false, buffs_fresh = false;
+    std::optional<MonotonicMs> age_ms;
+    std::array<EnemyIntel, 4> robots{};  // 顺序同 kFieldRobots:1、3、4、7
+    std::uint32_t sentry_posture = 0;    // 1 进攻 2 防御 3 移动,4–6 是这三种的强化
+    std::uint32_t gold = 0, total_gold = 0;
+    // 0x0A04 偏移 4 和 8 的两个 32 位字原样:增益点、地形跨越点、阵地控制,位定义见协议表 1-44。
+    std::uint32_t buff_points = 0, crossings = 0;
+    // 对方自定义装甲模块当前的加固区(mm,检测面左下角为原点),半径 0 = 没有。
+    std::uint32_t armor_x = 0, armor_y = 0, armor_radius = 0;
+};
+
 // Ring buffer, bounded so a match-long run cannot grow without limit. Overwrites
 // the oldest record when full and counts the loss in droppedCount(), so the UI can
 // disclose truncation instead of implying the history is complete.
@@ -325,6 +357,8 @@ struct Snapshot {
     std::vector<MapMark> map_marks;
     // Buff 按机器人 id 记。快照里只留还在时效窗口里的。
     std::map<std::uint32_t, std::vector<BuffRecord>> buffs;
+    // 这一局收到过雷达情报才有,换局清掉。
+    std::optional<RadarIntel> radar_intel;
 };
 
 }

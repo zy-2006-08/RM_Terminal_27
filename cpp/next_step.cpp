@@ -2,6 +2,7 @@
 
 #include "match_event.h"
 #include "presentation.h"
+#include "radar_intel.h"
 
 #include <algorithm>
 #include <cmath>
@@ -284,6 +285,8 @@ std::vector<NextCard> next_candidates(const Snapshot& snapshot, bool base_hit, c
             const auto robot_hp = fresh(robot.current_hp);
             const auto robot_max = fresh(robot.max_hp);
             if (!robot_hp || !robot_max || *robot_max == 0 || *robot_hp == 0) continue;
+            // 雷达情报说它无敌就不去打。
+            if (enemy_invincible(snapshot, robot.id.value)) continue;
             const double ratio = static_cast<double>(*robot_hp) / *robot_max;
             if (ratio > kLowEnemyRatio || ratio >= best_ratio) continue;
             const auto at = position_of(snapshot, robot.id.value);

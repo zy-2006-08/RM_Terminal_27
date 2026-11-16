@@ -1,6 +1,7 @@
 #include "roster_pane.h"
 
 #include "presentation.h"
+#include "radar_intel.h"
 #include "theme.h"
 
 #include <QLinearGradient>
@@ -94,6 +95,9 @@ RosterEntry roster_entry(const Snapshot& snapshot, RobotId id) {
         entry.max_hp = health->max_hp.value;
         entry.bullets = health->bullets.value;
     }
+    // 敌方的允许发弹量只在雷达情报里有(0x0A03)。
+    if (!entry.bullets)
+        if (const auto ammo = enemy_allowed_ammo(snapshot, id.value)) entry.bullets = static_cast<std::int32_t>(*ammo);
 
     const auto found = snapshot.robots.find(id);
     if (found != snapshot.robots.end()) {

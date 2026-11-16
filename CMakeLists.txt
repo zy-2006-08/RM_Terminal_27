@@ -24,7 +24,8 @@ add_library(terminal_logging cpp/logging.cpp cpp/logging.h cpp/config.cpp cpp/co
 target_include_directories(terminal_logging PUBLIC cpp)
 target_link_libraries(terminal_logging PUBLIC Qt6::Core)
 
-add_library(terminal_domain cpp/conversion.cpp cpp/store.cpp cpp/decoder.cpp cpp/match_event.cpp cpp/match_event.h cpp/clock.cpp cpp/clock.h)
+add_library(terminal_domain cpp/conversion.cpp cpp/store.cpp cpp/decoder.cpp cpp/match_event.cpp cpp/match_event.h cpp/clock.cpp cpp/clock.h
+    cpp/radar_intel.cpp cpp/radar_intel.h)
 target_include_directories(terminal_domain PUBLIC cpp)
 target_link_libraries(terminal_domain PUBLIC terminal_proto)
 add_library(terminal_video cpp/video.cpp cpp/video_receiver.cpp cpp/video_receiver.h cpp/video_recovery.cpp cpp/video_recovery.h
@@ -261,6 +262,9 @@ if(BUILD_TESTING)
     add_executable(buff_ledger_test cpp/buff_ledger_test.cpp)
     target_link_libraries(buff_ledger_test PRIVATE terminal_presentation)
     add_test(NAME buff_ledger COMMAND buff_ledger_test)
+    add_executable(radar_intel_test cpp/radar_intel_test.cpp)
+    target_link_libraries(radar_intel_test PRIVATE terminal_visual)
+    add_test(NAME radar_intel COMMAND radar_intel_test)
     add_executable(replay_player_test cpp/replay_player_test.cpp cpp/replay_player.cpp cpp/replay_player.h)
     target_link_libraries(replay_player_test PRIVATE terminal_domain terminal_recording terminal_video Qt6::Core)
     target_compile_definitions(replay_player_test PRIVATE QT_NO_KEYWORDS)

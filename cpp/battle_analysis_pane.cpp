@@ -344,8 +344,11 @@ QString BattleAnalysisPane::headerText() const {
         return blue ? pair(value_text(m.enemy_value), value_text(m.self_value))
                     : pair(value_text(m.self_value), value_text(m.enemy_value));
     };
-    const QString economy = metrics_.empty() ? QStringLiteral("--") : value_text(metrics_[0].self_value);
-    return QStringLiteral("经济&nbsp;") + span(economy, theme::kTextBright, true) + dot + QStringLiteral("伤害&nbsp;") +
+    // 有雷达情报时经济也是红:蓝两个数,和伤害、击杀一样。
+    const QString economy = metrics_.empty() ? span(QStringLiteral("--"), theme::kTextBright, true)
+                            : metrics_[0].enemy_value ? metric_pair(0)
+                                                      : span(value_text(metrics_[0].self_value), theme::kTextBright, true);
+    return QStringLiteral("经济&nbsp;") + economy + dot + QStringLiteral("伤害&nbsp;") +
            metric_pair(1) + dot + QStringLiteral("击杀&nbsp;") + metric_pair(2) + dot + logistics;
 }
 

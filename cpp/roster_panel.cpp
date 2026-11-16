@@ -102,6 +102,13 @@ void RosterPanel::setRanks(const QVariantMap& ranks) {
     if (QQuickItem* root = rootObject()) root->setProperty("ranks", ranks);
 }
 
+void RosterPanel::setIntelNote(const QString& text, bool stale) {
+    QQuickItem* root = rootObject();
+    if (!root) return;
+    root->setProperty("intelNote", text);
+    root->setProperty("intelStale", stale);
+}
+
 void RosterPanel::setLowHealthPulse(bool enabled) {
     low_health_pulse_ = enabled;
     applyFaction();

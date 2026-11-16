@@ -10,7 +10,8 @@ public:
     // 构造时把席位告诉 Store:实况和回放都经过这里。
     Decoder(Store& store, RobotId self) : store_(store), self_(self) { store_.setSelf(self); }
     bool accept(const std::string& topic, const std::string& payload, MonotonicMs now);
-    // accept() 认识的 topic,也就是终端要订阅的(CustomByteBlock 不经过 Store,另行订阅)。
+    // accept() 认识的 topic,也就是终端要订阅的。CustomByteBlock 另行订阅(它还要转给控制器),
+    // accept() 只从里面取雷达情报。
     static const std::vector<std::string>& topics();
 private:
     Store& store_;

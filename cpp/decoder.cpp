@@ -1,4 +1,5 @@
 #include "decoder.h"
+#include "radar_intel.h"
 #include "rm_terminal.pb.h"
 
 #include <google/protobuf/io/coded_stream.h>
@@ -416,6 +417,13 @@ bool Decoder::accept(const std::string& topic, const std::string& bytes, Monoton
             set.entries.push_back(entry);
         }
         return store_.apply(set, now) && triples->size() == 8;
+    }
+    // 车经 0x0310 带来的雷达情报(雷达情报格式.md)。没放情报的块(只有机械臂回传)不算错。
+    if (topic == "CustomByteBlock") {
+        rm::CustomByteBlock x;
+        if (!parse(x, bytes)) return false;
+        const auto intel = parse_radar_intel(x.data());
+        return !intel || store_.apply(*intel, now);
     }
     if (topic == "TechCoreMotionStateSync") {
         rm::TechCoreMotionStateSync x;

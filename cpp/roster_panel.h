@@ -32,6 +32,8 @@ public:
     void setToolInset(int pixels);
     // 「下一步」给某几台车标的编号,键是机器人 id 的字符串。
     void setRanks(const QVariantMap& ranks);
+    // 标题栏「存活」左边那句雷达情报状态(见 radar_intel_note),stale 时标黄。
+    void setIntelNote(const QString& text, bool stale);
 
     std::size_t rowCount() const { return count_; }
 

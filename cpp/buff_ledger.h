@@ -11,7 +11,8 @@
 
 namespace rm_terminal {
 
-// 双方现在身上有什么增益:服务器发的 Buff(通常只有自机),加上按规则推的。
+// 双方现在身上有什么增益:服务器发的 Buff(通常只有自机),加上按规则推的。敌方收到了还没过期的
+// 雷达情报(radar_intel.h)时,用情报里的实际值,不再推。
 // 规则手册 2027 V1.0.0:
 //   5.3.2  读条复活无敌 30 秒,虚弱到踩补给区、基地或前哨站增益点;金币复活虚弱和无敌 3 秒
 //   5.6.3  小能量机关全队和建筑防御 25%,45 秒;大能量机关按平均环数(表 5-22)和激活臂数(表 5-23)
@@ -85,6 +86,11 @@ QString rune_buff_text(const RuneBuff& rune, MonotonicMs now);
 QString rune_time_text(const RuneBuff& rune, MonotonicMs now, bool compact = false);
 
 QString sentry_posture_effect(std::uint32_t posture, bool powered, bool weakened);
+// 雷达情报 0x0A05 的哨兵姿态 1–6:「进攻姿态」「强化防御」……认不出时为空。
+QString sentry_posture_name(std::uint32_t posture);
+// 敌方机器人那一栏标题栏的字:「雷达情报」,过期了「雷达情报过期 12秒」(stale 置真),
+// 这一局没收到过时为空。
+QString radar_intel_note(const Snapshot& snapshot, bool* stale = nullptr);
 
 class BuffTracker {
 public:
