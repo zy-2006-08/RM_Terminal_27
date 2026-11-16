@@ -48,7 +48,8 @@ add_library(terminal_presentation cpp/presentation.cpp cpp/ui_mode.cpp cpp/ui_mo
     cpp/layout_profile.cpp cpp/layout_profile.h
     cpp/map_marks.cpp cpp/map_marks.h cpp/next_step.cpp cpp/next_step.h
     cpp/buff_ledger.cpp cpp/buff_ledger.h
-    cpp/field_zones.cpp cpp/field_zones.h)
+    cpp/field_zones.cpp cpp/field_zones.h
+    cpp/overview.cpp cpp/overview.h cpp/match_report.cpp cpp/match_report.h)
 target_link_libraries(terminal_presentation PUBLIC terminal_domain terminal_logging Qt6::Core)
 
 # 操作手个性化界面:方案模型、藏面板后的补位规则、存盘。只链 Qt6::Core,
@@ -108,6 +109,7 @@ add_library(terminal_visual
     cpp/roster_panel.cpp cpp/roster_panel.h
     cpp/self_status_pane.cpp cpp/self_status_pane.h
     cpp/battle_analysis.cpp cpp/battle_analysis.h
+    cpp/overview_pane.cpp cpp/overview_pane.h
     cpp/battle_analysis_pane.cpp cpp/battle_analysis_pane.h
     cpp/event_feed_pane.cpp cpp/event_feed_pane.h
     cpp/input_method_guard.cpp cpp/input_method_guard.h
@@ -263,6 +265,9 @@ if(BUILD_TESTING)
     add_executable(buff_ledger_test cpp/buff_ledger_test.cpp)
     target_link_libraries(buff_ledger_test PRIVATE terminal_presentation)
     add_test(NAME buff_ledger COMMAND buff_ledger_test)
+    add_executable(overview_test cpp/overview_test.cpp)
+    target_link_libraries(overview_test PRIVATE terminal_presentation)
+    add_test(NAME overview COMMAND overview_test)
     add_executable(radar_intel_test cpp/radar_intel_test.cpp)
     target_link_libraries(radar_intel_test PRIVATE terminal_visual)
     add_test(NAME radar_intel COMMAND radar_intel_test)
