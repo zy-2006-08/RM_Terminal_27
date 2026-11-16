@@ -263,6 +263,40 @@ void ranking_follows_the_table() {
     check(top.size() >= 2 && top[1].rule == NextRule::BuyAmmo, "then the plain ammo card");
 }
 
+// 先后表第三节第 2 题选 B:本机血少、旁边的残血敌人现在的弹打得掉,先打掉它再补血。
+void a_killable_enemy_goes_before_healing() {
+    Snapshot s = match_for(3, 50);
+    set<std::uint32_t>(s.robots[RobotId{3}].dynamic.current_hp, 48);   // 24%;敌方 3 号 20 血,一发
+    auto top = ranked(s, 3);
+    check(top.size() >= 2 && top[0].rule == NextRule::FocusEnemy && top[1].rule == NextRule::Heal,
+          "20 hp enemy in sight while we need healing: finish it first");
+
+    set<std::uint32_t>(s.robots[RobotId{3}].dynamic.remaining_ammo, 0);
+    top = ranked(s, 3);
+    check(!top.empty() && top[0].rule == NextRule::Heal, "no rounds to finish it: heal first");
+
+    set<std::uint32_t>(s.robots[RobotId{3}].dynamic.remaining_ammo, 2);
+    set<std::uint32_t>(s.robot_health[0].current_hp, 50);   // 25%,要 3 发
+    top = ranked(s, 3);
+    check(!top.empty() && top[0].rule == NextRule::Heal, "2 rounds cannot finish a 50 hp enemy: heal first");
+
+    s = match_for(3, 49);                                    // 满血:没有补血卡,集火照表排在补弹后面
+    top = ranked(s, 3);
+    check(top.size() >= 2 && top[0].rule == NextRule::BuyAmmo && top[1].rule == NextRule::FocusEnemy,
+          "without a heal card the focus card keeps its place");
+
+    // 只显示一张、正停在「补血」时,打得掉的敌人一出现就马上换上来,不等停留时间。
+    rm_terminal::NextStepBoard board;
+    s = match_for(3, 50);
+    set<std::uint32_t>(s.robots[RobotId{3}].dynamic.current_hp, 48);
+    Snapshot unseen = s;
+    unseen.map_robots.clear();
+    auto shown = board.update(unseen, 1000, 1, 10000);
+    check(shown.size() == 1 && shown[0].rule == NextRule::Heal, "radar does not see it yet: heal");
+    shown = board.update(s, 1500, 1, 10000);
+    check(shown.size() == 1 && shown[0].rule == NextRule::FocusEnemy, "it shows up: the kill cuts in at once");
+}
+
 // 增益:我方攻击×2 发数减半,敌方建筑防御 50% 发数翻倍;虚弱时不叫人开枪,补弹照常。
 void buffs_change_the_count() {
     Snapshot s = match_for(3, 20);
@@ -334,6 +368,7 @@ int main() {
     zone_cards();
     score_and_endgame();
     ranking_follows_the_table();
+    a_killable_enemy_goes_before_healing();
     buffs_change_the_count();
     fortress_thief_is_vulnerable();
     if (failures != 0) {

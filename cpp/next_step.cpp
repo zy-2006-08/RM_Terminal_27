@@ -104,6 +104,16 @@ bool same_card(const NextCard& a, const NextCard& b) { return a.rule == b.rule &
 
 int rule_rank(NextRule rule) { return static_cast<int>(rule); }
 
+// 先后表第三节第 2 题选 B:要补血、旁边又有打得掉的残血敌人时,先打掉它,集火紧挨着排在补血前面。
+int card_rank(const NextCard& card, bool heal_listed) {
+    if (card.rule == NextRule::FocusEnemy && card.finish_off && heal_listed) return 2 * rule_rank(NextRule::Heal) - 1;
+    return 2 * rule_rank(card.rule);
+}
+
+bool lists_heal(const std::vector<NextCard>& cards) {
+    return std::any_of(cards.begin(), cards.end(), [](const NextCard& card) { return card.rule == NextRule::Heal; });
+}
+
 }  // namespace
 
 std::uint32_t remote_heal_cost(std::int32_t remaining_sec) {
@@ -285,7 +295,7 @@ std::vector<NextCard> next_candidates(const Snapshot& snapshot, bool base_hit, c
             break;
         }
     }
-    // 10 集火残血敌人:雷达看得到才推荐,也不写距离。
+    // 10 集火残血敌人:雷达看得到才推荐。打车不算建筑防御,只乘我方攻击增益。
     if (!dead && can_shoot) {
         std::optional<NextCard> focus;
         double best_ratio = 2.0;
@@ -312,6 +322,8 @@ std::vector<NextCard> next_candidates(const Snapshot& snapshot, bool base_hit, c
                 card.reason += QStringLiteral("，离你约 %1 米").arg(std::max(1L, std::lround(metres)));
             }
             card.enemy_id = robot.id.value;
+            const KillPlan plan = plan_for(*robot_hp, heavy, max_heat, buffs.self_attack);
+            card.finish_off = plan.finishable && rounds >= plan.shots;
             card.speech = QStringLiteral("集火残血敌人");
             focus = card;
         }
@@ -445,8 +457,9 @@ std::vector<NextCard> next_candidates(const Snapshot& snapshot, bool base_hit, c
 }
 
 std::vector<NextCard> rank_next(std::vector<NextCard> cards, std::size_t count) {
+    const bool heal = lists_heal(cards);
     std::stable_sort(cards.begin(), cards.end(),
-                     [](const NextCard& a, const NextCard& b) { return rule_rank(a.rule) < rule_rank(b.rule); });
+                     [heal](const NextCard& a, const NextCard& b) { return card_rank(a, heal) < card_rank(b, heal); });
     if (cards.size() > count) cards.resize(count);
     return cards;
 }
@@ -466,7 +479,9 @@ std::vector<NextCard> NextStepBoard::update(const Snapshot& snapshot, MonotonicM
         return std::any_of(all.begin(), all.end(), [&card](const NextCard& c) { return same_card(c, card); });
     };
     const bool stale = std::any_of(shown_.begin(), shown_.end(), [&](const NextCard& card) { return !present(card); });
-    const bool preempt = !ranked.empty() && !shown_.empty() && rule_rank(ranked.front().rule) < rule_rank(shown_.front().rule);
+    const bool heal = lists_heal(all);
+    const bool preempt =
+        !ranked.empty() && !shown_.empty() && card_rank(ranked.front(), heal) < card_rank(shown_.front(), heal);
     const bool same_set = ranked.size() == shown_.size() &&
                           std::equal(ranked.begin(), ranked.end(), shown_.begin(), same_card);
     if (same_set || (!stale && !preempt && !shown_.empty() && now - shown_at_ < dwell_ms && shown_.size() >= std::min(count, ranked.size()))) {

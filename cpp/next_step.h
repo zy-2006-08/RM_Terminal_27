@@ -11,7 +11,8 @@ namespace rm_terminal {
 
 // 「下一步」:让慌乱的操作手一眼看到接下来对我方最有利的几件事。
 //
-// 先后照《下一步先后表》:先看能不能做、做了有没有用,再按表里的先后排。表里的顺序就是 NextRule 的顺序。
+// 先后照《下一步先后表》:先看能不能做、做了有没有用,再按表里的先后排。表里的顺序就是 NextRule 的顺序,
+// 只有一个例外(表第三节第 2 题):补血和打得掉的集火同时成立时,集火排到补血前面。
 // 规则上做不了的事(没弹还叫人开枪、敌方基地有 100% 防御还叫人打)不出卡片。
 // 阵亡不出卡片:复活是唯一能做的事,不用占一格。
 
@@ -43,6 +44,8 @@ struct NextCard {
     // 卡片指向界面上的哪里:集火的那台敌方车(花名册那一行标同一个编号),
     // 或者「能量机关 · 按住」按钮。
     std::optional<std::uint32_t> enemy_id;
+    // 集火:现在的弹打得掉它(弹够、4 轮热量内打完)。只有这样才排到补血前面。
+    bool finish_off = false;
     bool rune_button = false;
     QString speech;    // 第 1 件念出来时念的固定句子(语音是赛前合成好的,不能带实时数字)
     bool urgent = false;
@@ -62,7 +65,7 @@ struct NextBuffs {
 // 由调用方(NextStepBoard)跨帧判断。
 std::vector<NextCard> next_candidates(const Snapshot& snapshot, bool base_hit, const NextBuffs& buffs = {});
 
-// 按表里的先后取前 count 件。顺序固定,不让操作手拖。
+// 按表里的先后取前 count 件(带上面那个例外)。顺序固定,不让操作手拖。
 std::vector<NextCard> rank_next(std::vector<NextCard> cards, std::size_t count);
 
 // 每张卡至少停 dwell 毫秒,免得来回跳:期间排名变了也不换,除非出了更靠前的事,
