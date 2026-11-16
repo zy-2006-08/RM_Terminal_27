@@ -3,6 +3,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QFile>
+#include <QImage>
 #include <QLabel>
 #include <QScreen>
 #include <QStandardPaths>
@@ -11,6 +12,7 @@
 #include <QStringList>
 #include <QKeySequence>
 #include <QShortcut>
+#include <QProcess>
 #include <QTimer>
 #include <memory>
 #include <csignal>
@@ -281,6 +283,49 @@ int main(int argc, char* argv[]) {
         return rm_terminal::kExitBadArguments;
     }
 
+    // 录像片段(复盘报告里每件事前 10 秒到后 5 秒):--from/--to 只放这一段(秒,从开录算),
+    // --export-video 把这一段离屏画成 MP4(要 ffmpeg),画完退出。都只能跟 --replay 一起用。
+    std::optional<double> clip_from_s, clip_to_s;
+    QString export_video;
+    for (const char* flag : {"--from", "--to", "--export-video"}) {
+        const int at = args.indexOf(QLatin1String(flag));
+        if (at < 0) continue;
+        if (at + 1 >= args.size()) {
+            qCritical().noquote() << "Missing value after" << flag;
+            return rm_terminal::kExitBadArguments;
+        }
+        const QString value = args.at(at + 1);
+        args.removeAt(at + 1);
+        args.removeAt(at);
+        if (args.contains(QLatin1String(flag))) {
+            qCritical().noquote() << "Duplicate" << flag << "is not supported";
+            return rm_terminal::kExitBadArguments;
+        }
+        if (QLatin1String(flag) == QLatin1String("--export-video")) {
+            export_video = value;
+            continue;
+        }
+        bool ok = false;
+        const double seconds = value.toDouble(&ok);
+        if (!ok || seconds < 0) {
+            qCritical().noquote() << "Invalid" << flag << "value; expected seconds, got" << value;
+            return rm_terminal::kExitBadArguments;
+        }
+        (QLatin1String(flag) == QLatin1String("--from") ? clip_from_s : clip_to_s) = seconds;
+    }
+    if ((clip_from_s || clip_to_s || !export_video.isEmpty()) && replay_path.isEmpty()) {
+        qCritical().noquote() << "--from, --to and --export-video only work with --replay";
+        return rm_terminal::kExitBadArguments;
+    }
+    if (!export_video.isEmpty() && !clip_to_s) {
+        qCritical().noquote() << "--export-video needs --to";
+        return rm_terminal::kExitBadArguments;
+    }
+    if (clip_from_s && clip_to_s && *clip_to_s <= *clip_from_s) {
+        qCritical().noquote() << "--to must be after --from";
+        return rm_terminal::kExitBadArguments;
+    }
+
     // 测试会拉起真实程序,默认自动录制曾把验收产物写进用户录像目录。
     const bool no_record = args.removeOne(QLatin1String("--no-record"));
 
@@ -359,7 +404,8 @@ int main(int argc, char* argv[]) {
     if (!args.isEmpty()) {
         qCritical().noquote() << "Unknown argument; supported: --safe-smoke, --config <path>,"
                                  " --seat <id>, --screenshot <path>, --force-mode <info|video>,"
-                                 " --replay <path>, --dump-layout <path>, --no-record,"
+                                 " --replay <path> [--from/--to <s>, --export-video <mp4>],"
+                                 " --dump-layout <path>, --no-record,"
                                  " --diagnostic <host> <port> <seconds>";
         return rm_terminal::kExitBadArguments;
     }
@@ -480,6 +526,7 @@ int main(int argc, char* argv[]) {
             return rm_terminal::kExitStartFailure;
         }
         qInfo().noquote() << "replaying:" << replay_path;
+        if (clip_from_s) replay->seek(static_cast<qint64>(*clip_from_s * 1000));
         if (seat_source.isEmpty() && rm_terminal::Seat::fromRobotId(replay->selfRobotId())) {
             cfg.self_robot_id = replay->selfRobotId();
             seat_source = QStringLiteral("recording");
@@ -1195,6 +1242,7 @@ int main(int argc, char* argv[]) {
                      QStringLiteral("gate=%1").arg(dart_now.second)});
             logged_dart = dart_now;
         }
+        match_log.setRecordingMs(recorder.elapsedMs());
         const bool round_over = match_log.observe(snapshot);
         for (const auto& alert : match_alerts.observe(snapshot, now)) {
             rm_terminal::StructuredLog::write(
@@ -1212,6 +1260,7 @@ int main(int argc, char* argv[]) {
             context.self_id = snapshot.self->value;
             context.recording = recorder.active() ? recorder.path() : QString();
             context.finished_at = QDateTime::currentDateTime();
+            context.pdf = true;
             QString report_error;
             const QString report = rm_terminal::write_match_report(reports, match_log, context, &report_error);
             rm_terminal::StructuredLog::write(
@@ -1453,6 +1502,51 @@ int main(int argc, char* argv[]) {
     // screen: it needs no recording permission, captures nothing but this
     // window, and stays deterministic in the offscreen Qt platform plugin.
     int capture_status = rm_terminal::kExitSuccess;
+
+    // 片段放到 --to 就停;导 MP4 时每 1/15 秒把整个窗口画一帧喂给 ffmpeg,到点收尾退出。
+    QProcess encoder;
+    QSize encoder_size;
+    QTimer clip_timer;
+    if (replay && clip_to_s) {
+        QObject::connect(&clip_timer, &QTimer::timeout, &app, [&]() {
+            const bool done = replay->finished() || replay->positionMs() >= static_cast<qint64>(*clip_to_s * 1000);
+            if (!export_video.isEmpty()) {
+                const QImage frame = dashboard.grab().toImage().convertToFormat(QImage::Format_ARGB32);
+                if (encoder_size.isEmpty()) {
+                    encoder_size = frame.size();
+                    encoder.start(QStringLiteral("ffmpeg"),
+                                  {QStringLiteral("-y"), QStringLiteral("-loglevel"), QStringLiteral("error"),
+                                   QStringLiteral("-f"), QStringLiteral("rawvideo"), QStringLiteral("-pix_fmt"),
+                                   QStringLiteral("bgra"), QStringLiteral("-s"),
+                                   QStringLiteral("%1x%2").arg(frame.width()).arg(frame.height()), QStringLiteral("-r"),
+                                   QStringLiteral("15"), QStringLiteral("-i"), QStringLiteral("-"), QStringLiteral("-c:v"),
+                                   QStringLiteral("libx264"), QStringLiteral("-pix_fmt"), QStringLiteral("yuv420p"),
+                                   QStringLiteral("-preset"), QStringLiteral("veryfast"), export_video});
+                    if (!encoder.waitForStarted(5000)) {
+                        qCritical().noquote() << "export failed: ffmpeg did not start";
+                        clip_timer.stop();
+                        app.exit(rm_terminal::kExitEvidenceFailure);
+                        return;
+                    }
+                }
+                if (frame.size() == encoder_size)
+                    encoder.write(reinterpret_cast<const char*>(frame.constBits()), frame.sizeInBytes());
+            }
+            if (!done) return;
+            clip_timer.stop();
+            if (export_video.isEmpty()) {
+                if (!replay->paused()) replay->togglePause();
+                return;
+            }
+            encoder.closeWriteChannel();
+            encoder.waitForFinished(120000);
+            const bool ok = encoder.exitStatus() == QProcess::NormalExit && encoder.exitCode() == 0;
+            if (ok) qInfo().noquote() << "video written:" << export_video;
+            else qCritical().noquote() << "export failed:" << QString::fromLocal8Bit(encoder.readAllStandardError());
+            app.exit(ok ? rm_terminal::kExitSuccess : rm_terminal::kExitEvidenceFailure);
+        });
+        clip_timer.start(1000 / 15);
+    }
     if (!screenshot_path.isEmpty() || !dump_layout_path.isEmpty()) {
         // Video needs longer than the widget itself: the decoder must spawn and
         // fill one frame, so capturing at 600ms would always show an empty pane.

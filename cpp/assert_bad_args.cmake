@@ -8,7 +8,8 @@ foreach(case IN ITEMS unknown extra duplicate positional empty
                      force_mode_with_safe_smoke force_mode_with_diagnostic
                      dump_layout_missing dump_layout_duplicate
                      dump_layout_with_safe_smoke dump_layout_with_diagnostic
-                     seat_missing seat_sentry seat_text seat_duplicate)
+                     seat_missing seat_sentry seat_text seat_duplicate
+                     clip_without_replay clip_bad_seconds export_without_to)
     # Given: malformed command-line arguments, plus the diagnostic each one must
     # produce. Exit code 2 alone is too weak an assertion: a flag-specific guard can
     # be deleted and the leftover token still exits 2 via the unknown-argument
@@ -72,6 +73,15 @@ foreach(case IN ITEMS unknown extra duplicate positional empty
     elseif(case STREQUAL "seat_duplicate")
         set(args --seat 3 --seat 103)
         set(expect "Duplicate --seat is not supported")
+    elseif(case STREQUAL "clip_without_replay")
+        set(args --from 5 --to 20)
+        set(expect "only work with --replay")
+    elseif(case STREQUAL "clip_bad_seconds")
+        set(args --replay x.rmrec --from abc)
+        set(expect "Invalid --from value")
+    elseif(case STREQUAL "export_without_to")
+        set(args --replay x.rmrec --export-video x.mp4)
+        set(expect "--export-video needs --to")
     else()
         set(args "")
         set(expect "Unknown argument; supported:")
