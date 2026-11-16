@@ -1,0 +1,12 @@
+{
+  "sheet": "changes-replay.png",
+  "title": "第六块 录像片段 · MP4 · PDF · 多局对比",
+  "parts": [
+    {"src": "report-1.png", "box": [0, 1600, 1100, 360], "name": "part-01-复盘里的片段",
+     "label": "复盘网页里每件事带一段录像（前 10 秒到后 5 秒）：点 MP4 看导出来的视频，或者照 --from --to 在终端里放"},
+    {"src": "clip-01-frame.png", "box": [0, 0, 1280, 760], "name": "part-02-导出的MP4一帧",
+     "label": "导出的 MP4（1280×760、15 帧）：就是终端回放这一段的画面，横幅、地图动画都在"},
+    {"src": "index.png", "box": [0, 0, 1140, 640], "name": "part-03-多局对比",
+     "label": "多局对比（reports/index.html）：每局一行，控制度差的线叠在一张图上；网页和 PDF 都能点"}
+  ]
+}

@@ -286,7 +286,54 @@ scene_map_anim() {
     stop_sim
 }
 
-declare -F "scene_$BLOCK" > /dev/null || fail "用法: bash scripts/shoot_effects.sh {buffs|radar|field|overview|map_anim}"
+# 第六块:录像片段、MP4、PDF、多局对比。终端这回要录像(不加 --no-record),打两局,
+# 每局结束写复盘;再把第 1 局的片段导成 MP4。
+scene_replay() {
+    export RM_SETTLEMENT_SEC=5
+    start_sim 3
+    RM_SELF_ID=3 QT_QPA_PLATFORM=offscreen RM_TERMINAL_CAPTURE_SIZE=1440x900 RM_TERMINAL_CAPTURE_DELAY_MS=80000 \
+        "$BIN" --config "$RUN/rm.conf" --screenshot "$OUT/live-1440x900.png" > "$RUN/logs/terminal-live.log" 2>&1 &
+    SHOT=$!
+    PIDS+=("$SHOT")
+    sleep 4
+    ctl intrude 103 tunnel
+    sleep 6
+    ctl zone 1 2
+    sleep 5
+    ctl blind 2 2
+    sleep 5
+    ctl seek 412
+    sleep 18
+    ctl auto 0
+    ctl seek 200
+    sleep 3
+    ctl intrude 104 highland
+    sleep 6
+    ctl zone 0 4
+    sleep 6
+    ctl seek 412
+    done_shot live
+    stop_sim
+
+    local reports="$XDG_DATA_HOME/rm_terminal/reports"
+    local first
+    first=$(ls "$reports"/*第1局.json 2>/dev/null | head -1)
+    [ -n "$first" ] || fail "没写出第 1 局的复盘"
+    for _ in $(seq 1 40); do ls "$reports"/*.pdf > /dev/null 2>&1 && break; sleep 0.5; done
+    RM_TERMINAL_CAPTURE_SIZE=1280x760 bash scripts/export_clips.sh "$first" || fail "导片段失败"
+    rm -rf "$OUT/reports"
+    cp -r "$reports" "$OUT/reports"
+    local stem
+    stem=$(basename "$first" .json)
+    google-chrome --headless=new --disable-gpu --hide-scrollbars --window-size=1100,3000 \
+        --screenshot="$OUT/report-1.png" "file://$OUT/reports/$stem.html" > /dev/null 2>&1
+    google-chrome --headless=new --disable-gpu --hide-scrollbars --window-size=1140,760 \
+        --screenshot="$OUT/index.png" "file://$OUT/reports/index.html" > /dev/null 2>&1
+    ffmpeg -y -loglevel error -ss 9 -i "$OUT/reports/clips/$stem-01.mp4" -frames:v 1 "$OUT/clip-01-frame.png"
+    echo "reports -> artifacts/$BLOCK/reports ($(ls "$OUT/reports/clips" | wc -l) clips)"
+}
+
+declare -F "scene_$BLOCK" > /dev/null || fail "用法: bash scripts/shoot_effects.sh {buffs|radar|field|overview|map_anim|replay}"
 mkdir -p "$OUT"
 mosquitto -p "$P" > "$RUN/logs/mosquitto.log" 2>&1 &
 PIDS+=("$!")
