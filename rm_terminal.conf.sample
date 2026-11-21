@@ -28,6 +28,10 @@ mqtt_port=3333
 # H.265 video UDP listen port. 2027 protocol: 3334.
 udp_port=3334
 
+# How the local video is decoded: none = software (default), vaapi = Intel iGPU
+# through /dev/dri/renderD128 (the user must be in the render group).
+#video_hwaccel=vaapi
+
 # Seat (2027 operator stations): red 1 hero, 3/4 infantry, 6 commander; blue +100.
 # Normally left unset: the terminal then asks on every start (seat picker page).
 # --seat <id> and RM_SELF_ID take precedence over this line. The seat is also the

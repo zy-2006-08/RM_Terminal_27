@@ -440,6 +440,7 @@ cp rm_terminal.conf.sample rm_terminal.conf
 | --- | --- | --- |
 | `mqtt_port` | `3333` | 消息服务器端口 |
 | `udp_port` | `3334` | 图传接收端口 |
+| `video_hwaccel` | `none` | 本机图传怎么解码：`none` 软件解码，`vaapi` 用 Intel 核显硬件解码 |
 | `stale_window_ms` | `2200` | 多久没更新算过期（**不要低于 1000**） |
 | `mode_exit_hysteresis_ms` | `3000` | 遮挡结束后等多久才退出全屏 |
 | `log_level` | `info` | 日志详细程度 |
