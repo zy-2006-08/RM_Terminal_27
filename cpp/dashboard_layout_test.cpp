@@ -533,7 +533,7 @@ void both_panes_receive_one_identical_frame() {
     thumbnail.resize(320, 180);
     full.resize(960, 540);
 
-    QImage frame(VideoReceiver::frameWidth(), VideoReceiver::frameHeight(),
+    QImage frame(VideoReceiver().frameWidth(), VideoReceiver().frameHeight(),
                  QImage::Format_BGR888);
     for (int y = 0; y < frame.height(); ++y) {
         for (int x = 0; x < frame.width(); ++x) {
@@ -1465,7 +1465,7 @@ void the_commander_watches_a_wall_of_team_video() {
           "before any relay the wall lists 1, 3 and 4 and says it is waiting");
     check(compact->tileRect(0).y() == compact->tileRect(2).y(), "the small wall is one row in the default cell");
 
-    QImage red(VideoReceiver::frameWidth(), VideoReceiver::frameHeight(), QImage::Format_RGB32);
+    QImage red(VideoReceiver().frameWidth(), VideoReceiver().frameHeight(), QImage::Format_RGB32);
     red.fill(Qt::red);
     std::vector<WallFeed> feeds = compact->feeds();
     feeds[1].frame = red;

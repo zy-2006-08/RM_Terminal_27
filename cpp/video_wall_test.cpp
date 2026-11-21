@@ -86,7 +86,7 @@ void a_tile_says_why_it_has_no_picture() {
 }
 
 QImage solid(const QColor& colour) {
-    QImage image(VideoReceiver::frameWidth(), VideoReceiver::frameHeight(), QImage::Format_RGB32);
+    QImage image(VideoReceiver().frameWidth(), VideoReceiver().frameHeight(), QImage::Format_RGB32);
     image.fill(colour);
     return image;
 }

@@ -1,24 +1,51 @@
 #include "video_receiver.h"
 #include "logging.h"
 #include <QCryptographicHash>
+#include <QMetaObject>
+#include <QMutexLocker>
 #include <QStandardPaths>
-#include <QDebug>
+#include <QThread>
 #include <utility>
 
 namespace rm_terminal {
-VideoReceiver::VideoReceiver(QObject* parent):QObject(parent) {
+namespace {
+// 从别的线程调时转到对象所在的线程执行,做完才返回。对象所在的线程已经停了时直接调:
+// 那时不会再有并发。
+template <class F>
+void run_in(QObject* owner, F&& work) {
+    QThread* home=owner->thread();
+    if(home==QThread::currentThread() || !home || !home->isRunning()) { work(); return; }
+    QMetaObject::invokeMethod(owner,std::forward<F>(work),Qt::BlockingQueuedConnection);
+}
+}
+
+// 每个入口(事件回调、公开的启停接口)结束时发布一次,读接口看到的总是最近一次处理完的状态。
+class VideoReceiver::PublishOnExit {
+public:
+    explicit PublishOnExit(VideoReceiver* receiver):receiver_(receiver) {}
+    ~PublishOnExit(){receiver_->publish();}
+    PublishOnExit(const PublishOnExit&)=delete;
+    PublishOnExit& operator=(const PublishOnExit&)=delete;
+private:
+    VideoReceiver* receiver_;
+};
+
+VideoReceiver::VideoReceiver(QObject* parent):QObject(parent),socket_(this),decoder_(this),timer_(this) {
     clock_.start();
     connect(&socket_,&QUdpSocket::readyRead,this,&VideoReceiver::ready);
     connect(&decoder_,&QProcess::readyReadStandardOutput,this,&VideoReceiver::decoderOutput);
     connect(&decoder_,&QProcess::readyReadStandardError,this,[this] {
+        PublishOnExit at_exit(this);
         const auto bytes=decoder_.readAllStandardError();
         stderr_bytes_+=bytes.size();
     });
     connect(&decoder_,&QProcess::errorOccurred,this,[this](QProcess::ProcessError) {
+        PublishOnExit at_exit(this);
         if(!stopping_)fail(decoder_.errorString());
     });
     connect(&decoder_,qOverload<int,QProcess::ExitStatus>(&QProcess::finished),this,
         [this](int code,QProcess::ExitStatus) {
+            PublishOnExit at_exit(this);
             decoderOutput();
             if(!raw_.isEmpty()){++invalid_frames_;raw_.clear();}
             if(!stopping_)fail(QString("decoder_exit=%1").arg(code));
@@ -45,6 +72,9 @@ bool VideoReceiver::launchDecoder() {
     // official client without flooding the pipe. 1080p BGR24 is 373 MB/s at 60 fps.
     // analyzeduration 0 starves the prober on a lossy pipe, so give probing a
     // real budget. Do not add +discardcorrupt: it silently drops ~8% of frames.
+    width_ = 640;
+    height_ = 360;
+    frame_bytes_ = qsizetype(width_) * height_ * 3;
     decoder_.setArguments({"-hide_banner","-loglevel","error","-hwaccel","none",
         "-fflags","nobuffer","-flags","low_delay",
         "-threads","2","-probesize","262144","-analyzeduration","2000000",
@@ -56,7 +86,13 @@ bool VideoReceiver::launchDecoder() {
     raw_.clear();submitted_=-1;decoder_primed_=false;state_="waiting";return true;
 }
 bool VideoReceiver::start(const VideoEndpoint& endpoint) {
-    stop(); endpoint_=endpoint;failure_.clear();last_packet_=-1;last_frame_=-1;last_datagram_=-1;
+    bool ok=false;
+    run_in(this,[&] { ok=startHere(endpoint); });
+    return ok;
+}
+bool VideoReceiver::startHere(const VideoEndpoint& endpoint) {
+    PublishOnExit at_exit(this);
+    stopHere(); endpoint_=endpoint;failure_.clear();last_packet_=-1;last_frame_=-1;last_datagram_=-1;
     vps_.clear();sps_.clear();pps_.clear();
     received_=false;reassembler_.resetSession();
     recovery_=VideoRecoveryPolicy{};
@@ -79,13 +115,23 @@ void VideoReceiver::stopDecoder() {
     decoderOutput();raw_.clear();stopping_=false;
 }
 void VideoReceiver::stop() {
+    run_in(this,[this] { stopHere(); });
+}
+void VideoReceiver::stopHere() {
+    PublishOnExit at_exit(this);
     timer_.stop();socket_.close();running_=false;stopDecoder();online_=false;state_="stopped";
 }
 void VideoReceiver::setDatagramObserver(std::function<void(const QByteArray&)> observer) {
-    datagram_observer_=std::move(observer);
+    run_in(this,[&] { datagram_observer_=std::move(observer); });
 }
 bool VideoReceiver::startInjected() {
-    stop();
+    bool ok=false;
+    run_in(this,[&] { ok=startInjectedHere(); });
+    return ok;
+}
+bool VideoReceiver::startInjectedHere() {
+    PublishOnExit at_exit(this);
+    stopHere();
     endpoint_=VideoEndpoint{};
     failure_.clear();last_packet_=-1;last_frame_=-1;last_datagram_=-1;
     vps_.clear();sps_.clear();pps_.clear();
@@ -95,11 +141,16 @@ bool VideoReceiver::startInjected() {
     running_=true;timer_.start();return true;
 }
 void VideoReceiver::injectDatagram(const QByteArray& bytes) {
+    run_in(this,[&] { injectHere(bytes); });
+}
+void VideoReceiver::injectHere(const QByteArray& bytes) {
+    PublishOnExit at_exit(this);
     if(!running_)return;
     last_datagram_=clock_.elapsed();
     handleDatagram(bytes);
 }
 void VideoReceiver::ready() {
+    PublishOnExit at_exit(this);
     // Bound each event-loop turn as well as each allocation, including oversized datagrams.
     for(int budget=0;budget<256 && socket_.hasPendingDatagrams();++budget) {
         QByteArray bytes(1401,Qt::Uninitialized);
@@ -162,6 +213,7 @@ QByteArray VideoReceiver::parameterSets() const {
     return vps_+sps_+pps_;
 }
 void VideoReceiver::decoderOutput() {
+    PublishOnExit at_exit(this);
     while(decoder_.bytesAvailable()>0) {
         raw_+=decoder_.read(frame_bytes_-raw_.size());
         // Any decoder output is progress. Clearing the watchdog only on a whole
@@ -192,6 +244,7 @@ void VideoReceiver::reportLoss() {
     logged_expired_=s.frames_dropped_stale;
 }
 void VideoReceiver::tick() {
+    PublishOnExit at_exit(this);
     const auto now=clock_.elapsed();reassembler_.expire(now/1000.0);
     reportLoss();
     if(last_frame_>=0 && now-last_frame_>=1000)online_=false;
@@ -226,22 +279,75 @@ void VideoReceiver::tick() {
         break;
     }
 }
+void VideoReceiver::publish() {
+    Published next;
+    next.state=state_;next.failure=failure_;next.online=online_;
+    next.port=socket_.localPort();next.decoder_pid=decoder_.processId();
+    next.decoded_frames=decoded_frames_;next.failures=failures_;
+    next.invalid_frames=invalid_frames_;next.stderr_bytes=stderr_bytes_;
+    next.reconnects=qint64(recovery_.reconnects());next.decoder_restarts=qint64(recovery_.decoderRestarts());
+    next.last_frame=last_frame_;
+    next.cached_frames=qint64(reassembler_.cachedFrames());
+    next.raw_bytes=raw_.size();next.queued_bytes=decoder_.bytesToWrite();
+    next.stats=reassembler_.stats();
+    next.latest=latest_;next.width=width_;next.height=height_;
+    QMutexLocker lock(&published_mutex_);
+    published_=std::move(next);
+}
+VideoReceiver::Published VideoReceiver::published() const {
+    QMutexLocker lock(&published_mutex_);
+    return published_;
+}
+quint16 VideoReceiver::port() const { return published().port; }
+QByteArray VideoReceiver::latestFrame() const {
+    QMutexLocker lock(&published_mutex_);
+    return published_.latest;
+}
+int VideoReceiver::frameWidth() const {
+    QMutexLocker lock(&published_mutex_);
+    return published_.width;
+}
+int VideoReceiver::frameHeight() const {
+    QMutexLocker lock(&published_mutex_);
+    return published_.height;
+}
+bool VideoReceiver::online() const {
+    QMutexLocker lock(&published_mutex_);
+    return published_.online;
+}
+QString VideoReceiver::state() const {
+    QMutexLocker lock(&published_mutex_);
+    return published_.state;
+}
+qint64 VideoReceiver::decodedFrames() const {
+    QMutexLocker lock(&published_mutex_);
+    return published_.decoded_frames;
+}
+quint64 VideoReceiver::packetsReceived() const {
+    QMutexLocker lock(&published_mutex_);
+    return published_.stats.packets_received;
+}
+qint64 VideoReceiver::msSinceLastFrame() const {
+    QMutexLocker lock(&published_mutex_);
+    return published_.last_frame<0 ? -1 : clock_.elapsed()-published_.last_frame;
+}
 QJsonObject VideoReceiver::snapshot() const {
-    const auto& s=reassembler_.stats();
-    return {{"state",state_},{"failure",failure_},{"online",online_},
-        {"port",socket_.localPort()},{"decoder_pid",decoder_.processId()},
-        {"decoded_frames",decoded_frames_},{"decoder_failures",failures_},
-        {"recoveries",qint64(recovery_.reconnects()+recovery_.decoderRestarts())},
-        {"reconnects",qint64(recovery_.reconnects())},
-        {"decoder_restarts",qint64(recovery_.decoderRestarts())},
-        {"invalid_frames",invalid_frames_},{"decoder_stderr_bytes",stderr_bytes_},
+    const Published p=published();
+    const auto& s=p.stats;
+    return {{"state",p.state},{"failure",p.failure},{"online",p.online},
+        {"port",p.port},{"decoder_pid",p.decoder_pid},
+        {"decoded_frames",p.decoded_frames},{"decoder_failures",p.failures},
+        {"recoveries",p.reconnects+p.decoder_restarts},
+        {"reconnects",p.reconnects},
+        {"decoder_restarts",p.decoder_restarts},
+        {"invalid_frames",p.invalid_frames},{"decoder_stderr_bytes",p.stderr_bytes},
         {"packets",qint64(s.packets_received)},{"completed",qint64(s.frames_completed)},
         {"duplicates",qint64(s.packets_duplicated)},{"out_of_order",qint64(s.packets_out_of_order)},
         {"malformed",qint64(s.malformed_packets)},{"stale_packets",qint64(s.stale_packets)},
         {"missing_packets",qint64(s.packets_missing)},{"incomplete",qint64(s.frames_dropped_incomplete)},
-        {"expired",qint64(s.frames_dropped_stale)},{"cached_frames",qint64(reassembler_.cachedFrames())},
-        {"raw_bytes",raw_.size()},{"queued_bytes",decoder_.bytesToWrite()},
-        {"frame_bytes",latest_.size()},
-        {"frame_sha256",QString::fromLatin1(QCryptographicHash::hash(latest_,QCryptographicHash::Sha256).toHex())}};
+        {"expired",qint64(s.frames_dropped_stale)},{"cached_frames",p.cached_frames},
+        {"raw_bytes",p.raw_bytes},{"queued_bytes",p.queued_bytes},
+        {"frame_bytes",p.latest.size()},
+        {"frame_sha256",QString::fromLatin1(QCryptographicHash::hash(p.latest,QCryptographicHash::Sha256).toHex())}};
 }
 }

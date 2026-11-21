@@ -1,5 +1,7 @@
 #include <QApplication>
 #include <QCoreApplication>
+#include <QScopeGuard>
+#include <QThread>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -500,12 +502,29 @@ int main(int argc, char* argv[]) {
 
     rm_terminal::VideoReceiver video;
     std::unique_ptr<rm_terminal::VideoRelay> relay;
-    video.setDatagramObserver([&recorder, &relay](const QByteArray& datagram) {
-        recorder.recordVideo(datagram);
-        if (relay) relay->forward(datagram);
+    // 实况的本机图传在自己的线程里收包和解码(为什么见 video_receiver.h)。退出时先在那条线程里
+    // 停下接收器、把它挪回主线程,再停线程:接收器析构时和它的套接字、解码进程同在主线程。
+    QThread video_thread;
+    video_thread.setObjectName(QStringLiteral("video"));
+    const auto stop_video_thread = qScopeGuard([&video, &video_thread] {
+        if (!video_thread.isRunning()) return;
+        QThread* const home = QThread::currentThread();
+        QMetaObject::invokeMethod(
+            &video, [&video, home] { video.stop(); video.moveToThread(home); }, Qt::BlockingQueuedConnection);
+        video_thread.quit();
+        video_thread.wait();
     });
     const bool commander_seat = rm_terminal::Seat::fromRobotId(cfg.self_robot_id) &&
                                 rm_terminal::Seat::fromRobotId(cfg.self_robot_id)->role() == rm_terminal::Role::Commander;
+    const bool relay_video = replay_path.isEmpty() && !commander_seat && !cfg.video_relay_host.isEmpty();
+    // 这个回调在图传线程里跑:Recorder 自带锁,直接写;转发用的 UDP 口在主线程,排回主线程发,顺序不变。
+    video.setDatagramObserver([&recorder, &relay, relay_video](const QByteArray& datagram) {
+        recorder.recordVideo(datagram);
+        if (relay_video)
+            QMetaObject::invokeMethod(qApp, [&relay, datagram] {
+                if (relay) relay->forward(datagram);
+            });
+    });
 
     std::unique_ptr<rm_terminal::ReplayPlayer> replay;
     if (!replay_path.isEmpty()) {
@@ -538,6 +557,10 @@ int main(int argc, char* argv[]) {
         // 真实选手端按协议把图传发到本机地址（192.168.12.2:3334），只绑回环就收不到。
         endpoint.address = QHostAddress::AnyIPv4;
         endpoint.port = static_cast<quint16>(cfg.udp_port);
+        if (!commander_seat) {
+            video.moveToThread(&video_thread);
+            video_thread.start();
+        }
         if (!commander_seat && !video.start(endpoint)) {
             rm_terminal::StructuredLog::write(
                 rm_terminal::LogLevel::warning, QStringLiteral("reconnect_udp"),

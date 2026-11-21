@@ -29,7 +29,7 @@ WallFeed wall_feed(std::uint32_t robot_id, const VideoReceiver* receiver) {
     if (!receiver) {
         feed.status = QStringLiteral("录像里没有队友图传");
     } else if (receiver->online()) {
-        feed.frame = frame_to_image(receiver->latestFrame(), VideoReceiver::frameWidth(), VideoReceiver::frameHeight())
+        feed.frame = frame_to_image(receiver->latestFrame(), receiver->frameWidth(), receiver->frameHeight())
                          .copy();
     } else if (receiver->state() == QLatin1String("bind_failed")) {
         feed.status = QStringLiteral("收不了：端口被占用");
