@@ -40,13 +40,16 @@ bool VideoReceiver::launchDecoder() {
     const auto executable=QStandardPaths::findExecutable(endpoint_.ffmpeg);
     if(executable.isEmpty()){fail("ffmpeg_not_found");return false;}
     decoder_.setProgram(executable);
-    // Explicit software HEVC decode, small validated raw frames for the diagnostic.
+    // Software HEVC decode at 640x360: the raw pipe carries frameWidth x frameHeight
+    // BGR24, and two decoder threads plus low_delay keep the picture close to the
+    // official client without flooding the pipe. 1080p BGR24 is 373 MB/s at 60 fps.
     // analyzeduration 0 starves the prober on a lossy pipe, so give probing a
     // real budget. Do not add +discardcorrupt: it silently drops ~8% of frames.
     decoder_.setArguments({"-hide_banner","-loglevel","error","-hwaccel","none",
-        "-threads","1","-probesize","262144","-analyzeduration","2000000",
+        "-fflags","nobuffer","-flags","low_delay",
+        "-threads","2","-probesize","262144","-analyzeduration","2000000",
         "-f","hevc",
-        "-c:v","hevc","-i","pipe:0","-vf","scale=320:180","-threads","1",
+        "-c:v","hevc","-i","pipe:0","-vf","scale=640:360","-threads","2",
         "-f","rawvideo","-pix_fmt","bgr24","pipe:1"});
     decoder_.start();
     if(!decoder_.waitForStarted(1000)){fail("ffmpeg_start_failed");return false;}

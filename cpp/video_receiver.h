@@ -44,8 +44,8 @@ public:
     // mutex or be replaced by publishing an owned snapshot. A caller on another
     // thread would otherwise race a QByteArray refcount and read a torn frame.
     QByteArray latestFrame() const { return latest_; }
-    static constexpr int frameWidth() { return 320; }
-    static constexpr int frameHeight() { return 180; }
+    static constexpr int frameWidth() { return 640; }
+    static constexpr int frameHeight() { return 360; }
     bool online() const { return online_; }
     QString state() const { return state_; }
     qint64 decodedFrames() const { return decoded_frames_; }
@@ -74,7 +74,7 @@ private:
     // respawned decoder dozens of duplicate parameter sets, which stalls decoding.
     QByteArray vps_, sps_, pps_;
     bool decoder_primed_=false;
-    static constexpr qsizetype frame_bytes_=320*180*3;
+    static constexpr qsizetype frame_bytes_=640*360*3;
     qint64 decoded_frames_=0, failures_=0, invalid_frames_=0, stderr_bytes_=0;
     qint64 last_packet_=-1, last_datagram_=-1, last_frame_=-1, last_launch_=-1000, submitted_=-1;
     // Owns the dual-liveness thresholds, the restart cooldown, and the stderr
