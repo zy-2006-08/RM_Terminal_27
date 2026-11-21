@@ -72,13 +72,18 @@ bool VideoReceiver::launchDecoder() {
     // official client without flooding the pipe. 1080p BGR24 is 373 MB/s at 60 fps.
     // analyzeduration 0 starves the prober on a lossy pipe, so give probing a
     // real budget. Do not add +discardcorrupt: it silently drops ~8% of frames.
+    // hwaccel=vaapi swaps only the decoder: frames come back to system memory and go
+    // through the same scale and BGR24 conversion, so the pipe carries the same bytes.
     // fps_mode passthrough: a decoder started before any VPS/SPS/PPS (a cold start
     // mid-stream; they ride about one frame per second) finishes probing without a
     // frame rate, assumes 25 fps and drops every frame above that for its whole life.
     width_ = 640;
     height_ = 360;
     frame_bytes_ = qsizetype(width_) * height_ * 3;
-    decoder_.setArguments({"-hide_banner","-loglevel","error","-hwaccel","none",
+    const QStringList hwaccel=endpoint_.hwaccel==QLatin1String("vaapi")
+        ? QStringList{"-hwaccel","vaapi","-hwaccel_device","/dev/dri/renderD128"}
+        : QStringList{"-hwaccel","none"};
+    decoder_.setArguments(QStringList{"-hide_banner","-loglevel","error"}+hwaccel+QStringList{
         "-fflags","nobuffer","-flags","low_delay",
         "-threads","2","-probesize","262144","-analyzeduration","2000000",
         "-f","hevc",

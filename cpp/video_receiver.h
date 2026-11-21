@@ -17,6 +17,8 @@ struct VideoEndpoint {
     QHostAddress address=QHostAddress::LocalHost;
     quint16 port=0;
     QString ffmpeg="ffmpeg";
+    // "vaapi" = 核显硬件解码,其余值 = 软件解码。见 Config::video_hwaccel。
+    QString hwaccel="none";
 };
 // 收包、重组、喂解码器、读解码结果,全在这个对象所在的线程里做。实况的本机图传把它整个挪到
 // 一条工作线程(main.cpp):界面线程等屏幕刷新、窗口最小化后每秒只刷一次,都不再耽误收包,

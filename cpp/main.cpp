@@ -161,6 +161,7 @@ QStringList startup_fields(const QString& mode, const rm_terminal::Config& cfg,
             QStringLiteral("mqtt_host=%1").arg(cfg.mqtt_host),
             QStringLiteral("mqtt_port=%1").arg(cfg.mqtt_port),
             QStringLiteral("udp_port=%1").arg(cfg.udp_port),
+            QStringLiteral("video_hwaccel=%1").arg(cfg.video_hwaccel),
             QStringLiteral("self_robot_id=%1").arg(cfg.self_robot_id),
             QStringLiteral("stale_window_ms=%1").arg(cfg.stale_window_ms)};
 }
@@ -557,6 +558,7 @@ int main(int argc, char* argv[]) {
         // 真实选手端按协议把图传发到本机地址（192.168.12.2:3334），只绑回环就收不到。
         endpoint.address = QHostAddress::AnyIPv4;
         endpoint.port = static_cast<quint16>(cfg.udp_port);
+        endpoint.hwaccel = cfg.video_hwaccel;
         if (!commander_seat) {
             video.moveToThread(&video_thread);
             video_thread.start();
