@@ -72,6 +72,9 @@ bool VideoReceiver::launchDecoder() {
     // official client without flooding the pipe. 1080p BGR24 is 373 MB/s at 60 fps.
     // analyzeduration 0 starves the prober on a lossy pipe, so give probing a
     // real budget. Do not add +discardcorrupt: it silently drops ~8% of frames.
+    // fps_mode passthrough: a decoder started before any VPS/SPS/PPS (a cold start
+    // mid-stream; they ride about one frame per second) finishes probing without a
+    // frame rate, assumes 25 fps and drops every frame above that for its whole life.
     width_ = 640;
     height_ = 360;
     frame_bytes_ = qsizetype(width_) * height_ * 3;
@@ -80,6 +83,7 @@ bool VideoReceiver::launchDecoder() {
         "-threads","2","-probesize","262144","-analyzeduration","2000000",
         "-f","hevc",
         "-c:v","hevc","-i","pipe:0","-vf","scale=640:360","-threads","2",
+        "-fps_mode","passthrough",
         "-f","rawvideo","-pix_fmt","bgr24","pipe:1"});
     decoder_.start();
     if(!decoder_.waitForStarted(1000)){fail("ffmpeg_start_failed");return false;}
