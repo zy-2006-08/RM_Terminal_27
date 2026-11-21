@@ -535,6 +535,8 @@ int main(int argc, char* argv[]) {
                                           startup_fields(QStringLiteral("replay"), cfg, seat_source));
     } else {
         rm_terminal::VideoEndpoint endpoint;
+        // 真实选手端按协议把图传发到本机地址（192.168.12.2:3334），只绑回环就收不到。
+        endpoint.address = QHostAddress::AnyIPv4;
         endpoint.port = static_cast<quint16>(cfg.udp_port);
         if (!commander_seat && !video.start(endpoint)) {
             rm_terminal::StructuredLog::write(
