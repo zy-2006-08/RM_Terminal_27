@@ -180,6 +180,9 @@ public:
     // source here would diverge from the one feeding Store::snapshot.
     void update(const Snapshot& snapshot, const VideoReceiver* video, MonotonicMs now);
 
+    // 图传单独走快节拍(新帧一到就换),不跟 250ms 的数据快照绑在一起。
+    void refreshVideo(const VideoReceiver* video);
+
     // 提醒功能后置接入。Dashboard 在测试里被单独构造(布局测试不该被迫拉起语音
     // 后端和配置文件),所以入口按钮先建好、控制器后挂上:没挂时按钮显示为不可用,
     // 而不是让整个仪表盘依赖一个可选子系统。
@@ -405,6 +408,7 @@ private:
     QString rune_badge_;
     void updateNextStep(const Snapshot& snapshot, MonotonicMs now);
     void placeNextPopup();
+    void setVideoStatus(const QString& status);
     // 图传小窗藏起来了(只对装在「本车」卡片里的小窗有效)。
     bool video_hidden_ = false;
 
@@ -446,6 +450,8 @@ private:
     VideoPane* video_full_pane_;
     QLabel* video_countdown_;
     QLabel* video_hp_;
+    qint64 last_video_frame_count_ = -1;
+    QString video_status_;
     VideoWall* wall_compact_ = nullptr;
     VideoWall* wall_full_ = nullptr;
 

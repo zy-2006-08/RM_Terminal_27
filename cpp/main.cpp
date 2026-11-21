@@ -1491,6 +1491,14 @@ int main(int argc, char* argv[]) {
     });
     freshness_timer.start(250);
 
+    // 图传按新帧刷新，不跟 250ms 的快照节拍走；没有新帧时 refreshVideo 自己跳过。
+    QTimer video_timer;
+    video_timer.setInterval(15);
+    QObject::connect(&video_timer, &QTimer::timeout, [&dashboard, &video, &replay]() {
+        if (!replay) dashboard.refreshVideo(&video);
+    });
+    video_timer.start();
+
     // 第二遍的到点检查。250ms 的快照节拍对 1 秒的间隔来说太粗:间隔期满的时刻
     // 落在两次快照之间时,第二遍会被推迟到下一个快照。这个定时器只推进播放队列,
     // 不碰调度状态,所以跑得比快照密不会影响任何时序判定。

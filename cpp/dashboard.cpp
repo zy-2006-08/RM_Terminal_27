@@ -1532,6 +1532,36 @@ void Dashboard::resizeEvent(QResizeEvent* event) {
     }
 }
 
+void Dashboard::refreshVideo(const VideoReceiver* video) {
+    if (!video) {
+        setVideoStatus(QStringLiteral("图传未启用"));
+        return;
+    }
+    // 数据快照 250ms 才来一次,图传不能跟着它走:新帧一到就换,界面才顺。
+    // 帧号没变就不重做图像,每帧只转一次 QImage 给两页共用。
+    if (video->decodedFrames() != last_video_frame_count_) {
+        last_video_frame_count_ = video->decodedFrames();
+        // latestFrame() is called EXACTLY ONCE per frame. Calling it per pane could
+        // straddle a frame advance and leave the two pages showing different
+        // moments. The copy() is what detaches from the decoder buffer that
+        // frame_to_image only borrows; QImage is copy-on-write, so handing the same
+        // copy to both panes costs no second deep copy.
+        const QByteArray frame = video->latestFrame();
+        const QImage owned = frame_to_image(frame, video->frameWidth(), video->frameHeight())
+                                 .copy();
+        apply_frame(info_video_pane_, video_full_pane_, owned);
+    }
+    setVideoStatus(video->online() ? QStringLiteral("等待画面")
+                                   : QStringLiteral("图传 %1").arg(video->state()));
+}
+
+void Dashboard::setVideoStatus(const QString& status) {
+    if (status == video_status_) return;
+    video_status_ = status;
+    info_video_pane_->setStatus(status);
+    video_full_pane_->setStatus(status);
+}
+
 void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, MonotonicMs now) {
     const bool blind_asserted =
         snapshot.blind.self_base_blinded.value.value_or(false);
@@ -1651,27 +1681,7 @@ void Dashboard::update(const Snapshot& snapshot, const VideoReceiver* video, Mon
     video_countdown_->setText(video_overlay_countdown_text(snapshot));
     video_hp_->setText(video_overlay_hp_text(snapshot));
 
-    if (video) {
-        // latestFrame() is called EXACTLY ONCE per tick. Calling it per pane could
-        // straddle a frame advance and leave the two pages showing different
-        // moments. The copy() is what detaches from the decoder buffer that
-        // frame_to_image only borrows; QImage is copy-on-write, so handing the same
-        // copy to both panes costs no second deep copy.
-        const QByteArray frame = video->latestFrame();
-        const QImage owned = frame_to_image(frame, VideoReceiver::frameWidth(),
-                                            VideoReceiver::frameHeight())
-                                 .copy();
-        apply_frame(info_video_pane_, video_full_pane_, owned);
-
-        const QString status = video->online()
-                                   ? QStringLiteral("等待画面")
-                                   : QStringLiteral("图传 %1").arg(video->state());
-        info_video_pane_->setStatus(status);
-        video_full_pane_->setStatus(status);
-    } else {
-        info_video_pane_->setStatus(QStringLiteral("图传未启用"));
-        video_full_pane_->setStatus(QStringLiteral("图传未启用"));
-    }
+    refreshVideo(video);
 
     const PopupDecision popup = popups_.step(popup_inputs(snapshot), now);
     if (popup.popup != logged_popup_) {
