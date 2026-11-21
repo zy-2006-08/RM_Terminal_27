@@ -129,6 +129,15 @@ bool load_config(const QString& path, Config* config, QString* error) {
             if (!parse_integer(value, key, line, &config->mqtt_port, error)) return false;
         } else if (key == QLatin1String("udp_port")) {
             if (!parse_integer(value, key, line, &config->udp_port, error)) return false;
+        } else if (key == QLatin1String("video_hwaccel")) {
+            if (value != QLatin1String("none") && value != QLatin1String("vaapi")) {
+                if (error) {
+                    *error = QStringLiteral("line %1: invalid video_hwaccel=%2; expected none or vaapi")
+                                 .arg(line).arg(value);
+                }
+                return false;
+            }
+            config->video_hwaccel = value;
         } else if (key == QLatin1String("self_robot_id")) {
             if (!parse_integer(value, key, line, &config->self_robot_id, error)) return false;
             if (!valid_self_robot_id(config->self_robot_id)) {

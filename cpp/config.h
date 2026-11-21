@@ -31,6 +31,9 @@ struct Config {
     QString log_destination = QStringLiteral("rm_terminal.log");
     int mqtt_port = 3333;
     int udp_port = 3334;
+    // 本机图传用什么解码:none = 软件解码;vaapi = Intel 核显硬件解码(/dev/dri/renderD128,
+    // 当前用户要能读写它)。只换解码器,输出分辨率和其余解码参数不变。
+    QString video_hwaccel = QStringLiteral("none");
     // 席位(2027 选手端):红 1/3/4/6,蓝方 +100。决定解码器把哪台车当成自机、MQTT 登录名
     // 和界面布局。启动时按 --seat > RM_SELF_ID > 配置里显式写的 self_robot_id > 选席位页
     // 的顺序定下来,写回这里。

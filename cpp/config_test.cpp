@@ -55,6 +55,7 @@ void missing_file_uses_documented_defaults(const QTemporaryDir& dir) {
     check(cfg.mqtt_host == QLatin1String("127.0.0.1"), "default mqtt_host");
     check(cfg.mqtt_port == 3333, "default mqtt_port");
     check(cfg.udp_port == 3334, "default udp_port");
+    check(cfg.video_hwaccel == QLatin1String("none"), "default video_hwaccel is software decode");
     check(cfg.self_robot_id == 3, "default self_robot_id");
     check(!cfg.self_robot_id_set, "a missing self_robot_id is not explicit, so the picker asks");
     check(cfg.map_mark_ms == 30000 && !cfg.display_fullscreen && cfg.display_screen.isEmpty(),
@@ -77,6 +78,7 @@ void every_key_is_honoured(const QTemporaryDir& dir) {
                                          "mqtt_host = 10.0.0.5\n"
                                          "mqtt_port=4444\n"
                                          "udp_port=5555\n"
+                                         "video_hwaccel=vaapi\n"
                                          "self_robot_id=104\n"
                                          "stale_window_ms=700\n"
                                          "log_level=debug\n"
@@ -98,6 +100,7 @@ void every_key_is_honoured(const QTemporaryDir& dir) {
     check(cfg.mqtt_host == QLatin1String("10.0.0.5"), "override mqtt_host");
     check(cfg.mqtt_port == 4444, "override mqtt_port");
     check(cfg.udp_port == 5555, "override udp_port");
+    check(cfg.video_hwaccel == QLatin1String("vaapi"), "override video_hwaccel");
     check(cfg.self_robot_id == 104, "override self_robot_id");
     check(cfg.stale_window_ms == 700, "override stale_window_ms");
     check(cfg.log_level == rm_terminal::LogLevel::debug, "override log_level");
@@ -396,6 +399,7 @@ void video_wall_keys(const QTemporaryDir& dir) {
     struct Bad { const char* body; const char* key; const char* name; };
     const Bad bad[] = {
         {"video_relay_host=commander.local\n", "video_relay_host", "a host name is rejected"},
+        {"video_hwaccel=cuda\n", "video_hwaccel", "an unknown decoder is rejected"},
         {"video_wall_port=65532\n", "video_wall_port", "robot 4's wall port must fit in 16 bits"},
         {"video_wall_port=0\n", "video_wall_port", "zero wall port rejected"},
         {"udp_port=3343\n", "video_wall_port", "a wall port on udp_port is rejected"},
