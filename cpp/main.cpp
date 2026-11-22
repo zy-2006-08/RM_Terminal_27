@@ -5,6 +5,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QImage>
 #include <QLabel>
 #include <QScreen>
@@ -71,10 +72,28 @@
 
 namespace {
 
+// 从访达、程序坞双击 Mac 的 .app 时工作目录是 /:默认的 ./rm_terminal.conf 找不到,rm_terminal.log
+// 也写不进去,程序一打开就以退出码 4 退出。这种启动方式下把工作目录换到本机数据目录
+// (~/Library/Application Support/rm_terminal,录像也在这里),第一次打开时把包里带的配置放过去。
+// 在终端里运行时工作目录不是 /,什么都不变。
+void use_data_dir_when_launched_from_bundle() {
+    if (QDir::currentPath() != QLatin1String("/")) return;
+    const QDir contents(QCoreApplication::applicationDirPath() + QStringLiteral("/.."));
+    if (!contents.exists(QStringLiteral("Info.plist"))) return;
+    const QString data = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    if (!QDir().mkpath(data) || !QDir::setCurrent(data)) return;
+    const QString config = QString::fromLatin1(rm_terminal::kDefaultConfigFileName);
+    const QString bundled = contents.filePath(QStringLiteral("Resources/") + config);
+    if (!QFileInfo::exists(config) && QFile::copy(bundled, config))
+        QFile::setPermissions(config, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ReadGroup |
+                                          QFileDevice::ReadOther);
+}
+
 // 席位从哪来:--seat > RM_SELF_ID > 配置里显式写的 self_robot_id;都没有时返回空,
 // 由界面弹选席位页(回放则用录像里记的席位)。
 bool prepare_runtime(const QString& config_path, rm_terminal::Config* cfg,
                      std::optional<int> cli_seat = std::nullopt, QString* seat_source = nullptr) {
+    use_data_dir_when_launched_from_bundle();
     QString error;
     if (!rm_terminal::load_config(config_path, cfg, &error)) {
         fprintf(stderr, "config error: %s\n", error.toUtf8().constData());
@@ -169,6 +188,9 @@ QStringList startup_fields(const QString& mode, const rm_terminal::Config& cfg,
 }
 
 int main(int argc, char* argv[]) {
+    // 录像、界面方案、Mac 上双击打开时的配置都放在按程序名找的目录里。Mac 的 .app 默认拿包名当程序名,
+    // 不定死的话,包名「RM 终端」和直接运行的 rm_terminal 会用两个不同的目录。
+    QCoreApplication::setApplicationName(QStringLiteral("rm_terminal"));
     QStringList args;
     for (int index = 1; index < argc; ++index) args.append(QString::fromLocal8Bit(argv[index]));
 
