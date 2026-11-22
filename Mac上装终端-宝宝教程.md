@@ -4,7 +4,7 @@
 
 裁判端、选手端那两台电脑怎么准备，照 [用26赛事引擎测试终端-宝宝教程.md](用26赛事引擎测试终端-宝宝教程.md) 第 1–6 节做，只是终端电脑换成这台 Mac。
 
-这份教程还没有人在真的 Mac 上从头走过一遍。哪一步和写的不一样，把「终端」窗口里的内容整段复制下来发出来，改好后把结论写回这份文档。标了 **【未验证】** 的地方是根据资料推断的。
+2026-11-22 在 macOS 26.5.2 的 Apple 芯片 Mac 上从头走过一遍：打包、启动到选席位页、模拟器（裁判、车端、控制器、图传四个灯全绿）都正常。顺手修了打包脚本两个会让第一次打包直接失败的 bug，和一个只在 Mac 上出现的连接 bug：Homebrew 装的 mosquitto 是 2.1 版，旧代码下终端一开始没连上就再也不重连，界面一直「裁判：重连中」。标的 **【未验证】** 是还没在真机上验过的部分（主要和网络、权限有关）。哪一步和写的不一样，把「终端」窗口里的内容整段复制下来发出来，改好后把结论写回这份文档。
 
 ---
 
@@ -65,12 +65,18 @@ git clone --depth 1 -b season-2027 https://github.com/zy-2006-08/RM_Terminal_27.
 
 项目会下载到个人文件夹里的 `RM_Terminal_27`。`season-2027` 是现在用的分支；GitHub 网页上默认显示的 main 是旧版本，别下错。
 
-**通过**：运行 `ls ~/RM_Terminal_27/scripts/package_macos.sh`，打出这个路径。
+这个文件夹放哪、叫什么都可以，下面统一叫它**项目文件夹**（默认就是 `~/RM_Terminal_27`；项目已经在这台 Mac 上别的路径，比如 `~/RMGF/terminal`，就不用再下载，直接用那个）。
+
+**通过**：在访达里能看到项目文件夹，里面有 `scripts`、`cpp`、`qml`。
 
 ## 3. 打包（第一次和以后升级都是这一步）
 
+先让终端进到项目文件夹：输入 `cd `（注意后面有一个空格），把访达里的项目文件夹**拖进终端窗口**，回车——路径由访达帮你填，不用手打。再运行 `ls scripts/package_macos.sh`，打出路径就说明站对位置了。
+
+以后每开一个新的终端窗口，都先这样进一次项目文件夹。然后打包：
+
 ```sh
-bash ~/RM_Terminal_27/scripts/package_macos.sh
+bash scripts/package_macos.sh
 ```
 
 脚本自己做完下面这些事，屏幕上一行一行写 `[打包] 1/6 ……` 到 `6/6`。第一次最慢，时间是估的，主要看网速：
@@ -130,34 +136,45 @@ open -e ~/Library/Application\ Support/rm_terminal/rm_terminal.conf
 
 先退出「RM 终端」（Command+Q），然后：
 
+先进项目文件夹（同第 3 节：输入 `cd ` 再把文件夹拖进终端窗口，回车），然后：
+
 ```sh
-cd ~/RM_Terminal_27 && git pull
+git pull
 bash scripts/package_macos.sh
 ```
 
 第二次起快很多：库装过了，ffmpeg 编过了，只重新编译改过的部分。脚本会把「应用程序」里的旧版本换掉；配置、录像、界面方案都不会丢。【未验证】重新打包后第一次打开，可能还会再问一次本地网络，点允许。
 
+用模拟器（第 9 节）的，还要再运行一条。打包脚本只更新「RM 终端」，模拟器用的是项目文件夹里另编的一份终端，不重新编译就一直是旧的，修过的问题会照样出现：
+
+```sh
+cmake --build build/macos --parallel
+```
+
 ## 8. 给别的 Mac 用（可选）
 
-打包时顺便出了一个安装包 `~/RM_Terminal_27/build/macos-app/RM-Terminal-macOS-arm64.dmg`。用隔空投送或 U 盘拷到别的 Mac：
+打包时顺便出了一个安装包，在项目文件夹的 `build/macos-app/RM-Terminal-macOS-arm64.dmg`。用隔空投送或 U 盘拷到别的 Mac：
 
 1. 双击 .dmg，把「RM 终端」拖到旁边的「Applications」
 2. 第一次打开会被拦：去 系统设置 → 隐私与安全性，往下翻，点「仍要打开」
 
 那台 Mac 不用装 Homebrew，但也要 Apple 芯片，macOS 版本不能比打包的这台旧。
 
-## 9. 在 Mac 上跑模拟器（可选，【未验证】）
+## 9. 在 Mac 上跑模拟器（可选）
 
 装好的「RM 终端」只连真实裁判系统。想在 Mac 上用项目自带的模拟器练习，再做一次：
 
+先进项目文件夹（同第 3 节），然后：
+
 ```sh
-cd ~/RM_Terminal_27
 brew install ffmpeg
 python3 -m venv .venv && .venv/bin/pip install protobuf paho-mqtt
 cmake -S . -B build/macos -DCMAKE_BUILD_TYPE=Release && cmake --build build/macos --parallel
 ```
 
-之后在访达里打开 `RM_Terminal_27` 文件夹，双击 `启动.command`，在弹出的终端窗口里输入席位编号。关掉那个窗口就全部停止。
+打包过以后，「应用程序」里会多一个「RM 模拟器」，双击它、或者在启动台里点它，等于双击项目文件夹里的 `启动.command`；没打包过就直接去项目文件夹双击 `启动.command`。在弹出的终端窗口里输入席位编号，关掉那个窗口就全部停止。「RM 模拟器」记的是打包时项目文件夹的位置，以后把项目文件夹挪了地方或改了名，重新打包一次（第 3 节）。
+
+**通过**：终端界面上「裁判」「车端」灯两三秒内变绿，再过一秒「图传」有画面。「裁判」一直「重连中」时看附录。
 
 控制面板报 `No module named '_tkinter'` 时，运行 `brew install python-tk`，再把上面 `python3 -m venv` 那一行重新运行一次。
 
@@ -169,10 +186,11 @@ cmake -S . -B build/macos -DCMAKE_BUILD_TYPE=Release && cmake --build build/maco
 | --- | --- |
 | `brew: command not found` | 2.2 装完后 Next steps 那几行没运行；运行完关掉终端窗口再开一个 |
 | brew 下载卡住、很慢 | 2.2 的中科大镜像三行，或者开代理 |
-| `git clone` 很慢、失败 | 开代理再试。实在不行：GitHub 网页上切到 season-2027 分支 → Code → Download ZIP，解压后把文件夹改名成 `RM_Terminal_27` 放进个人文件夹（这样以后不能 `git pull`，升级要重新下载） |
+| `git clone` 很慢、失败 | 开代理再试。实在不行：GitHub 网页上切到 season-2027 分支 → Code → Download ZIP，解压出来的文件夹随便叫什么都行，放进个人文件夹即可，但这样以后不能 `git pull`，升级要重新下载 |
 | 打包停在「出错」 | 整段输出发出来 |
 | 双击后图标跳一下就没了 | 多半是配置写错了。终端里运行 `cd ~/Library/Application\ Support/rm_terminal`，再运行 `"/Applications/RM 终端.app/Contents/MacOS/rm_terminal"`，会写出是哪一行、哪个键错了 |
 | 「裁判」灯红 | `ping -c 4 192.168.12.1` 通不通（第 4 节）；本地网络是不是点了允许（第 5 节）；选的席位和选手端登录的是不是同一个号 |
+| 模拟器里「裁判」一直「重连中」、「车端」「无数据」 | 模拟器用的终端是旧的：进项目文件夹运行 `cmake --build build/macos --parallel`，关掉模拟器的终端窗口，再开一次。还不行，把 `/tmp/rm_terminal_logs` 里的 `proxy.log`、`mosquitto.log`，和项目文件夹里 `rm_terminal.log` 的最后几十行发出来 |
 | 「图传」黑 | 选手端自己有没有画面（26 引擎教程 5.1）；Mac 开了防火墙时（系统设置 → 网络 → 防火墙），允许「RM 终端」接受传入连接 |
 | 「控制器」灯红「未接」 | 第 6 节的串口路径。`ls /dev/cu.*` 没有新设备时，可能要装 USB 转串口芯片的驱动（看线上写的是 CH340 还是 CP2102，去芯片厂家官网下 macOS 驱动）【未验证】 |
 | 键鼠控制（F9）鼠标不动 | 【未验证】可能要在 系统设置 → 隐私与安全性 → 辅助功能 里允许「RM 终端」 |
