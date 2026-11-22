@@ -190,6 +190,39 @@ fi
 rm -rf "$DEST"
 ditto "$APP" "$DEST"
 
+# 「RM 模拟器」：单包一层 .app，双击等于双击项目里的启动.command，这样启动台里有图标可点。
+# 里面记的是打包时这个项目文件夹的绝对路径，挪了文件夹就重新打包一次。
+APP_NAME_SIM="RM 模拟器"
+SIM="$(dirname "$DEST")/$APP_NAME_SIM.app"
+rm -rf "$SIM"
+mkdir -p "$SIM/Contents/MacOS" "$SIM/Contents/Resources"
+cat >"$SIM/Contents/MacOS/launch" <<EOF
+#!/bin/bash
+exec open -a Terminal "$ROOT/启动.command"
+EOF
+chmod +x "$SIM/Contents/MacOS/launch"
+cp "$APP/Contents/Resources/AppIcon.icns" "$SIM/Contents/Resources/" 2>/dev/null || true
+cat >"$SIM/Contents/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key><string>zh_CN</string>
+  <key>CFBundleExecutable</key><string>launch</string>
+  <key>CFBundleIdentifier</key><string>com.robobraver.rm-terminal-sim</string>
+  <key>CFBundleName</key><string>$APP_NAME_SIM</string>
+  <key>CFBundleDisplayName</key><string>$APP_NAME_SIM</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
+  <key>CFBundleVersion</key><string>$VERSION</string>
+  <key>LSMinimumSystemVersion</key><string>${MACOS%%.*}.0</string>
+</dict>
+</plist>
+EOF
+plutil -lint "$SIM/Contents/Info.plist" >/dev/null || die "「$APP_NAME_SIM」的 Info.plist 格式不对"
+codesign --force --sign - "$SIM" 2>>"$OUT/codesign.log" || die "「$APP_NAME_SIM」签名失败（看 $OUT/codesign.log）"
+
 DMG="$OUT/RM-Terminal-macOS-$ARCH.dmg"
 STAGE="$OUT/dmg"
 rm -rf "$STAGE" "$DMG"
