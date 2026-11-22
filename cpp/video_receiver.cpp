@@ -1,5 +1,6 @@
 #include "video_receiver.h"
 #include "logging.h"
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QMetaObject>
 #include <QMutexLocker>
@@ -64,7 +65,11 @@ void VideoReceiver::fail(const QString& reason) {
 }
 bool VideoReceiver::launchDecoder() {
     last_launch_=clock_.elapsed();
-    const auto executable=QStandardPaths::findExecutable(endpoint_.ffmpeg);
+    // 打包版(Mac 的 .app)把 ffmpeg 放在程序旁边,先找那里:从访达双击打开时 PATH 里没有 Homebrew。
+    QString executable;
+    if(QCoreApplication::instance())
+        executable=QStandardPaths::findExecutable(endpoint_.ffmpeg,{QCoreApplication::applicationDirPath()});
+    if(executable.isEmpty()) executable=QStandardPaths::findExecutable(endpoint_.ffmpeg);
     if(executable.isEmpty()){fail("ffmpeg_not_found");return false;}
     decoder_.setProgram(executable);
     // Software HEVC decode at 640x360: the raw pipe carries frameWidth x frameHeight
