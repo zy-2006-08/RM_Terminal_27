@@ -35,7 +35,9 @@ static void on_message(mosquitto*, void* data, const mosquitto_message* m) { aut
   const bool ok=i->decoder.accept(topic,bytes,monotonic_now());
   if(!ok) Q_EMIT i->owner->diagnostic(QStringLiteral("ignored malformed, stale, invalid, or unknown MQTT message: ")+QString::fromStdString(topic)); }
 void MqttIntake::setMessageObserver(std::function<void(const QString&, const QByteArray&)> observer){impl_->observer=std::move(observer);}
-bool MqttIntake::start(){mosquitto_lib_init();impl_->client=mosquitto_new(impl_->client_id.toUtf8().constData(),true,impl_);if(!impl_->client)return false;mosquitto_connect_callback_set(impl_->client,on_connect);mosquitto_disconnect_callback_set(impl_->client,on_disconnect);mosquitto_message_callback_set(impl_->client,on_message);return mosquitto_connect_async(impl_->client,impl_->host.toUtf8().constData(),impl_->port,impl_->keepalive_s)==MOSQ_ERR_SUCCESS&&mosquitto_loop_start(impl_->client)==MOSQ_ERR_SUCCESS;}
+// libmosquitto 2.1 的 connect_async 会当场连一次;网络线程还没起来时这次经常失败(Mac 上实测),
+// 失败后不会再重连,界面就一直「裁判:重连中」。先 loop_start 再连:失败或 Broker 晚起都由网络线程重连。
+bool MqttIntake::start(){mosquitto_lib_init();impl_->client=mosquitto_new(impl_->client_id.toUtf8().constData(),true,impl_);if(!impl_->client)return false;mosquitto_connect_callback_set(impl_->client,on_connect);mosquitto_disconnect_callback_set(impl_->client,on_disconnect);mosquitto_message_callback_set(impl_->client,on_message);return mosquitto_loop_start(impl_->client)==MOSQ_ERR_SUCCESS&&mosquitto_connect_async(impl_->client,impl_->host.toUtf8().constData(),impl_->port,impl_->keepalive_s)==MOSQ_ERR_SUCCESS;}
 // 断线时直接返回 false,不排队:等重连后再补发的是几秒前的旧姿态,车上的机械臂
 // 会突然去追一个早已过去的位置。libmosquitto 的 publish 可以在网络线程之外调用。
 bool MqttIntake::publish(const char* topic, const std::string& payload){if(!impl_->client||!impl_->connected.load())return false;return mosquitto_publish(impl_->client,nullptr,topic,static_cast<int>(payload.size()),payload.data(),0,false)==MOSQ_ERR_SUCCESS;}
