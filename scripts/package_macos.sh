@@ -24,7 +24,7 @@ die() { echo "[打包] 出错：$*" >&2; exit 1; }
 ARCH=$(uname -m)
 MACOS=$(sw_vers -productVersion)
 if [ "$ARCH" != arm64 ] || [ "${MACOS%%.*}" -lt 15 ]; then
-  step "这台 Mac 是 $ARCH、macOS $MACOS。Homebrew 只给 Apple 芯片、macOS 15 及以上提供编好的 Qt，"
+  step "这台 Mac 是 ${ARCH}、macOS ${MACOS}。Homebrew 只给 Apple 芯片、macOS 15 及以上提供编好的 Qt，"
   step "这台机器上要从源码编 Qt，可能要好几个小时。"
   read -r -p "[打包] 仍要继续请按回车，不继续按 Ctrl+C：" _
 fi
@@ -49,7 +49,7 @@ cmake --build "$OUT" --parallel --target rm_terminal
 
 FF_DIR="$OUT/ffmpeg-$FFMPEG_VERSION"
 if [ ! -x "$FF_DIR/ffmpeg" ]; then
-  step "3/6 编精简版 ffmpeg $FFMPEG_VERSION（第一次约 1 分钟）"
+  step "3/6 编精简版 ffmpeg ${FFMPEG_VERSION}（第一次约 1 分钟）"
   TARBALL="$OUT/ffmpeg-$FFMPEG_VERSION.tar.xz"
   [ -f "$TARBALL" ] || curl -fL --retry 3 -o "$TARBALL" "https://ffmpeg.org/releases/ffmpeg-$FFMPEG_VERSION.tar.xz"
   if ! echo "$FFMPEG_SHA256  $TARBALL" | shasum -a 256 -c - >/dev/null; then
@@ -139,16 +139,22 @@ step "6/6 签名、检查"
 # Apple 芯片上每个程序和库都要有签名才能加载；macdeployqt 改过的库签名已经失效，从里到外重签一遍。
 : >"$OUT/codesign.log"
 while IFS= read -r -d '' file; do
-  codesign --force --sign - "$file" 2>>"$OUT/codesign.log" || die "签名失败：$file（看 $OUT/codesign.log）"
+  codesign --force --sign - "$file" 2>>"$OUT/codesign.log" || die "签名失败：${file}（看 $OUT/codesign.log）"
 done < <(find "$APP/Contents" -type f \( -name '*.dylib' -o -perm -u+x \) ! -path '*.framework/*' -print0)
 while IFS= read -r -d '' framework; do
-  codesign --force --sign - "$framework" 2>>"$OUT/codesign.log" || die "签名失败：$framework（看 $OUT/codesign.log）"
+  codesign --force --sign - "$framework" 2>>"$OUT/codesign.log" || die "签名失败：${framework}（看 $OUT/codesign.log）"
 done < <(find "$APP/Contents" -type d -name '*.framework' -prune -print0)
 codesign --force --sign - "$APP" 2>>"$OUT/codesign.log" || die "签名失败（看 $OUT/codesign.log）"
 codesign --verify --deep --strict "$APP" || die "签名检查没过"
 
-LEAKS=$(find "$APP/Contents" -type f -print0 | xargs -0 otool -L 2>/dev/null \
-  | awk '/^[^\t]/ { file = $0 } /^\t\/(opt\/homebrew|usr\/local)\// { print file " -> " $1 }' || true)
+# 只看「会被加载」的依赖（LC_LOAD_DYLIB 等）：LC_ID_DYLIB 是库自己的名字，写的是 Homebrew 路径也不碍事，
+# macdeployqt 不会改它，otool -L 把它列在第一行，容易误报。
+LEAKS=$(find "$APP/Contents" -type f -print0 | xargs -0 otool -l 2>/dev/null \
+  | awk '/^[^\t ]/ { file = $0 }
+         /^ +cmd / { cmd = $2 }
+         /^ +name \/(opt\/homebrew|usr\/local)\// {
+           if (cmd == "LC_LOAD_DYLIB" || cmd == "LC_REEXPORT_DYLIB" || cmd == "LC_LOAD_WEAK_DYLIB") print file " -> " $2
+         }' || true)
 [ -z "$LEAKS" ] || die "程序包里还有库指向 Homebrew，拿到别的 Mac 上会打不开：
 $LEAKS"
 
@@ -194,8 +200,8 @@ hdiutil create -quiet -volname "$APP_NAME" -srcfolder "$STAGE" -format UDZO "$DM
 rm -rf "$STAGE"
 
 step "好了。"
-step "  程序：$DEST（启动台里也有，双击就开；可以拖到程序坞上）"
+step "  程序：${DEST}（启动台里也有，双击就开；可以拖到程序坞上）"
 step "  第一次打开会问能不能访问本地网络，点「允许」，不然连不上裁判系统。"
 step "  配置：~/Library/Application Support/rm_terminal/rm_terminal.conf（第一次打开以后才有），日志和录像也在这个文件夹"
-step "  给别的 Mac：$DMG（要 Apple 芯片、macOS ${MACOS%%.*} 或更新；第一次打开被拦时，去「系统设置 → 隐私与安全性」点「仍要打开」）"
+step "  给别的 Mac：${DMG}（要 Apple 芯片、macOS ${MACOS%%.*} 或更新；第一次打开被拦时，去「系统设置 → 隐私与安全性」点「仍要打开」）"
 open -R "$DEST"
