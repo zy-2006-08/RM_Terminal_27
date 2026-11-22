@@ -1,0 +1,178 @@
+# 在 Mac 上装终端：宝宝教程
+
+做完以后，「应用程序」和启动台里会有一个「RM 终端」。双击打开，先选席位，选完直接连真实裁判系统（官方选手端电脑），不用敲命令。以后升级只要运行两条命令。
+
+裁判端、选手端那两台电脑怎么准备，照 [用26赛事引擎测试终端-宝宝教程.md](用26赛事引擎测试终端-宝宝教程.md) 第 1–6 节做，只是终端电脑换成这台 Mac。
+
+这份教程还没有人在真的 Mac 上从头走过一遍。哪一步和写的不一样，把「终端」窗口里的内容整段复制下来发出来，改好后把结论写回这份文档。标了 **【未验证】** 的地方是根据资料推断的。
+
+---
+
+## 0. 先看你的 Mac 能不能用
+
+左上角苹果菜单 → 关于本机，看两行：
+
+| 看哪一行 | 要求 | 不满足时 |
+| --- | --- | --- |
+| 芯片 | Apple M1、M2、M3…… | Intel 芯片：Homebrew 不再给 Intel 提供编好的 Qt，要从源码编，几个小时起步，不建议 |
+| macOS | 15（Sequoia）或更新 | 先升级系统：系统设置 → 通用 → 软件更新 |
+
+## 1. 打开「终端」
+
+后面的命令都在「终端」这个程序里运行：按 Command + 空格，输入「终端」，回车。
+
+- 命令一条一条复制进去，按回车，等它跑完、重新出现 `%` 提示符，再贴下一条。
+- 要输密码时（就是开机密码），输入的时候屏幕上什么都不显示，这是正常的，输完按回车。
+
+## 2. 准备（只做一次）
+
+### 2.1 装命令行开发者工具
+
+```sh
+xcode-select --install
+```
+
+弹出窗口点「安装」，等它装完。已经装过的会提示 `already installed`，直接往下走。
+
+**通过**：运行 `xcode-select -p`，打出一个路径，比如 `/Library/Developer/CommandLineTools`。
+
+### 2.2 装 Homebrew
+
+```sh
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+中途会要你输开机密码、按回车确认。装完它会打印 **Next steps**，下面有两三行 `echo` 和 `eval` 开头的命令，**照抄运行**，不然后面会提示找不到 `brew`。
+
+**通过**：关掉终端窗口再开一个，运行 `brew --version`，打出版本号。
+
+下载很慢或者连不上 GitHub 时，先在同一个窗口运行下面三行，换成中科大镜像，再重新运行上面的安装命令：
+
+```sh
+export HOMEBREW_BREW_GIT_REMOTE="https://mirrors.ustc.edu.cn/brew.git"
+export HOMEBREW_BOTTLE_DOMAIN="https://mirrors.ustc.edu.cn/homebrew-bottles"
+export HOMEBREW_API_DOMAIN="https://mirrors.ustc.edu.cn/homebrew-bottles/api"
+```
+
+- 安装命令本身就下不下来：换成 `/bin/bash -c "$(curl -fsSL https://mirrors.ustc.edu.cn/misc/brew-install.sh)"`。
+- 这三行只对当前窗口有效。想以后一直用镜像，把这三行原样加到 `~/.zprofile` 文件末尾：`open -e ~/.zprofile` 打开，粘贴，保存。
+
+### 2.3 下载项目
+
+```sh
+git clone --depth 1 -b season-2027 https://github.com/zy-2006-08/RM_Terminal_27.git ~/RM_Terminal_27
+```
+
+项目会下载到个人文件夹里的 `RM_Terminal_27`。`season-2027` 是现在用的分支；GitHub 网页上默认显示的 main 是旧版本，别下错。
+
+**通过**：运行 `ls ~/RM_Terminal_27/scripts/package_macos.sh`，打出这个路径。
+
+## 3. 打包（第一次和以后升级都是这一步）
+
+```sh
+bash ~/RM_Terminal_27/scripts/package_macos.sh
+```
+
+脚本自己做完下面这些事，屏幕上一行一行写 `[打包] 1/6 ……` 到 `6/6`。第一次最慢，时间是估的，主要看网速：
+
+| 步骤 | 做什么 | 第一次大概多久 |
+| --- | --- | --- |
+| 1/6 | 用 Homebrew 装 Qt 等编译要用的库 | 10–30 分钟 |
+| 2/6 | 编译终端 | 几分钟 |
+| 3/6 | 下载 ffmpeg 源码，编一个只解图传的精简版 | 1–2 分钟 |
+| 4/6、5/6 | 装配程序包，把 Qt 和其他库放进去 | 1 分钟 |
+| 6/6 | 签名，检查程序包能不能用。中间会闪一下终端的窗口，正常 | 1 分钟 |
+
+**通过**：最后几行写着 `[打包] 好了。`，访达自己打开「应用程序」并选中「RM 终端」。
+
+- 中途问「仍要继续请按回车」：这台 Mac 不满足第 0 节，按 Ctrl+C 退出。
+- 停在 `[打包] 出错：……`：在终端窗口里按 Command+A 全选、Command+C 复制，整段发出来。
+
+## 4. 接网线、设 IP
+
+Mac 大多没有网口，要一个 USB-C 转网口的转换器。网线另一头接选手端电脑接终端的那个网口（26 引擎教程 3.3 节，那边固定 192.168.12.1）。
+
+1. 系统设置 → 网络 → 点这个网卡（名字一般是「USB 10/100/1000 LAN」或「以太网」）→ 详细信息…
+2. 左边点 TCP/IP，「配置 IPv4」选 **手动**
+3. IP 地址 `192.168.12.2`，子网掩码 `255.255.255.0`，路由器 **空着** → 好
+
+Wi-Fi 上网不受影响。【未验证】不同 macOS 版本菜单的名字可能略有不同。
+
+**通过**：终端里运行 `ping -c 4 192.168.12.1`，4 个包都有回复。不通就照 26 引擎教程开头「检查顺序」表的第 1、2 步查选手端那边。
+
+## 5. 第一次打开
+
+1. 启动台里点「RM 终端」，或者访达 → 应用程序 → 双击「RM 终端」。想放到程序坞：打开以后在程序坞的图标上右键 → 选项 → 在程序坞中保留。
+2. 选席位页：选 **和官方选手端登录的同一台车**（选手端登录 R3 就选红方 3 号）。号码不一样，服务器直接不让连。
+3. 弹窗问能不能查找、连接本地网络上的设备：点 **允许**。点错了就去 系统设置 → 隐私与安全性 → 本地网络，把「RM 终端」打开。【未验证】弹窗的原话
+
+**通过**（和 26 引擎教程第 7 节一样）：「裁判」灯绿；自检页「席位」是「席位正确」；「图传」灯绿，图传窗口有画面。
+
+## 6. 改配置（服务器地址、串口）
+
+第一次打开以后，配置文件在 `~/Library/Application Support/rm_terminal/rm_terminal.conf`，日志 `rm_terminal.log` 和录像也在这个文件夹。用「文本编辑」打开配置：
+
+```sh
+open -e ~/Library/Application\ Support/rm_terminal/rm_terminal.conf
+```
+
+改完保存，**退出「RM 终端」（Command+Q）再打开**才生效。
+
+| 想做什么 | 怎么改 |
+| --- | --- |
+| 换服务器地址 | 改 `mqtt_host=` 那一行。连真实裁判系统就是 `192.168.12.1`，不用动 |
+| 接自定义控制器 | 插上控制器，运行 `ls /dev/cu.*`，找新多出来的那个（一般带 `usbserial`）。配置里去掉 `# controller_serial=` 开头的 `#`，路径换成它 |
+| 不想每次选席位 | 加一行 `self_robot_id=3`（3 换成你的车号，蓝方加 100）。换车时记得改 |
+
+每一项的意思见项目里的 `rm_terminal.conf.sample`。
+
+## 7. 以后升级
+
+先退出「RM 终端」（Command+Q），然后：
+
+```sh
+cd ~/RM_Terminal_27 && git pull
+bash scripts/package_macos.sh
+```
+
+第二次起快很多：库装过了，ffmpeg 编过了，只重新编译改过的部分。脚本会把「应用程序」里的旧版本换掉；配置、录像、界面方案都不会丢。【未验证】重新打包后第一次打开，可能还会再问一次本地网络，点允许。
+
+## 8. 给别的 Mac 用（可选）
+
+打包时顺便出了一个安装包 `~/RM_Terminal_27/build/macos-app/RM-Terminal-macOS-arm64.dmg`。用隔空投送或 U 盘拷到别的 Mac：
+
+1. 双击 .dmg，把「RM 终端」拖到旁边的「Applications」
+2. 第一次打开会被拦：去 系统设置 → 隐私与安全性，往下翻，点「仍要打开」
+
+那台 Mac 不用装 Homebrew，但也要 Apple 芯片，macOS 版本不能比打包的这台旧。
+
+## 9. 在 Mac 上跑模拟器（可选，【未验证】）
+
+装好的「RM 终端」只连真实裁判系统。想在 Mac 上用项目自带的模拟器练习，再做一次：
+
+```sh
+cd ~/RM_Terminal_27
+brew install ffmpeg
+python3 -m venv .venv && .venv/bin/pip install protobuf paho-mqtt
+cmake -S . -B build/macos -DCMAKE_BUILD_TYPE=Release && cmake --build build/macos --parallel
+```
+
+之后在访达里打开 `RM_Terminal_27` 文件夹，双击 `启动.command`，在弹出的终端窗口里输入席位编号。关掉那个窗口就全部停止。
+
+控制面板报 `No module named '_tkinter'` 时，运行 `brew install python-tk`，再把上面 `python3 -m venv` 那一行重新运行一次。
+
+---
+
+## 附录：出问题先查这里
+
+| 现象 | 先查 |
+| --- | --- |
+| `brew: command not found` | 2.2 装完后 Next steps 那几行没运行；运行完关掉终端窗口再开一个 |
+| brew 下载卡住、很慢 | 2.2 的中科大镜像三行，或者开代理 |
+| `git clone` 很慢、失败 | 开代理再试。实在不行：GitHub 网页上切到 season-2027 分支 → Code → Download ZIP，解压后把文件夹改名成 `RM_Terminal_27` 放进个人文件夹（这样以后不能 `git pull`，升级要重新下载） |
+| 打包停在「出错」 | 整段输出发出来 |
+| 双击后图标跳一下就没了 | 多半是配置写错了。终端里运行 `cd ~/Library/Application\ Support/rm_terminal`，再运行 `"/Applications/RM 终端.app/Contents/MacOS/rm_terminal"`，会写出是哪一行、哪个键错了 |
+| 「裁判」灯红 | `ping -c 4 192.168.12.1` 通不通（第 4 节）；本地网络是不是点了允许（第 5 节）；选的席位和选手端登录的是不是同一个号 |
+| 「图传」黑 | 选手端自己有没有画面（26 引擎教程 5.1）；Mac 开了防火墙时（系统设置 → 网络 → 防火墙），允许「RM 终端」接受传入连接 |
+| 「控制器」灯红「未接」 | 第 6 节的串口路径。`ls /dev/cu.*` 没有新设备时，可能要装 USB 转串口芯片的驱动（看线上写的是 CH340 还是 CP2102，去芯片厂家官网下 macOS 驱动）【未验证】 |
+| 键鼠控制（F9）鼠标不动 | 【未验证】可能要在 系统设置 → 隐私与安全性 → 辅助功能 里允许「RM 终端」 |

@@ -606,6 +606,30 @@ Debug and Release verification artifacts:
 - `artifacts/task-2/domain-verification.log` — Debug/Release build, CTest,
   smoke, direct domain checks, malformed argument matrix, and cleanup receipt
 
+### 打包成双击就能用的 .app
+
+```sh
+bash scripts/package_macos.sh
+```
+
+从装 Homebrew 开始的每一步见 [Mac上装终端-宝宝教程.md](Mac上装终端-宝宝教程.md)。
+
+脚本用 Homebrew 装库、编 Release，把 Qt、各个库和一个现编的精简版 ffmpeg（只有 H.265
+解码，不依赖 Homebrew）放进 `RM 终端.app`，签名（ad-hoc），检查包里没有库还指向 Homebrew，
+再像双击那样起一次自检、画一次主界面；最后装进「应用程序」，另出
+`build/macos-app/RM-Terminal-macOS-<芯片>.dmg` 给别的 Mac。再运行一次就是升级。
+
+- 打出来的程序连真实裁判系统：第一次双击打开时，包里带的配置（`mqtt_host=192.168.12.1`，
+  不写席位，所以每次先弹选席位页）复制到 `~/Library/Application Support/rm_terminal/rm_terminal.conf`，
+  以后改那个文件。日志 `rm_terminal.log` 和录像也在这个文件夹。原因：从访达、程序坞打开时工作目录是
+  `/`，`./rm_terminal.conf` 找不到、日志写不进去；`cpp/main.cpp` 只在「在 .app 里、工作目录是 /」时换目录，
+  在终端里运行时一切照旧。
+- 终端先找自己旁边的 ffmpeg，再找 PATH：从访达打开时 PATH 里没有 Homebrew。
+- 第一次打开时 macOS 会问能不能访问本地网络，要点允许，否则连不上 192.168.12.1。
+- 只能装在 Apple 芯片、macOS 版本不低于打包那台的 Mac 上（Homebrew 的库就是这么编的）。
+  拷过去的 .app 第一次打开会被拦，在「系统设置 → 隐私与安全性」点「仍要打开」。
+- 模拟器不在包里，还是用 `启动.command`（要先照 README 第七节装好 Python 环境）。
+
 ## Ubuntu
 
 ```sh
