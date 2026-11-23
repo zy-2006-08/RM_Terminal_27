@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QTimer>
 
 #include <cstdio>
 #include <cstdlib>
@@ -160,6 +161,58 @@ void send_reaches_the_controller_and_stops_when_unplugged(const QString& path) {
     check(link.stats().sent == 1, "a failed send is not counted");
 }
 
+void auto_finds_the_port_that_sends_controller_frames(const QTemporaryDir& dir) {
+    FakeCable other;
+    FakeCable arm;
+    check(other.plug(dir.filePath(QStringLiteral("a_other"))), "another serial device plugged");
+    check(arm.plug(dir.filePath(QStringLiteral("b_arm"))), "the arm plugged");
+    QStringList ports{other.link, arm.link};
+
+    rm_terminal::ControllerLink link(QStringLiteral("auto"), 115200);
+    link.setCandidateLister([&ports] { return ports; });
+    int signalled = 0;
+    QObject::connect(&link, &rm_terminal::ControllerLink::frameReceived, [&](const QByteArray&) { ++signalled; });
+
+    // 另一个设备一直在发别的东西(夹着 0xA5 的乱码),机械臂 25Hz 发控制器帧。
+    FakeCable* arm_now = &arm;
+    std::uint8_t seq = 0;
+    QTimer traffic;
+    QObject::connect(&traffic, &QTimer::timeout, [&] {
+        other.send(QByteArray::fromHex("a50102") + QByteArray(" not a controller"));
+        if (arm_now) arm_now->send(joint_frame(0.1f, seq++));
+    });
+    traffic.start(40);
+
+    link.start();
+    check(link.stats().configured && !link.stats().open, "auto starts by looking, not as open");
+    const QByteArray feedback = rm_terminal::encode_referee_frame(
+        rm_terminal::kArmFeedbackCmd, QByteArray(rm_terminal::kCustomControllerDataBytes, '\x22'), 1);
+    check(!link.send(feedback), "nothing is written before a port is known to be the controller");
+
+    check(wait_until([&] { return link.stats().open; }, 3000), "auto picks the port that sends controller frames");
+    check(link.stats().path == arm.link, "the arm's port is the one picked");
+    check(wait_until([&] { return signalled >= 3; }, 1000), "frames flow once the port is found");
+    check(link.stats().bad_frames == 0, "bytes from the other device are not counted as bad frames");
+    check(link.send(feedback), "feedback is written once the controller is found");
+
+    // 换串口板:拔掉这根,剩下的口都不是控制器;再插一根到新路径,不改配置就找到。
+    arm.unplug();
+    arm_now = nullptr;
+    ports = {other.link};
+    check(wait_until([&] { return !link.stats().open; }, 1000), "unplugging the arm closes the link");
+    check(wait_until([&] { return link.stats().error.contains(QStringLiteral("都没收到控制器的数据")); }, 3000),
+          "with only the other device left, the link says no controller answers");
+    FakeCable spare;
+    check(spare.plug(dir.filePath(QStringLiteral("c_spare"))), "a spare adapter plugged");
+    ports = {other.link, spare.link};
+    arm_now = &spare;
+    check(wait_until([&] { return link.stats().open; }, 3000), "the spare adapter is found without a config change");
+    check(link.stats().path == spare.link, "the spare's port is the one picked");
+    traffic.stop();
+    spare.unplug();
+    other.unplug();
+}
+
 int main(int argc, char* argv[]) {
     QCoreApplication app(argc, argv);
     QTemporaryDir dir;
@@ -170,6 +223,7 @@ int main(int argc, char* argv[]) {
     an_unconfigured_link_stays_off();
     frames_flow_unplug_closes_and_replug_recovers(dir.filePath(QStringLiteral("arm")));
     send_reaches_the_controller_and_stops_when_unplugged(dir.filePath(QStringLiteral("arm2")));
+    auto_finds_the_port_that_sends_controller_frames(dir);
     if (failures != 0) {
         std::fprintf(stderr, "controller_link_test: %d check(s) failed\n", failures);
         return 1;

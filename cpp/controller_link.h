@@ -6,10 +6,12 @@
 #include <QByteArray>
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <optional>
 
 class QSocketNotifier;
@@ -25,17 +27,24 @@ class ControllerLink final : public QObject {
     Q_OBJECT
 public:
     // path 为空表示本席位没接控制器:不开口、不重试,状态报「未启用」。
+    // path 为 "auto" 时自己找:轮流打开插着的 USB 串口听一会儿,收到控制器的 0x0302 帧才认定
+    // 是它。认定之前只读不写,不会往别的设备上发东西;拔掉以后重新找,换了串口板也不用改配置。
     ControllerLink(QString path, int baud, QObject* parent = nullptr);
     ~ControllerLink() override;
 
     void start();
 
-    // 往控制器写一帧。串口没开或写不完整就丢掉、返回 false,从不排队:晚到的回传是旧姿态。
+    // "auto" 时到哪里列候选串口。默认 Linux 列 /dev/serial/by-id,macOS 列 /dev/cu.usb*;测试换成假串口。
+    void setCandidateLister(std::function<QStringList()> lister);
+
+    // 往控制器写一帧。串口没开、还没认定是控制器或写不完整就丢掉、返回 false,从不排队:
+    // 晚到的回传是旧姿态。
     bool send(const QByteArray& frame);
 
     struct Stats {
         bool configured = false;
         bool open = false;
+        // 配置的路径;"auto" 认定以后换成找到的那个口。
         QString path;
         // 最近一次打开失败或断开的原因;串口正常打开后清空。
         QString error;
@@ -55,6 +64,13 @@ Q_SIGNALS:
 
 private:
     void tryOpen();
+    int openPort(const QString& path, QString* reason) const;
+    void attach(int fd, const QString& path);
+    void detach();
+    void markOpen();
+    void retryLater(const QString& reason);
+    void probeNext();
+    void probeFailed();
     void onReadable();
     void closePort(const QString& reason);
     void drainFrames();
@@ -72,6 +88,18 @@ private:
     // 坏帧最多每秒记一条累计数:线缆接触不良时每秒可能几十个坏帧。
     std::uint64_t logged_bad_frames_ = 0;
     std::optional<MonotonicMs> bad_logged_at_;
+
+    // "auto":现在开着的口、这一轮要试的口。probing_ = 口开着但还没收到控制器的帧。
+    bool auto_ = false;
+    bool probing_ = false;
+    QString port_;
+    QStringList candidates_;
+    qsizetype next_candidate_ = 0;
+    QTimer probe_;
+    std::function<QStringList()> lister_;
+    // 试别的口时解析出来的坏帧不是控制器的,不算进 Stats::bad_frames。
+    std::uint64_t ignored_bad_ = 0;
+    std::uint64_t probe_bad_at_ = 0;
 };
 
 }  // namespace rm_terminal
