@@ -84,9 +84,13 @@ display_fullscreen=false
 video_wall_port=3340
 
 # Custom controller (small arm) serial port. Leave unset on seats without one;
-# the 控制器 light then shows 未启用. Prefer /dev/serial/by-id/... over
-# /dev/ttyUSB0: the number can change when the cable is replugged. On Linux the
+# the 控制器 light then shows 未启用. "auto" opens each USB serial port for a
+# moment and keeps the one that sends controller frames (0x0302), so swapping the
+# USB-serial adapter needs no config change; nothing is written to a port before
+# it is identified. A fixed path also works: prefer /dev/serial/by-id/... over
+# /dev/ttyUSB0, the number can change when the cable is replugged. On Linux the
 # user must be in the dialout group. run.sh points this at the simulator's fake arm.
+#controller_serial=auto
 #controller_serial=/dev/serial/by-id/usb-FTDI_FT232R_USB_UART-if00-port0
 
 # Controller baud rate: 9600, 19200, 38400, 57600, 115200, 230400, 460800 or 921600.

@@ -65,7 +65,7 @@ required to change them. Copy `rm_terminal.conf.sample` and edit it.
 | `event_history_capacity` | `50` | Bounded event ring size; oldest records drop first |
 | `blind_stale_fallback_ms` | `15000` | Stale-blind fallback delay; **`0` disables it** |
 | `map_enabled` | `true` | Draw the tactical map pane: `true` or `false` |
-| `controller_serial` | (unset) | Custom controller serial port; unset means this seat has none |
+| `controller_serial` | (unset) | Custom controller serial port, or `auto` to use whichever USB serial port sends controller frames; unset means this seat has none |
 | `controller_baud` | `115200` | Controller baud rate; one of 9600 … 921600. The firmware uses 115200 |
 | `mqtt_keepalive_s` | `5` | MQTT keepalive; a pulled cable is detected after about two of these |
 | `alerts_disabled` | (none) | Comma list of event alerts to switch off: `outpost`, `control`, `fortress`, `dart`, `energy`, `low_hp`, `base` |
