@@ -496,7 +496,7 @@ cp rm_terminal.conf.sample rm_terminal.conf
 | `docs/guides/` | 使用指南、Mac 和 26 引擎宝宝教程、答辩问答 |
 | `docs/design/` | 界面设计约定、场地坐标、大局判断表、雷达情报格式、「下一步」板块说明 |
 | `docs/notes/` | 研发记录、下一步先后表 |
-| `artifacts/` | 构建和验收证据 |
+| `artifacts/` | 验收截图和运行记录，只在本机，不进 git |
 | `BUILD.md` | 详细构建、配置、调试文档 |
 
 更细的技术细节看 `BUILD.md`。

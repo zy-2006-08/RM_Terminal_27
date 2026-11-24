@@ -34,3 +34,7 @@ venv/
 .venv/
 # CAD 参考模型，624MB，超过 GitHub 单文件 100MB 限制；本机放在 docs/rules/
 *.stp
+
+# 验收截图、效果截图和每次任务的运行记录，只留在本机。scripts/shoot_*.sh 和
+# role_panes_test、assembly_flow_test 往这里写，文件夹不存在时会自己建。
+artifacts/

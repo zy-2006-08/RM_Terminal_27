@@ -546,7 +546,8 @@ the commander also sees the sentry's planned path (`RobotPathPlanInfo`).
 `RM_TERMINAL_CAPTURE_SIZE=1920x1080` sets the offscreen capture size (default
 1440x900). `bash scripts/shoot_roles.sh` renders the three roles at 1440x900 and
 1920x1080 against the simulator into `artifacts/roles/` (PNG + layout JSON with
-`role`). `.venv/bin/python scripts/accept_roles.py` runs one match per role against
+`role`; `artifacts/` stays local and is not tracked in git).
+`.venv/bin/python scripts/accept_roles.py` runs one match per role against
 the simulator and checks, from the terminal log, the seat check, received marks,
 dart gate and launch, sentry results and assembly results (about 2 minutes). The
 offscreen terminal cannot be clicked, so the script publishes the commands the
@@ -599,7 +600,8 @@ build/macos/rm_terminal --safe-smoke
 build/macos/rm_terminal --config rm_terminal.conf
 ```
 
-Debug and Release verification artifacts:
+Debug and Release verification artifacts (kept locally under `artifacts/task-2/`,
+not tracked in git):
 
 - `artifacts/task-2/revision-baseline.log` — pre-change baseline
 - `artifacts/task-2/failing-first.log` — test failed before `store.h` existed
