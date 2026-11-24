@@ -38,3 +38,6 @@ venv/
 # 验收截图、效果截图和每次任务的运行记录，只留在本机。scripts/shoot_*.sh 和
 # role_panes_test、assembly_flow_test 往这里写，文件夹不存在时会自己建。
 artifacts/
+
+# AI 编程工具的计划和运行记录
+.omo/

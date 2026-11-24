@@ -713,4 +713,5 @@ A recording cut off mid-record (crash, `kill -9`, power loss) still replays: the
 player stops at the last complete record and the status bar says
 `录像结尾不完整`.
 The Debug build is not yet verified on Ubuntu. The timing numbers, screenshots,
-and receipts in `artifacts/` and `.omo/evidence/` were produced on macOS.
+and receipts in `artifacts/` and `.omo/evidence/` were produced on macOS. Both
+folders stay local and are not tracked in git.
