@@ -139,7 +139,7 @@ private:
 
 QString echo_status_text(const EchoResult& echo);
 
-// 三个面板共用的按钮外观。颜色字号全部取自 cpp/theme.h —— 这是面板里唯一的
+// 三个面板共用的按钮外观。颜色字号全部取自 cpp/ui/theme.h —— 这是面板里唯一的
 // 按钮样式来源,写第二份就会和现有卡片的配色漂移。
 QString command_button_style();
 // 按住确认按钮:progress 为 0..1,用渐变把已按住的比例填出来。

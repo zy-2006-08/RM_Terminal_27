@@ -1,7 +1,7 @@
 pragma Singleton
 import QtQuick
 
-// QML 侧的唯一配色/字号来源,数值与 cpp/theme.h 逐一对应。「深空玻璃」:面板、行、按钮都是
+// QML 侧的唯一配色/字号来源,数值与 cpp/ui/theme.h 逐一对应。「深空玻璃」:面板、行、按钮都是
 // 半透明的,底下透出窗口背景的光晕。任何在两个面板里出现过的视觉常量都放这里,不要就地内联。
 QtObject {
     readonly property color void_: "#070B14"

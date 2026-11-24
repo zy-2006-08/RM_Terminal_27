@@ -178,7 +178,7 @@ _BLIND_AUTO = os.environ.get("RM_BLIND_AUTO", "0") == "1"
 
 # 阵容编号对齐 RMUC 2027 规则手册表 3-1 和通信协议附录二：1 重装 / 3,4 步兵 / 6 空中 /
 # 7 哨兵，蓝方 +100。终端席位只有 1/3/4/6（哨兵没有操作手）；场上有血量的是 1/3/4/7。
-# 编号→兵种的对应见 cpp/presentation.cpp robot_class_name()，两处必须一致。
+# 编号→兵种的对应见 cpp/ui/presentation.cpp robot_class_name()，两处必须一致。
 _FACTION_RED = 1
 _FACTION_BLUE = 2
 _RED_LINEUP: tuple[int, ...] = (1, 3, 4, 6)
@@ -310,7 +310,7 @@ _STAGE_SETTLEMENT = 5
 
 _FIELD_LENGTH_M = 28.0
 _FIELD_WIDTH_M = 15.0
-# intrude 过中线的 y(我方是红方时;蓝方按场地中心转 180°)。终端的分法见 cpp/field_zones.cpp:
+# intrude 过中线的 y(我方是红方时;蓝方按场地中心转 180°)。终端的分法见 cpp/map/field_zones.cpp:
 # 中线上 1.94–13.07 米是中央高地,两头是隧道;起伏路段要靠雷达情报的跨越点(bit 3)才认得出。
 _INTRUDE_Y = {"highland": 10.5, "tunnel": 1.0, "road": 3.0}
 _CROSSING_BIT = {"highland": 1 << 1, "road": 1 << 3, "tunnel": 1 << 13}
@@ -323,7 +323,7 @@ def _on_fortress(pose: tuple[float, float], side: int) -> bool:
         x, y = _FIELD_LENGTH_M - x, _FIELD_WIDTH_M - y
     return 5.29 <= x <= 7.86 and 6.31 <= y <= 8.69
 
-# 必须与 cpp/presentation.cpp robot_class_name() 逐字一致，否则事件文本与花名册对同一台车的称呼会不同。
+# 必须与 cpp/ui/presentation.cpp robot_class_name() 逐字一致，否则事件文本与花名册对同一台车的称呼会不同。
 _ROBOT_CLASS_NAMES = {1: "重装", 3: "步兵", 4: "步兵", 6: "空中", 7: "哨兵"}
 
 

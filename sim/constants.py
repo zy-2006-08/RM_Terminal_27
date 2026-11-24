@@ -9,7 +9,7 @@
 原先位于 core/constants.py。core/ 承载的是已移除的 Python/PySide6 终端；
 原生 C++ 终端从 rm_terminal.conf 读取自己的配置，因此这里只保留模拟器
 （sim/match_server.py、sim/video_sender.py、sim/video_protocol.py）实际
-引用的常量。终端侧的显示词表由 cpp/presentation.cpp 承担，不在此重复。
+引用的常量。终端侧的显示词表由 cpp/ui/presentation.cpp 承担，不在此重复。
 """
 
 import os

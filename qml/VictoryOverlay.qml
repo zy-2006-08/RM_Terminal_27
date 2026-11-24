@@ -23,7 +23,7 @@ Item {
     property string reason: ""
     // "red" / "blue" / "draw" / ""
     property string outcome: ""
-    // 结算面板的数据,见 cpp/game_result.cpp 的 settlement_variant()。
+    // 结算面板的数据,见 cpp/game/game_result.cpp 的 settlement_variant()。
     property var model: ({})
     property bool shown: false
 

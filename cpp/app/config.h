@@ -8,7 +8,7 @@ namespace rm_terminal {
 
 // Process exit-code contract, stable across tasks 1-6:
 //   0 success
-//   2 malformed command-line arguments (asserted by cpp/assert_bad_args.cmake)
+//   2 malformed command-line arguments (asserted by cpp/tests/assert_bad_args.cmake)
 //   3 transport start failure (MQTT intake)
 //   4 configuration or log-destination failure
 //   5 evidence capture failure (--screenshot could not write the PNG, or

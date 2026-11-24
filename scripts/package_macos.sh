@@ -58,7 +58,7 @@ if [ ! -x "$FF_DIR/ffmpeg" ]; then
   fi
   rm -rf "$FF_DIR"
   tar -xf "$TARBALL" -C "$OUT"
-  # 只编 cpp/video_receiver.cpp 调 ffmpeg 用到的部分：管道进、H.265 解码、缩放、BGR24 裸帧出。
+  # 只编 cpp/video/video_receiver.cpp 调 ffmpeg 用到的部分：管道进、H.265 解码、缩放、BGR24 裸帧出。
   # --disable-autodetect：不去链本机找到的任何库，编出来的 ffmpeg 拷到别的 Mac 上也能跑。
   FF_FLAGS=(--disable-everything --disable-autodetect --disable-network --disable-doc --disable-debug
     --disable-programs --enable-ffmpeg --enable-protocol=pipe --enable-demuxer=hevc --enable-parser=hevc
@@ -77,7 +77,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$OUT/rm_terminal" "$APP/Contents/MacOS/rm_terminal"
 cp "$FF_DIR/ffmpeg" "$APP/Contents/MacOS/ffmpeg"
-# 第一次双击打开时，终端把这份配置复制到 ~/Library/Application Support/rm_terminal/（cpp/main.cpp）。
+# 第一次双击打开时，终端把这份配置复制到 ~/Library/Application Support/rm_terminal/（cpp/app/main.cpp）。
 cat >"$APP/Contents/Resources/rm_terminal.conf" <<'EOF'
 # RM 终端（Mac）的配置。第一次双击打开时从程序包里复制过来，之后改这个文件，不用重新打包。
 # 每一项的意思见项目里的 rm_terminal.conf.sample 和 BUILD.md 的 Configuration 一节。

@@ -74,7 +74,7 @@ message GlobalSpecialMechanism {
   repeated int32  mechanism_time_sec = 2;
 }
 
-// 2.2.7 服务器 -> 终端，触发式。param 的含义随 event_id 变化，见 cpp/match_event.cpp。
+// 2.2.7 服务器 -> 终端，触发式。param 的含义随 event_id 变化，见 cpp/game/match_event.cpp。
 message Event {
   optional int32  event_id = 1;
   optional string param    = 2;
@@ -217,7 +217,7 @@ message MapClickCmd {
 // 2.2.19 服务器 -> 终端，触发式。每次都按对方 1,3,4,7、己方 1,3,4,7 的顺序发 8 份，坐标单位 cm。
 // 原文写成 `repeated uint32 RadarSingleRobotInfo;`（没有字段号），表格写字段 1 为 repeated uint32，
 // 又单独定义了 RadarSingleRobotInfo。这里按「字段 1 是 repeated RadarSingleRobotInfo」理解；
-// 终端解码时两种编码都认（另一种是字段 1 按 x,y,标识 三个一组的扁平 uint32），见 cpp/decoder.cpp。
+// 终端解码时两种编码都认（另一种是字段 1 按 x,y,标识 三个一组的扁平 uint32），见 cpp/data/decoder.cpp。
 message RadarInfoToClient {
   repeated RadarSingleRobotInfo robots = 1;
 }

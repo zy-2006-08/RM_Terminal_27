@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end mode regression: proves the WIRED system honours the hysteresis rules
-# that cpp/ui_mode_test.cpp proves at the unit level. A unit-green machine fed the
+# that cpp/tests/ui_mode_test.cpp proves at the unit level. A unit-green machine fed the
 # wrong clock or the wrong freshness still flaps, and only a real run catches that.
 #
 # Timeline it relies on (sim/match_server.py, RM_BLIND_AUTO=1):

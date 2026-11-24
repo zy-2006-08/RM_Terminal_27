@@ -11,7 +11,7 @@ import "victory_easing.js" as Anim
 Item {
     id: root
 
-    // cpp/game_result.cpp 的 settlement_variant()。
+    // cpp/game/game_result.cpp 的 settlement_variant()。
     property var model: ({})
     property string outcome: ""
     property color tint: Theme.red

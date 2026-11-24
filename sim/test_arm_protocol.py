@@ -1,6 +1,6 @@
 """sim/arm_protocol.py 的断言测试：`python -m sim.test_arm_protocol` 直接跑。
 
-样帧与 cpp/referee_frame_test.cpp 用的是同一串字节：两边任何一边的 CRC 表或字段顺序
+样帧与 cpp/tests/referee_frame_test.cpp 用的是同一串字节：两边任何一边的 CRC 表或字段顺序
 改错，这里或那边就会对不上。
 """
 

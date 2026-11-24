@@ -1,6 +1,6 @@
 """自定义控制器（小机械臂）的串口帧。
 
-与控制器固件 RM_Lib.hpp 的 Data_Concatenation、终端 cpp/referee_frame.cpp 逐字节一致：
+与控制器固件 RM_Lib.hpp 的 Data_Concatenation、终端 cpp/data/referee_frame.cpp 逐字节一致：
 
     0xA5 | u16 data_length | u8 seq | u8 CRC8 | u16 cmd_id | data | u16 CRC16
 
