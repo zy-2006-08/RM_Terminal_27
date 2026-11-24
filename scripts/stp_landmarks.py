@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """从官方场地模型 RMUC2027_V1.0.0.stp 读出每个有名字的零件在场地上的范围，换成协议坐标（米）。
 
-    python3 scripts/stp_landmarks.py RMUC2027_V1.0.0.stp > build/stp_landmarks.json
+    python3 scripts/stp_landmarks.py docs/rules/RMUC2027_V1.0.0.stp > build/stp_landmarks.json
 
 模型是 Creo 导出的装配，零件名写在 NEXT_ASSEMBLY_USAGE_OCCURRENCE 的说明字段里（「红堡垒」「中央高地_侧边隧道挡边」……）。
 脚本自己解析 STEP 文本：沿装配树把每一层的 ITEM_DEFINED_TRANSFORMATION 乘起来，零件的范围取它所有顶点
