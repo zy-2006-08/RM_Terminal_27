@@ -1,0 +1,77 @@
+#!/bin/bash
+# 桌面图标的启动器。scripts/install_ubuntu.sh 把 ~/.local/bin/rm-terminal-launch 做成指向
+# 本文件的快捷方式，所以 git pull 拿到新版就生效。几个按钮跑的都是同一个
+# build/ubuntu/rm_terminal，区别只在启动方式：
+#   rm-terminal-launch start   弹窗选自机，然后启动模拟器 + 终端 + 控制面板
+#   rm-terminal-launch real    弹窗选自机，然后直接连真实裁判系统（选手端电脑），不起模拟器
+#   rm-terminal-launch replay  弹窗选录像，然后回放
+# 仓库位置从本文件的真实路径推出来（本文件在仓库的 scripts/ubuntu/ 里），仓库放在哪都行。
+REPO="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)"
+# 真机用的配置，每台电脑一份，不进仓库。install_ubuntu.sh 第一次从 scripts/ubuntu/ 里的模板复制过来。
+# 服务器地址、端口、串口都在这个文件里改，改完不用重新编译。
+REAL_CONF="$HOME/rm_terminal.26engine.conf"
+cd "$REPO" || { zenity --error --text="找不到项目文件夹：$REPO"; exit 1; }
+
+pause_on_error() {
+  local code=$1
+  if [ "$code" -ne 0 ]; then
+    echo
+    echo "出错了（退出码 $code），上面是错误信息。"
+    read -n 1 -s -r -p "按任意键关闭窗口"
+  fi
+  exit "$code"
+}
+
+# 弹窗选席位，把选中的编号打到标准输出；点取消时返回非 0。
+pick_seat() {
+  zenity --list --title="$1" --text="$2" \
+    --column=编号 --column=机器人 --hide-column=1 --print-column=1 \
+    --width=360 --height=480 \
+    1 "红方 1 号 重装" 3 "红方 3 号 步兵" 4 "红方 4 号 步兵" \
+    6 "红方 6 号 指挥手" \
+    101 "蓝方 1 号 重装" 103 "蓝方 3 号 步兵" 104 "蓝方 4 号 步兵" \
+    106 "蓝方 6 号 指挥手"
+}
+
+case "$1" in
+  start)
+    # run.sh 启动前会关掉所有正在跑的终端，连真机时点错这个按钮，真机那个就被关了，所以先问一句。
+    if pgrep -x rm_terminal >/dev/null; then
+      zenity --question --title="RM 模拟器" \
+        --text="已经有一个终端在运行（可能是连真机的那个）。\n继续会把它关掉。" \
+        --ok-label="关掉它，启动模拟器" --cancel-label="不启动" || exit 0
+    fi
+    id=$(pick_seat "RM 模拟器" "本场比赛你操作哪台车？") || exit 0
+    [ -n "$id" ] || exit 0
+    RM_SELF_ID="$id" bash ./启动.command
+    pause_on_error $?
+    ;;
+  real)
+    [ -f "$REAL_CONF" ] || { zenity --error --text="找不到真机配置：$REAL_CONF\n运行一次 bash scripts/install_ubuntu.sh 会放好一份。"; exit 1; }
+    [ -x build/ubuntu/rm_terminal ] || { zenity --error --text="终端还没编译：$REPO/build/ubuntu/rm_terminal\n运行一次 bash scripts/install_ubuntu.sh 会编译好。"; exit 1; }
+    # 同一个席位号只能连一个终端，后连的会把先连的踢掉；模拟图传也往本机 3334 发，会混进真画面。
+    if pgrep -x rm_terminal >/dev/null || pgrep -f 'match_server|video_sender' >/dev/null; then
+      zenity --error --title="RM 真机" \
+        --text="已经有终端或模拟器在运行。\n先关掉它们的窗口，再点 RM 真机。"
+      exit 1
+    fi
+    id=$(pick_seat "RM 真机" "选和官方选手端登录的同一台车（选手端登录 R3 就选红方 3 号）") || exit 0
+    [ -n "$id" ] || exit 0
+    # 席位用 --seat 传，优先于配置里的 self_robot_id，所以配置不用改。
+    # xcb：键鼠控制要 X11，Wayland 下鼠标会卡在屏幕边。
+    # GSETTINGS_BACKEND=memory：开着系统代理时图传端口绑不上（26 引擎教程附录 B）。
+    GSETTINGS_BACKEND=memory QT_QPA_PLATFORM=xcb build/ubuntu/rm_terminal --config "$REAL_CONF" --seat "$id"
+    pause_on_error $?
+    ;;
+  replay)
+    dir="${XDG_DATA_HOME:-$HOME/.local/share}/rm_terminal/recordings"
+    rec=$(zenity --file-selection --title="选择要回放的录像" \
+      --filename="$dir/" --file-filter="录像 | *.rmrec") || exit 0
+    bash ./回放录像.command "$rec"
+    pause_on_error $?
+    ;;
+  *)
+    echo "用法：rm-terminal-launch start|real|replay"
+    exit 2
+    ;;
+esac
