@@ -7,7 +7,7 @@
 #
 # QDateTime::currentDateTimeUtc() in logging.cpp is deliberately NOT matched:
 # that produces an ISO8601 log timestamp for humans, not a MonotonicMs.
-file(GLOB sources "${SOURCE_DIR}/cpp/*.cpp" "${SOURCE_DIR}/cpp/*.h")
+file(GLOB_RECURSE sources "${SOURCE_DIR}/cpp/*.cpp" "${SOURCE_DIR}/cpp/*.h")
 set(offenders "")
 foreach(source IN LISTS sources)
     file(STRINGS "${source}" hits REGEX "current(M)?SecsSinceEpoch")
@@ -29,6 +29,6 @@ if(offenders)
     string(REPLACE ";" "\n  " rendered "${offenders}")
     message(FATAL_ERROR
         "wall-clock time is being used as a MonotonicMs source:\n  ${rendered}\n"
-        "Use rm_terminal::monotonic_now() from cpp/clock.h instead.")
+        "Use rm_terminal::monotonic_now() from cpp/app/clock.h instead.")
 endif()
 message(STATUS "monotonic clock guard: no wall-clock MonotonicMs sources")
