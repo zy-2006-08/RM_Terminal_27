@@ -64,7 +64,7 @@
 
 边界同样要讲：这是可从源码解释的实现，不是经过真实比赛认证的系统。协议中定义一个字段、配置中出现一个参数，或者资源目录有一个文件，都不等于这项功能已经端到端接通。
 
-**本章源码：**[构建依赖](CMakeLists.txt)、[程序入口](cpp/main.cpp)、[MQTT 接口](cpp/mqtt_intake.h)、[比赛模拟器](sim/match_server.py)、[模拟控制工具](sim/match_control.py)、[启动脚本](run.sh)。
+**本章源码：**[构建依赖](../../CMakeLists.txt)、[程序入口](../../cpp/main.cpp)、[MQTT 接口](../../cpp/mqtt_intake.h)、[比赛模拟器](../../sim/match_server.py)、[模拟控制工具](../../sim/match_control.py)、[启动脚本](../../run.sh)。
 
 ## 第二章：不会 MQTT 和 Protobuf，也能讲懂
 
@@ -116,7 +116,7 @@
 
 两边都用 Protobuf，却把同一字段理解成不同单位，一样会出错。这里能说明仓库自己的消息定义和数据通路，不能据此宣称官方协议完全兼容。正式接入还需要官方接口对照和联调证据。
 
-**本章源码与资料：**[消息定义](proto/rm_terminal.proto)、[消息接收接口](cpp/mqtt_intake.h)、[解码实现](cpp/decoder.cpp)、[中间数据](cpp/inbound.h)、[MQTT 标准参考](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html)、[Protobuf 字段存在性](https://protobuf.dev/programming-guides/field_presence/)。MQTT 5.0 链接用于解释概念，不代表已核实当前连接使用该版本。
+**本章源码与资料：**[消息定义](../../proto/rm_terminal.proto)、[消息接收接口](../../cpp/mqtt_intake.h)、[解码实现](../../cpp/decoder.cpp)、[中间数据](../../cpp/inbound.h)、[MQTT 标准参考](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html)、[Protobuf 字段存在性](https://protobuf.dev/programming-guides/field_presence/)。MQTT 5.0 链接用于解释概念，不代表已核实当前连接使用该版本。
 
 ## 第三章：数据实际怎么从网络走到屏幕
 
@@ -168,7 +168,7 @@
 
 可以选一个已知非零值，再补测明确的零值和缺失值，避免只验证“有数字就算成功”。像调英雄电控，先看接收报文，再看解析变量，最后看控制或显示结果，不能一上来就怪屏幕。这里描述的是排查方法，本次没有执行这些实验。
 
-**本章源码：**[入口与定时更新](cpp/main.cpp)、[接收接口](cpp/mqtt_intake.h)、[解码](cpp/decoder.cpp)、[转换](cpp/conversion.cpp)、[Store](cpp/store.cpp)、[领域数据](cpp/domain.h)、[Dashboard](cpp/dashboard.cpp)。
+**本章源码：**[入口与定时更新](../../cpp/main.cpp)、[接收接口](../../cpp/mqtt_intake.h)、[解码](../../cpp/decoder.cpp)、[转换](../../cpp/conversion.cpp)、[Store](../../cpp/store.cpp)、[领域数据](../../cpp/domain.h)、[Dashboard](../../cpp/dashboard.cpp)。
 
 ## 第四章：Qt、QML 和界面桥接
 
@@ -220,7 +220,7 @@ QPainter 是 Qt 的二维画笔工具。它适合直接处理坐标变换，但�
 
 现在的分层让接收端负责输入，界面按快照更新。像英雄电控里，不应该在处理一条反馈报文时顺便完成所有慢速屏幕绘制。不过分层只是良好起点，仍需要正确的线程同步和异常处理。
 
-**本章源码与资料：**[主界面](cpp/dashboard.cpp)、[地图绘制](cpp/map_pane.cpp)、[顶栏桥接](cpp/top_bar.cpp)、[列表桥接](cpp/roster_panel.cpp)、[顶栏 QML](qml/TopBar.qml)、[列表 QML](qml/RosterPanel.qml)、[覆盖层 QML](qml/PopupOverlay.qml)、[Qt QML 官方介绍](https://doc.qt.io/qt-6/qtqml-index.html)。
+**本章源码与资料：**[主界面](../../cpp/dashboard.cpp)、[地图绘制](../../cpp/map_pane.cpp)、[顶栏桥接](../../cpp/top_bar.cpp)、[列表桥接](../../cpp/roster_panel.cpp)、[顶栏 QML](../../qml/TopBar.qml)、[列表 QML](../../qml/RosterPanel.qml)、[覆盖层 QML](../../qml/PopupOverlay.qml)、[Qt QML 官方介绍](https://doc.qt.io/qt-6/qtqml-index.html)。
 
 ## 第五章：模式切换与时间规则
 
@@ -272,7 +272,7 @@ QPainter 是 Qt 的二维画笔工具。它适合直接处理坐标变换，但�
 
 尤其要查临界点前后，比如 2999 ms 与 3000 ms。仓库有 `ui_mode_test.cpp`，可以作为检查入口；本文只静态查看相关实现与测试材料，没有运行测试，不能说本次验证全通过。
 
-**本章源码：**[模式规则](cpp/ui_mode.cpp)、[模式接口](cpp/ui_mode.h)、[模式测试](cpp/ui_mode_test.cpp)、[时间工具](cpp/clock.cpp)、[主更新周期](cpp/main.cpp)、[字段新鲜度](cpp/domain.h)。
+**本章源码：**[模式规则](../../cpp/ui_mode.cpp)、[模式接口](../../cpp/ui_mode.h)、[模式测试](../../cpp/ui_mode_test.cpp)、[时间工具](../../cpp/clock.cpp)、[主更新周期](../../cpp/main.cpp)、[字段新鲜度](../../cpp/domain.h)。
 
 ## 第六章：视频从 UDP 到画面
 
@@ -324,7 +324,7 @@ FEC 是前向纠错，意思是多发一些冗余信息，让接收方在一定�
 
 socket 是程序收发网络数据的接口。当前 `ReconnectUdp` 没有重新绑定该接口，所以不能把它描述成完整的套接字重建机制。想测延迟，必须追踪同一画面从产生到显示的时间；画面每秒更新很多次，也可能一直落后半秒。本文没有测量端到端延迟。
 
-**本章源码与资料：**[接收与解码](cpp/video_receiver.cpp)、[接收参数](cpp/video_receiver.h)、[视频重组](cpp/video.cpp)、[恢复规则](cpp/video_recovery.cpp)、[恢复测试](cpp/video_recovery_test.cpp)、[发送器](sim/video_sender.py)、[分片协议](sim/video_protocol.py)、[FFmpeg 官方资料](https://ffmpeg.org/documentation.html)。
+**本章源码与资料：**[接收与解码](../../cpp/video_receiver.cpp)、[接收参数](../../cpp/video_receiver.h)、[视频重组](../../cpp/video.cpp)、[恢复规则](../../cpp/video_recovery.cpp)、[恢复测试](../../cpp/video_recovery_test.cpp)、[发送器](../../sim/video_sender.py)、[分片协议](../../sim/video_protocol.py)、[FFmpeg 官方资料](https://ffmpeg.org/documentation.html)。
 
 ## 第七章：地图、事件、结果和数据分析
 
@@ -376,7 +376,7 @@ socket 是程序收发网络数据的接口。当前 `ReconnectUdp` 没有重新
 
 这是规则明确的统计运算，不是训练出来的预测模型。例如“我方经济减敌方经济”能解释当前差距，却不能直接给出胜率或最佳战术。不要为了显得高级，把加减计算包装成人工智能决策。
 
-**本章源码：**[地图](cpp/map_pane.cpp)、[地图测试](cpp/field_map_test.cpp)、[事件界面](cpp/event_feed_pane.cpp)、[Store](cpp/store.cpp)、[入口参数传递](cpp/main.cpp)、[比赛结果](cpp/game_result.cpp)、[结果测试](cpp/game_result_test.cpp)、[结果覆盖层](qml/VictoryOverlay.qml)、[统计分析](cpp/battle_analysis.cpp)。
+**本章源码：**[地图](../../cpp/map_pane.cpp)、[地图测试](../../cpp/field_map_test.cpp)、[事件界面](../../cpp/event_feed_pane.cpp)、[Store](../../cpp/store.cpp)、[入口参数传递](../../cpp/main.cpp)、[比赛结果](../../cpp/game_result.cpp)、[结果测试](../../cpp/game_result_test.cpp)、[结果覆盖层](../../qml/VictoryOverlay.qml)、[统计分析](../../cpp/battle_analysis.cpp)。
 
 ## 第八章：本地战术提醒怎样避免乱播
 
@@ -428,7 +428,7 @@ JSON 是一种人也能阅读的结构化文本格式。QStandardPaths 避免把
 
 恢复可信数据并不等于自动补播。要观察到可信的非 4 阶段到 4 阶段转换，才按新一场重新启用；这里 4 对应比赛进行阶段。它优先避免错误提示，但也会损失提醒覆盖率。不要把断线后的沉默解释成“提醒一定坏了”。
 
-**本章源码：**[提醒控制器](cpp/tactical_reminder_controller.h)、[提醒设置界面](cpp/tactical_reminder_dialog.cpp)、[调度规则](cpp/reminder_scheduler.h)、[调度测试](cpp/reminder_scheduler_test.cpp)、[持久化](cpp/reminder_repository.cpp)、[播放时序](cpp/reminder_playback.cpp)、[macOS 声音后端](cpp/macos_speech_backend.cpp)、[播放测试](cpp/reminder_playback_test.cpp)。
+**本章源码：**[提醒控制器](../../cpp/tactical_reminder_controller.h)、[提醒设置界面](../../cpp/tactical_reminder_dialog.cpp)、[调度规则](../../cpp/reminder_scheduler.h)、[调度测试](../../cpp/reminder_scheduler_test.cpp)、[持久化](../../cpp/reminder_repository.cpp)、[播放时序](../../cpp/reminder_playback.cpp)、[macOS 声音后端](../../cpp/macos_speech_backend.cpp)、[播放测试](../../cpp/reminder_playback_test.cpp)。
 
 ## 第九章：构建、测试、排查和已知缺口
 
@@ -493,7 +493,7 @@ CMake 负责配置构建规则，编译器编译 C++，链接阶段把依赖组�
 
 没有老化意味着不能笼统宣称“所有字段都有统一的过期保护”。这些是静态发现的潜在缺口，不是已完成的运行故障定性。再加上线程同步、软解码、macOS 音频依赖和本机地址限制，结论应该是“有完整骨架和多项实现，但还有待验证与补齐的边界”。
 
-**本章源码：**[构建说明](BUILD.md)、[构建定义](CMakeLists.txt)、[启动脚本](run.sh)、[CI 配置](.github/workflows/build.yml)、[Store 实现](cpp/store.cpp)、[Store 接口](cpp/store.h)、[解码缺口检查](cpp/decoder.cpp)、[协议字段](proto/rm_terminal.proto)、[参数接线](cpp/main.cpp)、[领域测试](cpp/domain_test.cpp)。
+**本章源码：**[构建说明](../../BUILD.md)、[构建定义](../../CMakeLists.txt)、[启动脚本](../../run.sh)、[CI 配置](../../.github/workflows/build.yml)、[Store 实现](../../cpp/store.cpp)、[Store 接口](../../cpp/store.h)、[解码缺口检查](../../cpp/decoder.cpp)、[协议字段](../../proto/rm_terminal.proto)、[参数接线](../../cpp/main.cpp)、[领域测试](../../cpp/domain_test.cpp)。
 
 ## 第十章：可以直接练习的答辩话术
 
@@ -547,7 +547,7 @@ CMake 负责配置构建规则，编译器编译 C++，链接阶段把依赖组�
 
 如果无法当场恢复，可以用明确标注为历史材料的截图辅助解释结构，但不能当作本次运行结果。结尾可以说：“项目价值在于把接收、状态可信性和显示组织成可解释的系统。已有实现我能对应到源码，尚未验证的部分我会保留边界，不夸大成实战完成品。”
 
-**本章依据：**[程序装配](cpp/main.cpp)、[模式规则](cpp/ui_mode.cpp)、[视频实现](cpp/video_receiver.cpp)、[状态保存](cpp/store.cpp)、[解码](cpp/decoder.cpp)、[提醒规则](cpp/reminder_scheduler.h)、[启动边界](run.sh)。本章是表达模板，不是个人贡献证明或运行记录。
+**本章依据：**[程序装配](../../cpp/main.cpp)、[模式规则](../../cpp/ui_mode.cpp)、[视频实现](../../cpp/video_receiver.cpp)、[状态保存](../../cpp/store.cpp)、[解码](../../cpp/decoder.cpp)、[提醒规则](../../cpp/reminder_scheduler.h)、[启动边界](../../run.sh)。本章是表达模板，不是个人贡献证明或运行记录。
 
 ## 第十一章：零基础补课与考官继续追问
 
@@ -557,7 +557,7 @@ CMake 负责配置构建规则，编译器编译 C++，链接阶段把依赖组�
 
 `.h` 通常说明“我提供哪些类型和函数”，`.cpp` 通常实现“这些函数怎么做”。就像电控里的头文件和源文件。编译错误像“这句话本身写错了”；链接错误像“说明书说有这个函数，却找不到它的实现”。C++17 是语言标准版本，不是程序只能在 2017 年的电脑上跑。CMake 像编译工程的总装清单，不是编译器本身。
 
-**追问：**为什么有 `build/`？它保存构建产物与缓存，不是另一个数据源。改了源码，旧二进制不会自动变新，需要重建。依据：[CMakeLists.txt](CMakeLists.txt)、[BUILD.md](BUILD.md)。
+**追问：**为什么有 `build/`？它保存构建产物与缓存，不是另一个数据源。改了源码，旧二进制不会自动变新，需要重建。依据：[CMakeLists.txt](../../CMakeLists.txt)、[BUILD.md](../../BUILD.md)。
 
 ### 82. Python 虚拟环境和 generated 目录有什么用？
 
@@ -565,13 +565,13 @@ CMake 负责配置构建规则，编译器编译 C++，链接阶段把依赖组�
 
 `.venv/bin/python` 是这个工具箱里的解释器，安装依赖时也要给它安装，而不是随便给另一份 Python 安装。`.proto` 类似通信约定，`protoc` 按约定生成代码。修改协议后，要重新生成并检查两端兼容，不建议直接手改生成文件。本项目 C++ 的生成由 CMake 安排，不能推断 Python 生成文件也会自动更新。
 
-**追问：**装最新版一定行吗？不一定。当前 Python 生成文件标注生成器 7.35.1，并检查运行库版本；模拟器还使用 paho-mqtt 的 VERSION2 回调接口，需要兼容依赖。依据：[生成代码](generated/rm_terminal_pb2.py)、[模拟器](sim/match_server.py)。
+**追问：**装最新版一定行吗？不一定。当前 Python 生成文件标注生成器 7.35.1，并检查运行库版本；模拟器还使用 paho-mqtt 的 VERSION2 回调接口，需要兼容依赖。依据：[生成代码](../../generated/rm_terminal_pb2.py)、[模拟器](../../sim/match_server.py)。
 
 ### 83. 进程、线程、回调、事件循环分别是什么？
 
 **可以这样答：**进程像一家正在营业的店，线程像店里的工作人员，回调像事先约好“事情发生后找谁处理”，事件循环像不断取待办事项的值班员。
 
-Qt 事件循环处理定时器、窗口操作等事件，所以主线程如果一直做耗时工作，窗口可能卡住。回调不是硬件中断，也不天然运行在新线程。当前 MQTT 的网络循环与 GUI 不在同一条工作路线；共享 Store 的访问需要同步。这是概念类比，不表示线程和工作人员在调度上完全相同。依据：[MQTT 实现](cpp/mqtt_intake.cpp)、[主循环](cpp/main.cpp)。
+Qt 事件循环处理定时器、窗口操作等事件，所以主线程如果一直做耗时工作，窗口可能卡住。回调不是硬件中断，也不天然运行在新线程。当前 MQTT 的网络循环与 GUI 不在同一条工作路线；共享 Store 的访问需要同步。这是概念类比，不表示线程和工作人员在调度上完全相同。依据：[MQTT 实现](../../cpp/mqtt_intake.cpp)、[主循环](../../cpp/main.cpp)。
 
 ### 84. Qt 的信号与槽是不是电平信号与插槽？
 
@@ -579,13 +579,13 @@ Qt 事件循环处理定时器、窗口操作等事件，所以主线程如果�
 
 例如按钮发出“被点击了”的通知，连接的函数打开提醒设置；声音后端发出“播放结束”，控制器安排后续工作。像约定“这件事完成后通知下一位”，不用让所有模块彼此知道内部细节。信号不是中断；直接连接可能立即调用，队列连接则等接收线程的事件循环处理。普通函数调用也不会自动跨线程切换。
 
-**追问：**工作线程能直接改 QWidget 吗？不能这样做，应把界面更新安排到主线程。依据：[提醒界面](cpp/tactical_reminder_dialog.cpp)、[声音信号](cpp/speech_backend.h)、[Qt 线程文档](https://doc.qt.io/qt-6/threads-qobject.html)。
+**追问：**工作线程能直接改 QWidget 吗？不能这样做，应把界面更新安排到主线程。依据：[提醒界面](../../cpp/tactical_reminder_dialog.cpp)、[声音信号](../../cpp/speech_backend.h)、[Qt 线程文档](https://doc.qt.io/qt-6/threads-qobject.html)。
 
 ### 85. Q_PROPERTY、NOTIFY 和本项目的 setProperty 是一回事吗？
 
 **可以这样答：**它们都与属性有关，但不是同一个动作。`Q_PROPERTY` 常用于向 Qt 暴露 C++ 属性，`NOTIFY` 指定变化通知，`setProperty` 是设置某个对象的属性。
 
-一般教学示例会用 `Q_PROPERTY` 把 C++ 对象接入 QML；本项目顶栏和花名册实际采用 QML 根对象属性赋值。不能把教程里的方案直接说成仓库实现。属性像显示屏的“血量输入格”，绑定像“血条长度跟着输入格变化”。依据：[top_bar.cpp](cpp/top_bar.cpp)、[roster_panel.cpp](cpp/roster_panel.cpp)、[Qt 属性文档](https://doc.qt.io/qt-6/qtqml-cppintegration-exposecppattributes.html)。
+一般教学示例会用 `Q_PROPERTY` 把 C++ 对象接入 QML；本项目顶栏和花名册实际采用 QML 根对象属性赋值。不能把教程里的方案直接说成仓库实现。属性像显示屏的“血量输入格”，绑定像“血条长度跟着输入格变化”。依据：[top_bar.cpp](../../cpp/top_bar.cpp)、[roster_panel.cpp](../../cpp/roster_panel.cpp)、[Qt 属性文档](https://doc.qt.io/qt-6/qtqml-cppintegration-exposecppattributes.html)。
 
 ### 86. IP、端口、TCP、UDP、MQTT 能画成一张图吗？
 
@@ -599,7 +599,7 @@ Qt 事件循环处理定时器、窗口操作等事件，所以主线程如果�
 视频：HEVC 素材 → 自定义分片 → UDP → 组帧 → FFmpeg → 像素 → 屏幕
 ```
 
-默认状态使用 TCP 3333，视频使用 UDP 3334。两个通路分开，所以“血量正常但视频黑屏”完全可能。`127.0.0.1` 只指本机；把机器人搬到另一台电脑后，地址、监听范围和防火墙都要重新检查。当前视频默认只监听回环地址。依据：[配置](cpp/config.h)、[视频接收参数](cpp/video_receiver.h)。
+默认状态使用 TCP 3333，视频使用 UDP 3334。两个通路分开，所以“血量正常但视频黑屏”完全可能。`127.0.0.1` 只指本机；把机器人搬到另一台电脑后，地址、监听范围和防火墙都要重新检查。当前视频默认只监听回环地址。依据：[配置](../../cpp/config.h)、[视频接收参数](../../cpp/video_receiver.h)。
 
 ### 87. 为什么不直接把内存里的结构体发出去？
 
@@ -607,25 +607,25 @@ Qt 事件循环处理定时器、窗口操作等事件，所以主线程如果�
 
 Protobuf 按字段编号和类型编码，不是原样复制 C++ 对象。接收方按同一约定还原。修改字段时也要谨慎，尤其不能随便把已有编号改作另一种含义。它通常比手工拼字节更方便维护，但不能替你校验所有业务范围。
 
-**追问：**二进制是不是加密？不是。看不懂的字节不等于别人无法解码；Protobuf 也不负责网络传输。依据：[消息定义](proto/rm_terminal.proto)、[官方介绍](https://protobuf.dev/overview/)。
+**追问：**二进制是不是加密？不是。看不懂的字节不等于别人无法解码；Protobuf 也不负责网络传输。依据：[消息定义](../../proto/rm_terminal.proto)、[官方介绍](https://protobuf.dev/overview/)。
 
 ### 88. QoS 1、2 会不会比 0 永远更好？
 
 **可以这样答：**不是。QoS 1 强调至少交付一次，可能重复；QoS 2 提供该交付环节的恰好一次语义，但多了协议交互，仍不保证最大延迟。
 
-像通知作业：不确认最省事但可能漏，要求回执更可靠却要额外往返。对于过时的连续姿态，迟到的数据未必有价值；对于重要事件，丢失代价可能更大。应按消息需求选择，不能一句“全部改 QoS 2”解决新鲜度。更不能把 QoS 2 解释成“机器人击发动作必定恰好执行一次”。本项目当前采用 QoS 0。依据：[MQTT 接收](cpp/mqtt_intake.cpp)、[MQTT 标准](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html)。
+像通知作业：不确认最省事但可能漏，要求回执更可靠却要额外往返。对于过时的连续姿态，迟到的数据未必有价值；对于重要事件，丢失代价可能更大。应按消息需求选择，不能一句“全部改 QoS 2”解决新鲜度。更不能把 QoS 2 解释成“机器人击发动作必定恰好执行一次”。本项目当前采用 QoS 0。依据：[MQTT 接收](../../cpp/mqtt_intake.cpp)、[MQTT 标准](https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html)。
 
 ### 89. 终端是不是一个网络包都不发送？安全吗？
 
 **可以这样答：**不是。它仍会发送连接、订阅、保活等协议报文。
 
-另外，能收发协议报文不等于网络安全完整：当前 MQTT 初始化没有配置 TLS 加密或用户名密码，固定客户端 ID 也有多实例冲突风险。TLS 可以理解为给传输通道加保护，但这里不能声称已经接入。将来开放到比赛网络之前，应检查身份认证、访问权限、输入限制及规则合规，不能把本机模拟配置直接暴露出去。依据：[mqtt_intake.cpp](cpp/mqtt_intake.cpp)。
+另外，能收发协议报文不等于网络安全完整：当前 MQTT 初始化没有配置 TLS 加密或用户名密码，固定客户端 ID 也有多实例冲突风险。TLS 可以理解为给传输通道加保护，但这里不能声称已经接入。将来开放到比赛网络之前，应检查身份认证、访问权限、输入限制及规则合规，不能把本机模拟配置直接暴露出去。依据：[mqtt_intake.cpp](../../cpp/mqtt_intake.cpp)。
 
 ### 90. 为什么计时不用电脑右上角的时间？
 
 **可以这样答：**我们要量“过了多久”，不是“今天几点”。日历时间可能被校时或手动修改，单调时钟适合计算经过时间。
 
-像用秒表量电机反馈超时，不该因为把时钟调快一小时就认为反馈丢了一小时。状态逻辑使用单调时间；日志使用 UTC 日历时间便于人查记录，两者职责不同。定时器名义每 250 ms 触发也不保证每次准点，系统忙时会晚。依据：[clock.cpp](cpp/clock.cpp)、[logging.cpp](cpp/logging.cpp)、[模式测试](cpp/ui_mode_test.cpp)。
+像用秒表量电机反馈超时，不该因为把时钟调快一小时就认为反馈丢了一小时。状态逻辑使用单调时间；日志使用 UTC 日历时间便于人查记录，两者职责不同。定时器名义每 250 ms 触发也不保证每次准点，系统忙时会晚。依据：[clock.cpp](../../cpp/clock.cpp)、[logging.cpp](../../cpp/logging.cpp)、[模式测试](../../cpp/ui_mode_test.cpp)。
 
 ### 91. 配置文件和命令行参数该怎么理解？
 
@@ -633,13 +633,13 @@ Protobuf 按字段编号和类型编码，不是原样复制 C++ 对象。接收
 
 配置路径选择优先级是 `--config`、环境变量 `RM_TERMINAL_CONFIG`、默认文件名；缺少项目使用内置默认值，不是合并好几份文件。这里修改配置通常需要重启，不是热加载。一个容易踩的坑是：指定文件不存在也会落回默认配置，因此拼错路径未必报错。终端配置也不会自动修改模拟器地址。
 
-**追问：**环境变量是什么？是启动程序时它可以读取的一组外部设置，不是 C++ 局部变量。依据：[config.cpp](cpp/config.cpp)、[样例配置](rm_terminal.conf.sample)、[main.cpp](cpp/main.cpp)。样例中致盲过期回退方向的旧注释不准确，实际是 Video 超时回 Info。
+**追问：**环境变量是什么？是启动程序时它可以读取的一组外部设置，不是 C++ 局部变量。依据：[config.cpp](../../cpp/config.cpp)、[样例配置](../../rm_terminal.conf.sample)、[main.cpp](../../cpp/main.cpp)。样例中致盲过期回退方向的旧注释不准确，实际是 Video 超时回 Info。
 
 ### 92. 日志是什么，怎么看才有用？
 
 **可以这样答：**日志是程序记录的运行笔记。先看发生时间、事件名和关联信息，不要只搜一个“error”就下结论。
 
-终端的 `log_destination` 指定日志位置，默认相对路径受启动目录影响；日志采用追加方式，旧内容可能还在。配置错误和部分 Qt 信息还可能出现在标准错误输出，不全写进同一个文件。查视频时可关注 `ffmpeg_not_found`、`decode_failure`；查模式时看 `ui_mode_switch`。保存日志时记住本次启动时间，避免把昨天的成功当今天的结果。依据：[日志实现](cpp/logging.cpp)、[视频日志](cpp/video_receiver.cpp)。
+终端的 `log_destination` 指定日志位置，默认相对路径受启动目录影响；日志采用追加方式，旧内容可能还在。配置错误和部分 Qt 信息还可能出现在标准错误输出，不全写进同一个文件。查视频时可关注 `ffmpeg_not_found`、`decode_failure`；查模式时看 `ui_mode_switch`。保存日志时记住本次启动时间，避免把昨天的成功当今天的结果。依据：[日志实现](../../cpp/logging.cpp)、[视频日志](../../cpp/video_receiver.cpp)。
 
 ### 93. safe-smoke、diagnostic、强制模式分别证明什么？
 
@@ -653,7 +653,7 @@ Protobuf 按字段编号和类型编码，不是原样复制 C++ 对象。接收
 ./build/macos/rm_terminal --force-mode video
 ```
 
-`--safe-smoke` 不连网络、不构造窗口，但仍读取配置和打开日志。诊断时长允许 1–30 秒，不检查视频；退出成功也不等于所有主题有数据。强制 Video 的截图不能冒充自动致盲切换证据。依据：[main.cpp](cpp/main.cpp)。
+`--safe-smoke` 不连网络、不构造窗口，但仍读取配置和打开日志。诊断时长允许 1–30 秒，不检查视频；退出成功也不等于所有主题有数据。强制 Video 的截图不能冒充自动致盲切换证据。依据：[main.cpp](../../cpp/main.cpp)。
 
 ### 94. 单元测试、集成测试、截图有什么区别？
 
@@ -668,7 +668,7 @@ ctest --test-dir build/macos -N
 ctest --test-dir build/macos -LE integration --output-on-failure
 ```
 
-需要先安装匹配依赖。`-N` 只列测试，不运行；集成测试还需 CMake 开关 `RM_TERMINAL_INTEGRATION_TESTS=ON` 和相应运行环境。模式集成脚本主要断言模式时序，不等于验证成功解码视频。依据：[CMakeLists.txt](CMakeLists.txt)、[集成脚本](scripts/verify_mode_regression.sh)。
+需要先安装匹配依赖。`-N` 只列测试，不运行；集成测试还需 CMake 开关 `RM_TERMINAL_INTEGRATION_TESTS=ON` 和相应运行环境。模式集成脚本主要断言模式时序，不等于验证成功解码视频。依据：[CMakeLists.txt](../../CMakeLists.txt)、[集成脚本](../../scripts/verify_mode_regression.sh)。
 
 ### 95. 有视频包、有完整帧、有图像，是同一回事吗？
 
@@ -676,7 +676,7 @@ ctest --test-dir build/macos -LE integration --output-on-failure
 
 UDP 包可能畸形；分片可能凑不齐；凑齐的压缩数据也可能缺参考画面，解不出图像。HEVC 的参数集像解码说明书，参考帧像还原后续画面需要的基础；缓存参数集不能补回所有丢失内容。FFmpeg 最终输出足够一个完整 BGR24 图像的数据，才能计作解码帧。
 
-**追问：**多久恢复？策略阈值包括网络静默 1000 ms、解码停滞 5000 ms、动作冷却 2000 ms，但都带条件；不是任何故障固定几秒恢复的保证。依据：[接收实现](cpp/video_receiver.cpp)、[恢复策略](cpp/video_recovery.cpp)。
+**追问：**多久恢复？策略阈值包括网络静默 1000 ms、解码停滞 5000 ms、动作冷却 2000 ms，但都带条件；不是任何故障固定几秒恢复的保证。依据：[接收实现](../../cpp/video_receiver.cpp)、[恢复策略](../../cpp/video_recovery.cpp)。
 
 ### 96. 机器人没显示，是阵亡了吗？弹窗谁优先？
 
@@ -684,7 +684,7 @@ UDP 包可能畸形；分片可能凑不齐；凑齐的压缩数据也可能缺�
 
 地图将过期位置变淡、缺失和越界位置不画。普通弹窗按信号中断、等待连接、本局结束、已阵亡、暂停、即将开始等优先级选择，升级及时显示，降级默认至少保持一秒。结果覆盖层与普通弹窗另有协调。它们不是给机器人发命令的控制面板。
 
-**边界：**不能说所有界面字段都逐一检查新鲜度。比如结果解析检查阶段新鲜度，但未独立检查 winner 的新鲜度。依据：[map_pane.cpp](cpp/map_pane.cpp)、[popup_state.cpp](cpp/popup_state.cpp)、[game_result.cpp](cpp/game_result.cpp)。
+**边界：**不能说所有界面字段都逐一检查新鲜度。比如结果解析检查阶段新鲜度，但未独立检查 winner 的新鲜度。依据：[map_pane.cpp](../../cpp/map_pane.cpp)、[popup_state.cpp](../../cpp/popup_state.cpp)、[game_result.cpp](../../cpp/game_result.cpp)。
 
 ### 97. 提醒保存了却没声音，是不是程序坏了？
 
@@ -692,7 +692,7 @@ UDP 包可能畸形；分片可能凑不齐；凑齐的压缩数据也可能缺�
 
 需要确认总开关、中文声音、音频准备状态和可信倒计时。到点但音频未就绪时，该条不会等以后补播。赛中表格编辑与保存会锁定，总开关仍可关闭提醒；关闭总开关会停止本机播放，不是机器人急停。普通文字编辑需要保存，不能把关窗口当自动保存。
 
-**实用建议：**赛前保存内容、启用并确认语音就绪，不依赖赛中首次开启。保存配置原本关闭时，赛中首次启用的实际播报链路还有静态边界，不能保证必然有声。依据：[提醒控制器](cpp/tactical_reminder_controller.cpp)、[设置窗口](cpp/tactical_reminder_dialog.cpp)、[调度器](cpp/reminder_scheduler.cpp)。
+**实用建议：**赛前保存内容、启用并确认语音就绪，不依赖赛中首次开启。保存配置原本关闭时，赛中首次启用的实际播报链路还有静态边界，不能保证必然有声。依据：[提醒控制器](../../cpp/tactical_reminder_controller.cpp)、[设置窗口](../../cpp/tactical_reminder_dialog.cpp)、[调度器](../../cpp/reminder_scheduler.cpp)。
 
 ### 98. 讲一个血量从模拟器到血条的完整例子？
 
@@ -700,7 +700,7 @@ UDP 包可能畸形；分片可能凑不齐；凑齐的压缩数据也可能缺�
 
 具体阅读顺序：`send_dynamic()` → MQTT `on_message()` → `Decoder::accept()` → `Store::apply()` 与转换 → `snapshot()` → `build_roster()` → `RosterPanel::setEntries()` → QML。这条自机消息需要匹配固定编号 3；花名册行的建立还依赖全场列表，所以只发单机血量，不保证列表必然出现那台车。
 
-**追问：**血量为零呢？明确上报零是有值，不是缺失；只收到其他字段也不应刷新旧血量时间。依据：[模拟器](sim/match_server.py)、[MQTT 接收](cpp/mqtt_intake.cpp)、[列表整理](cpp/roster_pane.cpp)、[列表桥接](cpp/roster_panel.cpp)、[血条界面](qml/RosterRow.qml)。
+**追问：**血量为零呢？明确上报零是有值，不是缺失；只收到其他字段也不应刷新旧血量时间。依据：[模拟器](../../sim/match_server.py)、[MQTT 接收](../../cpp/mqtt_intake.cpp)、[列表整理](../../cpp/roster_pane.cpp)、[列表桥接](../../cpp/roster_panel.cpp)、[血条界面](../../qml/RosterRow.qml)。
 
 ### 99. 真要接自己的英雄，要补哪些工作？
 
@@ -708,7 +708,7 @@ UDP 包可能畸形；分片可能凑不齐；凑齐的压缩数据也可能缺�
 
 可以按顺序做：接口与规则核对 → 真实数据到终端的桥接 → 字段映射与边界测试 → 台架验证 → 丢包、断连和异常输入测试 → 获准环境里的实机验证。当前仓库没有完整的裁判串口/CAN 到 MQTT 真机桥接，也不能保证拿到模拟器生成的全部敌方信息。机器人保护逻辑继续留在实际控制系统里。这是后续方案，不是已实现成果。
 
-**追问：**能用于 PID 闭环吗？不应拿这个桌面显示链路替代电机实时反馈链路；它的网络、事件循环和显示节奏并非为硬实时闭环设计。依据：[协议](proto/rm_terminal.proto)、[接收端](cpp/mqtt_intake.cpp)、[main.cpp](cpp/main.cpp)。
+**追问：**能用于 PID 闭环吗？不应拿这个桌面显示链路替代电机实时反馈链路；它的网络、事件循环和显示节奏并非为硬实时闭环设计。依据：[协议](../../proto/rm_terminal.proto)、[接收端](../../cpp/mqtt_intake.cpp)、[main.cpp](../../cpp/main.cpp)。
 
 ### 100. 不可能背完全部技术，怎样真的答得上来？
 
@@ -722,25 +722,25 @@ UDP 包可能畸形；分片可能凑不齐；凑齐的压缩数据也可能缺�
 
 | 想回答的问题 | 优先查看 | 阅读时抓住什么 |
 | --- | --- | --- |
-| 技术栈与依赖 | [CMakeLists.txt](CMakeLists.txt)、[BUILD.md](BUILD.md) | 编译标准、依赖、构建入口 |
-| 程序怎么接起来 | [main.cpp](cpp/main.cpp) | 对象组装、定时器、参数是否传入 |
-| MQTT 如何进入程序 | [mqtt_intake.h](cpp/mqtt_intake.h) | 订阅与接收接口 |
-| 消息格式与字段 | [rm_terminal.proto](proto/rm_terminal.proto)、[decoder.cpp](cpp/decoder.cpp) | 声明和实际解码是否一致 |
-| 数据转换与可信性 | [conversion.cpp](cpp/conversion.cpp)、[domain.h](cpp/domain.h)、[store.cpp](cpp/store.cpp) | 缺失、无效、时间、快照 |
-| 界面总体布局 | [dashboard.cpp](cpp/dashboard.cpp) | 各面板如何组合与更新 |
-| C++ 如何更新 QML | [top_bar.cpp](cpp/top_bar.cpp)、[roster_panel.cpp](cpp/roster_panel.cpp) | 根对象属性赋值 |
-| QML 外观 | [TopBar.qml](qml/TopBar.qml)、[RosterPanel.qml](qml/RosterPanel.qml)、[PopupOverlay.qml](qml/PopupOverlay.qml) | 属性、绑定、布局 |
-| 模式切换 | [ui_mode.cpp](cpp/ui_mode.cpp)、[ui_mode_test.cpp](cpp/ui_mode_test.cpp) | 输入新鲜度和计时起点 |
-| 地图与坐标 | [map_pane.cpp](cpp/map_pane.cpp)、[field_map_test.cpp](cpp/field_map_test.cpp) | 28×15、Y 翻转、缺失与过期 |
-| 视频分片 | [video.cpp](cpp/video.cpp)、[video_protocol.py](sim/video_protocol.py) | 包头、缓存实际状态、超时 |
-| 视频解码与恢复 | [video_receiver.cpp](cpp/video_receiver.cpp)、[video_recovery.cpp](cpp/video_recovery.cpp) | FFmpeg 参数、停止条件、socket 行为 |
-| 提醒保存 | [reminder_repository.cpp](cpp/reminder_repository.cpp) | JSON、标准路径、提交写入 |
-| 提醒时间与播放 | [reminder_scheduler.h](cpp/reminder_scheduler.h)、[reminder_playback.cpp](cpp/reminder_playback.cpp) | 跨越阈值、取消、两次播放间隔 |
-| 本地音频 | [macos_speech_backend.cpp](cpp/macos_speech_backend.cpp) | macOS 命令和平台边界 |
-| 比赛结果 | [game_result.cpp](cpp/game_result.cpp)、[VictoryOverlay.qml](qml/VictoryOverlay.qml) | 阶段、winner、文字回退 |
-| 统计而非 AI | [battle_analysis.cpp](cpp/battle_analysis.cpp) | 输入指标和差值计算 |
-| 模拟数据与命令工具 | [match_server.py](sim/match_server.py)、[match_control.py](sim/match_control.py) | 发布角色、步兵假设、CommonCommand |
-| 演示和自动检查 | [run.sh](run.sh)、[build.yml](.github/workflows/build.yml) | 环境路径、清理范围、配置不等于结果 |
+| 技术栈与依赖 | [CMakeLists.txt](../../CMakeLists.txt)、[BUILD.md](../../BUILD.md) | 编译标准、依赖、构建入口 |
+| 程序怎么接起来 | [main.cpp](../../cpp/main.cpp) | 对象组装、定时器、参数是否传入 |
+| MQTT 如何进入程序 | [mqtt_intake.h](../../cpp/mqtt_intake.h) | 订阅与接收接口 |
+| 消息格式与字段 | [rm_terminal.proto](../../proto/rm_terminal.proto)、[decoder.cpp](../../cpp/decoder.cpp) | 声明和实际解码是否一致 |
+| 数据转换与可信性 | [conversion.cpp](../../cpp/conversion.cpp)、[domain.h](../../cpp/domain.h)、[store.cpp](../../cpp/store.cpp) | 缺失、无效、时间、快照 |
+| 界面总体布局 | [dashboard.cpp](../../cpp/dashboard.cpp) | 各面板如何组合与更新 |
+| C++ 如何更新 QML | [top_bar.cpp](../../cpp/top_bar.cpp)、[roster_panel.cpp](../../cpp/roster_panel.cpp) | 根对象属性赋值 |
+| QML 外观 | [TopBar.qml](../../qml/TopBar.qml)、[RosterPanel.qml](../../qml/RosterPanel.qml)、[PopupOverlay.qml](../../qml/PopupOverlay.qml) | 属性、绑定、布局 |
+| 模式切换 | [ui_mode.cpp](../../cpp/ui_mode.cpp)、[ui_mode_test.cpp](../../cpp/ui_mode_test.cpp) | 输入新鲜度和计时起点 |
+| 地图与坐标 | [map_pane.cpp](../../cpp/map_pane.cpp)、[field_map_test.cpp](../../cpp/field_map_test.cpp) | 28×15、Y 翻转、缺失与过期 |
+| 视频分片 | [video.cpp](../../cpp/video.cpp)、[video_protocol.py](../../sim/video_protocol.py) | 包头、缓存实际状态、超时 |
+| 视频解码与恢复 | [video_receiver.cpp](../../cpp/video_receiver.cpp)、[video_recovery.cpp](../../cpp/video_recovery.cpp) | FFmpeg 参数、停止条件、socket 行为 |
+| 提醒保存 | [reminder_repository.cpp](../../cpp/reminder_repository.cpp) | JSON、标准路径、提交写入 |
+| 提醒时间与播放 | [reminder_scheduler.h](../../cpp/reminder_scheduler.h)、[reminder_playback.cpp](../../cpp/reminder_playback.cpp) | 跨越阈值、取消、两次播放间隔 |
+| 本地音频 | [macos_speech_backend.cpp](../../cpp/macos_speech_backend.cpp) | macOS 命令和平台边界 |
+| 比赛结果 | [game_result.cpp](../../cpp/game_result.cpp)、[VictoryOverlay.qml](../../qml/VictoryOverlay.qml) | 阶段、winner、文字回退 |
+| 统计而非 AI | [battle_analysis.cpp](../../cpp/battle_analysis.cpp) | 输入指标和差值计算 |
+| 模拟数据与命令工具 | [match_server.py](../../sim/match_server.py)、[match_control.py](../../sim/match_control.py) | 发布角色、步兵假设、CommonCommand |
+| 演示和自动检查 | [run.sh](../../run.sh)、[build.yml](../../.github/workflows/build.yml) | 环境路径、清理范围、配置不等于结果 |
 
 ## 最后核对：上台前记住的十句话
 

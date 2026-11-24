@@ -612,7 +612,7 @@ Debug and Release verification artifacts:
 bash scripts/package_macos.sh
 ```
 
-从装 Homebrew 开始的每一步见 [Mac上装终端-宝宝教程.md](Mac上装终端-宝宝教程.md)。
+从装 Homebrew 开始的每一步见 [Mac上装终端-宝宝教程.md](docs/guides/Mac上装终端-宝宝教程.md)。
 
 脚本用 Homebrew 装库、编 Release，把 Qt、各个库和一个现编的精简版 ffmpeg（只有 H.265
 解码，不依赖 Homebrew）放进 `RM 终端.app`，签名（ad-hoc），检查包里没有库还指向 Homebrew，
