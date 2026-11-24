@@ -653,6 +653,15 @@ build/ubuntu/rm_terminal --safe-smoke
 feed, `python3-tk` is needed by `sim/control_panel.py`, and `fonts-noto-cjk`
 supplies the Chinese glyphs.
 
+`bash scripts/install_ubuntu.sh` does the whole setup on a fresh clone: it checks
+the packages above (plus `zenity`) and prints the `apt-get` line for any that are
+missing, creates `.venv`, builds `build/ubuntu`, links `~/.local/bin/rm-terminal-launch`
+to `scripts/ubuntu/rm-terminal-launch`, writes the three desktop entries (RM 模拟器 /
+RM 真机 / RM 回放) to the desktop and the application list, copies
+`scripts/ubuntu/rm_terminal.26engine.conf` to `~/rm_terminal.26engine.conf` unless
+that file already exists, and offers to run `scripts/setup_voice.sh`. Steps that are
+already done are skipped, so it is safe to rerun.
+
 `run.sh`, `启动.command`, `回放录像.command` and `scripts/verify_mode_regression.sh`
 pick `build/ubuntu` on Linux and `build/macos` on macOS, so no `BUILD_DIR` is
 needed. The `.command` files are plain bash; on Linux run them with

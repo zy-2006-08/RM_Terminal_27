@@ -6,6 +6,8 @@
 
 Mac 上装成双击就能用的程序：[在 Mac 上装终端：宝宝教程](docs/guides/Mac上装终端-宝宝教程.md)。
 
+Ubuntu 上装成桌面图标（「RM 模拟器」「RM 真机」「RM 回放」）：clone 下来以后运行一次 `bash scripts/install_ubuntu.sh`。它会检查系统软件、建 `.venv`、编译、装图标，再在主文件夹放一份真机配置 `~/rm_terminal.26engine.conf`；已经装好的步骤会跳过。
+
 面向 2027 赛季 RoboMaster 超级对抗赛的自定义选手端终端。
 
 仓库地址：https://github.com/zy-2006-08/RM_Terminal_27
@@ -491,6 +493,8 @@ cp rm_terminal.conf.sample rm_terminal.conf
 | `scripts/accept_sim_control.sh` | 模拟器验收：只起模拟器，检查它发的官方消息 |
 | `scripts/shoot_roles.sh` | 三种席位 × 两档分辨率截图和布局 JSON，出到 `artifacts/roles/` |
 | `scripts/setup_voice.sh` | 安装 Linux 离线中文语音（Piper 超文） |
+| `scripts/install_ubuntu.sh` | Ubuntu 一键安装：建 `.venv`、编译、装桌面图标和真机配置 |
+| `scripts/ubuntu/` | 桌面图标用的启动脚本、「RM 真机」图标、真机配置模板 |
 | `docs/rules/` | 官方规则手册和通信协议 PDF |
 | `docs/proposal/` | 项目方案、3.2.1 章节正文和两张架构图 |
 | `docs/guides/` | 使用指南、Mac 和 26 引擎宝宝教程、答辩问答 |
