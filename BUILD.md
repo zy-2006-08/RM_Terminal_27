@@ -10,8 +10,8 @@ and for `mode_regression_e2e`. The native target is C++17/Qt6.
 (通信协议 V1.0.0, 2026-10-29, chapter 2, messages 2.2.1–2.2.32), copied message by
 message; the topic name is the message name. The only deviation is
 `RadarInfoToClient`, whose official text has no field number: the proto reads field 1
-as `repeated RadarSingleRobotInfo`, and `cpp/decoder.cpp` also accepts the other
-plausible encoding (flat packed `uint32` triples). `cpp/decoder.cpp` is the single
+as `repeated RadarSingleRobotInfo`, and `cpp/data/decoder.cpp` also accepts the other
+plausible encoding (flat packed `uint32` triples). `cpp/data/decoder.cpp` is the single
 place that turns the protocol's seat-relative fields (己方/对方, R/B outpost zones,
 ally-first `robot_health`, enemy-first radar, centimetres, decimetres) into the
 red/blue, metre-based domain model, so nothing above it knows which side the seat is
@@ -30,7 +30,7 @@ the logistics factor λ comes from base HP (rules 5.6.1).
 
 Freshness uses caller-provided monotonic milliseconds, expires at age >= a
 positive threshold, and rejects backwards time. Every `MonotonicMs` in the
-process comes from `rm_terminal::monotonic_now()` (`cpp/clock.h`) — one
+process comes from `rm_terminal::monotonic_now()` (`cpp/app/clock.h`) — one
 `steady_clock` origin shared by MQTT intake, `Store::snapshot`, and the UI tick.
 Wall-clock time must never be used: `Store::snapshot` throws when handed an
 earlier instant, so an NTP correction backward would terminate the process
@@ -44,7 +44,7 @@ Outbound messages: `CustomControl` (forwarded from the custom controller's seria
 port, see [链路状态与自检页](#链路状态与自检页-link-status-and-self-check)), and the
 seat-specific commands `MapClickCmd`, `DartCommand`, `SentryCtrlCommand` and
 `AssemblyCommand` (see [席位与布局](#席位与布局-seats-and-role-layouts)). Platform-specific
-selection is limited to compile-time identity in `cpp/platform.h`; core
+selection is limited to compile-time identity in `cpp/app/platform.h`; core
 application code uses Qt and standard C++ APIs.
 
 ## Configuration
@@ -258,7 +258,7 @@ never mistaken for a real blind event. Because the log records transitions only,
 The flag takes exactly one value, `info` or `video`. A missing value, an
 unrecognised value, a repeated flag, or combining it with `--safe-smoke` or
 `--diagnostic` all exit `2`; the last two are rejected rather than ignored because
-neither builds a window for the mode to apply to. `cpp/assert_bad_args.cmake`
+neither builds a window for the mode to apply to. `cpp/tests/assert_bad_args.cmake`
 (CTest `reject_unknown_args`) covers each of those cases.
 
 `--dump-layout <path>` writes the on-screen layout as JSON at the same instant the
@@ -350,7 +350,7 @@ Four lights sit in the banner row, to the right of the alert strip: 裁判 (MQTT
 itself sends to the terminal), 图传 and 控制器. A green dot
 means fine; red adds two or three words saying what is wrong; grey means the seat
 does not use that link. Hovering shows the full detail. The rules live in
-`cpp/link_health.cpp` and are unit-tested in `link_health_test`:
+`cpp/data/link_health.cpp` and are unit-tested in `link_health_test`:
 
 | Link | Red when |
 | --- | --- |
@@ -373,7 +373,7 @@ opens by itself when the match is not yet running (no match data, 赛外, 准备
 phase once the operator closes it. While it is open the ordinary popups give way.
 Replay mode shows neither the lights nor the page.
 
-The controller link (`cpp/controller_link.cpp`) reads the firmware's frames
+The controller link (`cpp/data/controller_link.cpp`) reads the firmware's frames
 (`0xA5` header with CRC8, command `0x0302`, 30 data bytes, CRC16; 115200 8N1, 25 Hz)
 and forwards each valid frame once, as `CustomControl` (the robot receives it as
 0x0311, at most 60 bytes in 2027), capped at 75 Hz. The other direction exists since
@@ -389,7 +389,7 @@ recorded.
 
 ## 事件提醒 (match alerts)
 
-`cpp/match_alerts.cpp` turns each snapshot into new alerts, unit-tested in
+`cpp/game/match_alerts.cpp` turns each snapshot into new alerts, unit-tested in
 `match_alerts_test`. Each alert shows a banner under the top bar (critical red,
 warning amber, info cyan; 4 s each, critical first, anything that waited over 10 s
 is dropped) and speaks a fixed phrase. A due tactical reminder also shows a banner,
@@ -414,7 +414,7 @@ and base HP come from `GlobalUnitStatus`, the fortress timer from
 `GlobalSpecialMechanism`.
 
 Voice: alert phrases are synthesized before the match by a second speech backend
-(`cpp/alert_voice.cpp`) and played through the reminder controller, which owns the
+(`cpp/voice/alert_voice.cpp`) and played through the reminder controller, which owns the
 single speaker: an alert never interrupts a sentence, but goes ahead of the next
 tactical reminder. macOS uses `say`. Linux uses Piper with the 超文 voice, installed
 by `bash scripts/setup_voice.sh` (about 265 MB in `~/.local/share/rm_terminal/tts`,
@@ -466,7 +466,7 @@ it exits `0` with `seat_cancelled`. Replays use the seat stored in the recording
 `启动.command` asks for the seat in the terminal window (the simulator needs it
 too) and exports `RM_SELF_ID`, so the picker does not open twice.
 
-`cpp/layout_profile.cpp` holds one grid per role; the shared parts (status bar with
+`cpp/layout/layout_profile.cpp` holds one grid per role; the shared parts (status bar with
 the seat label, top bar, alerts, popups, the video page) are the same for all three:
 
 | Role | Seat | Info page |
@@ -476,13 +476,13 @@ the seat label, top bar, alerts, popups, the video page) are the same for all th
 | 指挥手 commander | 6 (the aerial seat, rules table 3-1) | both rosters stacked left, map over two rows with the mark toolbar, 飞镖 and 哨兵 right; events / battle analysis / video |
 
 Operators can personalise the info page (`界面设置` in the status bar opens the one-page
-editor, `cpp/layout_editor.*`, with the per-pane details popover in `cpp/pane_details.*`).
-The model is `cpp/ui_profile.*`: operator → role → scheme (built-ins standard, novice,
+editor, `cpp/layout/layout_editor.*`, with the per-pane details popover in `cpp/layout/pane_details.*`).
+The model is `cpp/layout/ui_profile.*`: operator → role → scheme (built-ins standard, novice,
 minimal, video — the commander gets standard, minimal — plus custom copies),
 each scheme holding its cells on the 16 × 9 grid, the panes it hides and per-pane options
 (map background opacity, enemy markers, marks, enemy low-HP pulse, analysis control-only,
 alert voice, extra muted alert kinds on top of `alerts_disabled`, next-step options).
-Every pane can be removed; at least one stays. `cpp/layout_ops.*` holds the edits (insert at
+Every pane can be removed; at least one stays. `cpp/layout/layout_ops.*` holds the edits (insert at
 an edge, swap, replace, move a seam, remove), each keeping the grid fully tiled and every pane
 at or above `pane_min_units`; the editor tries insert, then swap (a moved pane) or replace (a
 library pane, the replaced one goes back to the library), and a pane dragged onto the library
@@ -500,7 +500,7 @@ least 5 rows tall gets its bottom 2 rows as the video pane, unless the scheme li
 (`self_commands`) itself has since been removed: its actions are official-client keys (H, O/I,
 P, F, Y/F1), so a saved layout loads with that pane dropped and its cells given to a neighbour,
 like `big_control`. `SelfCommandPane` still exists as the hidden object that sends those
-commands (rate limits, echoes). `cpp/ui_profile_store.*` saves to `AppConfigLocation/ui_profiles.json`
+commands (rate limits, echoes). `cpp/layout/ui_profile_store.*` saves to `AppConfigLocation/ui_profiles.json`
 with `QSaveFile` after every change; an unreadable file is left untouched, the
 terminal runs on defaults, and the first save renames it to `ui_profiles.bad-N.json`.
 Unknown pane names, alert kinds and roles are dropped on load, missing built-ins are
@@ -509,7 +509,7 @@ settings lock while a fresh stage reads 比赛中 and unlock on the next fresh n
 stage. Export/import moves one operator between computers. `ui_profile` log records
 carry `state=loaded|missing|invalid|set_aside|save_failed|operator|imported`.
 
-Role panes (`cpp/dart_pane.*`, `cpp/sentry_pane.*`) show
+Role panes (`cpp/panes/dart_pane.*`, `cpp/panes/sentry_pane.*`) show
 `--` and name the message they wait for when data is missing. Their buttons send
 `DartCommand` and `SentryCtrlCommand` at most 10 times a second,
 are disabled while MQTT is down (clicks are dropped, never queued), and need a 1 s
@@ -520,7 +520,7 @@ hold for 确认发射 and 花金币复活. Each send waits for the server's answ
 The heavy has no assembly pane: the energy unit is assembled with the real custom
 controller, and the terminal only sends `AssemblyCommand` (start with a difficulty,
 confirm, cancel), following the 2026 official client (界面手册 pages 14–15).
-`cpp/assembly_flow.*` holds it: `AssemblyState` is the key logic (pure, tested in
+`cpp/game/assembly_flow.*` holds it: `AssemblyState` is the key logic (pure, tested in
 `assembly_flow_test`), `AssemblyProgress` the strip at the bottom centre, `AssemblyFlow`
 the glue to the sender. The heavy's H box (`RemoteExchangePopup` with an `AssemblyRow`)
 adds a difficulty row above 回血 (Ctrl+1) and 42mm (Ctrl+3) and drops 17mm (the heavy
@@ -624,7 +624,7 @@ bash scripts/package_macos.sh
 - 打出来的程序连真实裁判系统：第一次双击打开时，包里带的配置（`mqtt_host=192.168.12.1`，
   不写席位，所以每次先弹选席位页）复制到 `~/Library/Application Support/rm_terminal/rm_terminal.conf`，
   以后改那个文件。日志 `rm_terminal.log` 和录像也在这个文件夹。原因：从访达、程序坞打开时工作目录是
-  `/`，`./rm_terminal.conf` 找不到、日志写不进去；`cpp/main.cpp` 只在「在 .app 里、工作目录是 /」时换目录，
+  `/`，`./rm_terminal.conf` 找不到、日志写不进去；`cpp/app/main.cpp` 只在「在 .app 里、工作目录是 /」时换目录，
   在终端里运行时一切照旧。
 - 终端先找自己旁边的 ffmpeg，再找 PATH：从访达打开时 PATH 里没有 Homebrew。
 - 第一次打开时 macOS 会问能不能访问本地网络，要点允许，否则连不上 192.168.12.1。

@@ -6,7 +6,7 @@ why it has none ("等待数据", "--"); nothing is drawn for data the protocol d
 The approved mockups are `~/图片/rm-ui-v5/1–9`; the program follows them.
 
 ## 2. Colors and materials
-`cpp/theme.{h,cpp}` and `qml/Theme.qml` hold the same tokens. Backdrop: deep navy gradient,
+`cpp/ui/theme.{h,cpp}` and `qml/Theme.qml` hold the same tokens. Backdrop: deep navy gradient,
 three soft light blooms, vignette and dither (`theme::backdrop`). Panels: translucent chamfered
 glass (`theme::paintGlass`, `GlassCard`, QML `GlassShape`), one cyan accent, faction red/blue.
 Floating layers (urgent next-step popup, settings, editor) use the opaque overlay colour.

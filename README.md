@@ -203,7 +203,7 @@ Linux 上是 `build/ubuntu/rm_terminal`，macOS 上是 `build/macos/rm_terminal`
 
 `sim/` 保留，它是本地运行和 `mode_regression_e2e` 的唯一数据源。模拟器依赖的两个模块
 已从 `core/` 迁入 `sim/`：`sim/constants.py`、`sim/video_protocol.py`，`sim/constants.py`
-只留模拟器实际引用的常量，终端侧显示词表由 `cpp/presentation.cpp` 承担。
+只留模拟器实际引用的常量，终端侧显示词表由 `cpp/ui/presentation.cpp` 承担。
 
 ### 已完成：换成 2027 官方协议
 
@@ -478,7 +478,19 @@ cp rm_terminal.conf.sample rm_terminal.conf
 
 | 路径 | 内容 |
 | --- | --- |
-| `cpp/` | C++ 主体：界面、数据链路、图传、状态模型 |
+| `cpp/` | C++ 主体，分成下面 12 个文件夹。画错了看 `panes/`，算错了看 `game/` 里同名去掉 `_pane` 的那个，几块一起错先看 `data/` |
+| `cpp/data/` | 收发数据：MQTT、解码、把己方/对方换成红蓝、存储、链路状态、控制器串口、键鼠控制 |
+| `cpp/video/` | 图传：拼包、解码、断了恢复、转发给指挥手、图传墙 |
+| `cpp/recording/` | 录像、回放、赛后复盘网页 |
+| `cpp/voice/` | 语音和战术提醒 |
+| `cpp/layout/` | 界面方案和界面设置页 |
+| `cpp/panes/` | 一块块面板（负责画）：顶栏、花名册、事件栏、大局、下一步、本车等 |
+| `cpp/map/` | 小地图、地图动画和标记、场地坐标 |
+| `cpp/ui/` | 主界面、弹窗、设置面板，共用的颜色和玻璃效果 |
+| `cpp/game/` | 比赛推算和发指令（负责算）：大局、下一步、增益、雷达情报、兑换、装配 |
+| `cpp/app/` | 程序入口、配置、日志、时钟、席位 |
+| `cpp/tools/` | 出截图的小程序，不属于终端本身 |
+| `cpp/tests/` | 全部 C++ 测试 |
 | `qml/` | QML 界面组件（顶栏、花名册、主题） |
 | `proto/rm_terminal.proto` | 2027 官方自定义终端协议（V1.0.0） |
 | `sim/` | Python 模拟器（赛事服务器、图传发送端） |
