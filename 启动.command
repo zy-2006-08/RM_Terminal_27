@@ -31,7 +31,19 @@ esac
 export RM_SELF_ID
 echo "[启动] 席位: $RM_SELF_ID"
 
-.venv/bin/python sim/control_panel.py &
-PANEL=$!
-trap 'kill "$PANEL" 2>/dev/null' EXIT
+# 控制面板是 Tk 写的；Homebrew 的 Python 默认不带 Tkinter。缺了就跳过面板，
+# 打印一行怎么装，而不是甩一屏 traceback。终端本体不受影响。
+if .venv/bin/python -c "import tkinter" >/dev/null 2>&1; then
+  .venv/bin/python sim/control_panel.py &
+  PANEL=$!
+  trap 'kill "$PANEL" 2>/dev/null' EXIT
+else
+  TK_PKG=$(.venv/bin/python -c 'import sys; print(f"python-tk@{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo python-tk)
+  echo "[启动] 没有控制面板需要的 Tkinter，本次跳过面板（终端本体照常启动）。"
+  if [ "$(uname -s)" = Darwin ]; then
+    echo "[启动] 要控制面板就关掉窗口，运行 brew install $TK_PKG 再重新启动。"
+  else
+    echo "[启动] 要控制面板就关掉窗口，运行 sudo apt install python3-tk 再重新启动。"
+  fi
+fi
 ./run.sh

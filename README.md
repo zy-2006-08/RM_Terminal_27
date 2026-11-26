@@ -275,6 +275,8 @@ Linux 上是 `build/ubuntu/rm_terminal`，macOS 上是 `build/macos/rm_terminal`
 
 ### 第一步：装依赖（只做一次）
 
+新 Mac 上可以直接运行 `bash scripts/install_macos.sh`，一次做完装依赖、建 `.venv`、编译、生成「RM 模拟器.app」和「RM 终端.app」两个启动器；已经装好的步骤会跳过。想手动做就照下面来。
+
 先装 Homebrew 包管理器（如果没装过），然后：
 
 ```sh
@@ -307,6 +309,14 @@ cd RM_Terminal_27
 python3 -m venv .venv
 .venv/bin/pip install protobuf paho-mqtt
 ```
+
+控制面板是 Tk 写的。Homebrew 的 Python 不自带 Tkinter，Mac 上要按 Python 版本补装（版本号跟 `python3 --version` 的前两位一致，装完不用重建 `.venv`）：
+
+```sh
+brew install python-tk@3.15   # 3.15 换成你的 python3 版本
+```
+
+Ubuntu 用 `sudo apt install python3-tk`。不装也能跑，只是没有控制面板，可以用 `sim/match_control.py` 的命令行控制比赛。
 
 ### 第四步：编译终端（改了代码才需要重做）
 
@@ -506,6 +516,8 @@ cp rm_terminal.conf.sample rm_terminal.conf
 | `scripts/shoot_roles.sh` | 三种席位 × 两档分辨率截图和布局 JSON，出到 `artifacts/roles/` |
 | `scripts/setup_voice.sh` | 安装 Linux 离线中文语音（Piper 超文） |
 | `scripts/install_ubuntu.sh` | Ubuntu 一键安装：建 `.venv`、编译、装桌面图标和真机配置 |
+| `scripts/install_macos.sh` | Mac 一键安装：装依赖、建 `.venv`、编译、生成两个启动器 app |
+| `scripts/make_mac_launchers.sh` | 只重新生成「RM 模拟器.app」「RM 终端.app」两个启动器 |
 | `scripts/ubuntu/` | 桌面图标用的启动脚本、「RM 真机」图标、真机配置模板 |
 | `docs/rules/` | 官方规则手册和通信协议 PDF |
 | `docs/proposal/` | 项目方案、3.2.1 章节正文和两张架构图 |

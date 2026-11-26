@@ -15,6 +15,10 @@ rm_terminal.log
 # macOS
 .DS_Store
 
+# macOS 开发启动器，本机用 scripts/make_mac_launchers.sh 生成
+/RM 模拟器.app/
+/RM 终端.app/
+
 # Editor / IDE
 .vscode/
 .idea/
