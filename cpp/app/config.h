@@ -1,24 +1,15 @@
 #pragma once
-
 #include "logging.h"
 #include <QString>
 #include <QStringList>
 
 namespace rm_terminal
 {
-
-    // Process exit-code contract, stable across tasks 1-6:
-    //   0 success
-    //   2 malformed command-line arguments (asserted by cpp/tests/assert_bad_args.cmake)
-    //   3 transport start failure (MQTT intake)
-    //   4 configuration or log-destination failure
-    //   5 evidence capture failure (--screenshot could not write the PNG, or
-    //     --dump-layout could not write the JSON)
-    constexpr int kExitSuccess = 0;
-    constexpr int kExitBadArguments = 2;
-    constexpr int kExitStartFailure = 3;
-    constexpr int kExitConfigError = 4;
-    constexpr int kExitEvidenceFailure = 5;
+    constexpr int kExitSuccess = 0;         // 成功
+    constexpr int kExitBadArguments = 2;    // 命令行参数写错
+    constexpr int kExitStartFailure = 3;    // 传输启动失败
+    constexpr int kExitConfigError = 4;     // 配置或日志文件失败
+    constexpr int kExitEvidenceFailure = 5; // 取证失败
 
     // Default configuration file, consulted when neither --config nor
     // RM_TERMINAL_CONFIG is supplied.

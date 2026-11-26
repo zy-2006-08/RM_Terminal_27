@@ -24,16 +24,20 @@ namespace rm_terminal
     {
         switch (level)
         {
-        case LogLevel::debug: return QStringLiteral("debug");
-        case LogLevel::info: return QStringLiteral("info");
-        case LogLevel::warning: return QStringLiteral("warning");
-        case LogLevel::error: return QStringLiteral("error");
+        case LogLevel::debug:
+            return QStringLiteral("debug");
+        case LogLevel::info:
+            return QStringLiteral("info");
+        case LogLevel::warning:
+            return QStringLiteral("warning");
+        case LogLevel::error:
+            return QStringLiteral("error");
         }
         return QStringLiteral("info");
     }
 
-    QString StructuredLog::format(const QString& timestamp, LogLevel level, const QString& event,
-                                  const QStringList& fields)
+    QString StructuredLog::format(const QString& timestamp, LogLevel level,
+                                  const QString& event, const QStringList& fields)
     {
         QString record = QStringLiteral("ts=%1 level=%2 event=%3")
                              .arg(timestamp, levelName(level), event);
@@ -45,7 +49,8 @@ namespace rm_terminal
         return record;
     }
 
-    bool StructuredLog::open(const QString& destination, LogLevel minimum, QString* error)
+    bool StructuredLog::open(const QString& destination, LogLevel minimum,
+                             QString* error)
     {
         QMutexLocker lock(&g_mutex);
         if (g_file)
@@ -57,7 +62,8 @@ namespace rm_terminal
         }
         g_threshold = minimum;
         auto candidate = new QFile(destination);
-        if (!candidate->open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text))
+        if (!candidate->open(QIODevice::WriteOnly | QIODevice::Append |
+                             QIODevice::Text))
         {
             if (error)
                 *error = candidate->errorString();
@@ -74,13 +80,15 @@ namespace rm_terminal
         return g_file != nullptr;
     }
 
-    void StructuredLog::write(LogLevel level, const QString& event, const QStringList& fields)
+    void StructuredLog::write(LogLevel level, const QString& event,
+                              const QStringList& fields)
     {
         QMutexLocker lock(&g_mutex);
         if (!g_file || static_cast<int>(level) < static_cast<int>(g_threshold))
             return;
-        const QString record = format(
-            QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs), level, event, fields);
+        const QString record =
+            format(QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs), level,
+                   event, fields);
         QTextStream out(g_file);
         out << record << '\n';
         out.flush();
