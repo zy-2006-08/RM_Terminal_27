@@ -1,0 +1,29 @@
+---
+# 项目 C++ 统一格式：Allman 大括号 + 4 空格缩进 + 不自动折行。
+# 之前没有这个文件，clangd / clang-format 会用内置默认样式（80 列折行、挂括号），
+# 导致“格式化文档”后和习惯的写法不一致。
+Language: Cpp
+BasedOnStyle: LLVM
+
+# 缩进
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+
+# 0 = 不按列宽自动换行，长行保持一行（格式化器不会把长行拆开）
+ColumnLimit: 0
+
+# 大括号：换行（Allman），namespace 内容缩进一层
+BreakBeforeBraces: Allman
+NamespaceIndentation: All
+
+# 和现有代码保持一致
+AccessModifierOffset: -4      # public: / private: 顶格
+PointerAlignment: Left        # QLabel* p
+DerivePointerAlignment: false
+AllowShortFunctionsOnASingleLine: All
+AllowShortCaseLabelsOnASingleLine: true
+SpacesBeforeTrailingComments: 1
+FixNamespaceComments: true
+# 不重排 #include，避免批量格式化时改变头文件顺序
+SortIncludes: Never

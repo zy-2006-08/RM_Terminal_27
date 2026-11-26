@@ -9,92 +9,101 @@
 #include <QVariantMap>
 #include <algorithm>
 
-namespace rm_terminal {
+namespace rm_terminal
+{
 
-namespace {
+    namespace
+    {
 
-// 必须与 TopBar.qml 的 root.height 一致:中央计时器切图高 106,是顶栏里最高的元素。
-constexpr int kTopBarHeight = 106;
+        // 必须与 TopBar.qml 的 root.height 一致:中央计时器切图高 106,是顶栏里最高的元素。
+        constexpr int kTopBarHeight = 106;
 
-QVariantMap card_of(const TopBarSlot& slot) {
-    QVariantMap map;
-    map[QStringLiteral("id")] = slot.id;
-    // 缺席槽位报 0,并靠 hasHp=false 表达「没有数据」。QML 侧不画填充,所以 0 不会
-    // 被误画成空血条。
-    map[QStringLiteral("hp")] = slot.hp ? *slot.hp : 0u;
-    map[QStringLiteral("maxHp")] = slot.max_hp ? *slot.max_hp : 0u;
-    map[QStringLiteral("hasHp")] = slot.has_hp();
-    map[QStringLiteral("online")] = slot.online;
-    map[QStringLiteral("cls")] = slot.robot_class;
-    return map;
-}
+        QVariantMap card_of(const TopBarSlot& slot)
+        {
+            QVariantMap map;
+            map[QStringLiteral("id")] = slot.id;
+            // 缺席槽位报 0,并靠 hasHp=false 表达「没有数据」。QML 侧不画填充,所以 0 不会
+            // 被误画成空血条。
+            map[QStringLiteral("hp")] = slot.hp ? *slot.hp : 0u;
+            map[QStringLiteral("maxHp")] = slot.max_hp ? *slot.max_hp : 0u;
+            map[QStringLiteral("hasHp")] = slot.has_hp();
+            map[QStringLiteral("online")] = slot.online;
+            map[QStringLiteral("cls")] = slot.robot_class;
+            return map;
+        }
 
-}  // namespace
+    } // namespace
 
-QVariantList top_bar_cards(const TopBarSide& side) {
-    QVariantList out;
-    for (const TopBarSlot& slot : side.cards) out.append(card_of(slot));
-    return out;
-}
+    QVariantList top_bar_cards(const TopBarSide& side)
+    {
+        QVariantList out;
+        for (const TopBarSlot& slot : side.cards)
+            out.append(card_of(slot));
+        return out;
+    }
 
-TopBar::TopBar(QWidget* parent) : QQuickWidget(parent) {
-    setResizeMode(QQuickWidget::SizeRootObjectToView);
-    setFixedHeight(kTopBarHeight);
-    // 底下垫窗口背景的切片(glass_items.h);清屏色只在切片到之前的第一帧露出来。
-    setClearColor(theme::kVoid);
-    prepare_quick_widget(this);
-    setSource(QUrl(QStringLiteral("qrc:/qml/TopBar.qml")));
-}
+    TopBar::TopBar(QWidget* parent) : QQuickWidget(parent)
+    {
+        setResizeMode(QQuickWidget::SizeRootObjectToView);
+        setFixedHeight(kTopBarHeight);
+        // 底下垫窗口背景的切片(glass_items.h);清屏色只在切片到之前的第一帧露出来。
+        setClearColor(theme::kVoid);
+        prepare_quick_widget(this);
+        setSource(QUrl(QStringLiteral("qrc:/qml/TopBar.qml")));
+    }
 
-void TopBar::setSnapshot(const Snapshot& snapshot, const BuffBoard* buffs) { apply(top_bar_model(snapshot, buffs)); }
+    void TopBar::setSnapshot(const Snapshot& snapshot, const BuffBoard* buffs) { apply(top_bar_model(snapshot, buffs)); }
 
-void TopBar::apply(const TopBarModel& model) {
-    QQuickItem* root = rootObject();
-    // 加载失败时静默返回而不是崩:顶部栏是显示层,协议数据仍在别处可见。加载失败
-    // 由 dashboard 的占位文字暴露,不在这里伪装成正常。
-    if (!root) return;
+    void TopBar::apply(const TopBarModel& model)
+    {
+        QQuickItem* root = rootObject();
+        // 加载失败时静默返回而不是崩:顶部栏是显示层,协议数据仍在别处可见。加载失败
+        // 由 dashboard 的占位文字暴露,不在这里伪装成正常。
+        if (!root)
+            return;
 
-    root->setProperty("redHp", model.red.base_hp ? *model.red.base_hp : 0u);
-    root->setProperty("redMaxHp", model.red.base_max_hp ? *model.red.base_max_hp : 0u);
-    root->setProperty("redHasHp", model.red.has_base_hp());
-    root->setProperty("blueHp", model.blue.base_hp ? *model.blue.base_hp : 0u);
-    root->setProperty("blueMaxHp", model.blue.base_max_hp ? *model.blue.base_max_hp : 0u);
-    root->setProperty("blueHasHp", model.blue.has_base_hp());
+        root->setProperty("redHp", model.red.base_hp ? *model.red.base_hp : 0u);
+        root->setProperty("redMaxHp", model.red.base_max_hp ? *model.red.base_max_hp : 0u);
+        root->setProperty("redHasHp", model.red.has_base_hp());
+        root->setProperty("blueHp", model.blue.base_hp ? *model.blue.base_hp : 0u);
+        root->setProperty("blueMaxHp", model.blue.base_max_hp ? *model.blue.base_max_hp : 0u);
+        root->setProperty("blueHasHp", model.blue.has_base_hp());
 
-    root->setProperty("redOutpostHp", model.red.outpost_hp ? *model.red.outpost_hp : 0u);
-    root->setProperty("redOutpostMaxHp",
-                      model.red.outpost_max_hp ? *model.red.outpost_max_hp : 0u);
-    root->setProperty("redOutpostHasHp", model.red.has_outpost_hp());
-    root->setProperty("redOutpostBlue", model.red.outpost_owned_by_blue);
-    root->setProperty("blueOutpostHp", model.blue.outpost_hp ? *model.blue.outpost_hp : 0u);
-    root->setProperty("blueOutpostMaxHp",
-                      model.blue.outpost_max_hp ? *model.blue.outpost_max_hp : 0u);
-    root->setProperty("blueOutpostHasHp", model.blue.has_outpost_hp());
-    root->setProperty("blueOutpostBlue", model.blue.outpost_owned_by_blue);
+        root->setProperty("redOutpostHp", model.red.outpost_hp ? *model.red.outpost_hp : 0u);
+        root->setProperty("redOutpostMaxHp",
+                          model.red.outpost_max_hp ? *model.red.outpost_max_hp : 0u);
+        root->setProperty("redOutpostHasHp", model.red.has_outpost_hp());
+        root->setProperty("redOutpostBlue", model.red.outpost_owned_by_blue);
+        root->setProperty("blueOutpostHp", model.blue.outpost_hp ? *model.blue.outpost_hp : 0u);
+        root->setProperty("blueOutpostMaxHp",
+                          model.blue.outpost_max_hp ? *model.blue.outpost_max_hp : 0u);
+        root->setProperty("blueOutpostHasHp", model.blue.has_outpost_hp());
+        root->setProperty("blueOutpostBlue", model.blue.outpost_owned_by_blue);
 
-    // -1 = 没有数据,QML 整行不画。
-    const auto code = [](const std::optional<std::uint32_t>& value) {
-        return value ? static_cast<int>(*value) : -1;
-    };
-    root->setProperty("redBaseStatus", code(model.red.base_status));
-    root->setProperty("blueBaseStatus", code(model.blue.base_status));
-    root->setProperty("redDefenseText", model.red.defense_text);
-    root->setProperty("blueDefenseText", model.blue.defense_text);
-    root->setProperty("redControl", code(model.red.control_points));
-    root->setProperty("blueControl", code(model.blue.control_points));
+        // -1 = 没有数据,QML 整行不画。
+        const auto code = [](const std::optional<std::uint32_t>& value)
+        {
+            return value ? static_cast<int>(*value) : -1;
+        };
+        root->setProperty("redBaseStatus", code(model.red.base_status));
+        root->setProperty("blueBaseStatus", code(model.blue.base_status));
+        root->setProperty("redDefenseText", model.red.defense_text);
+        root->setProperty("blueDefenseText", model.blue.defense_text);
+        root->setProperty("redControl", code(model.red.control_points));
+        root->setProperty("blueControl", code(model.blue.control_points));
 
-    root->setProperty("redTeamName", model.red.team_name);
-    root->setProperty("blueTeamName", model.blue.team_name);
+        root->setProperty("redTeamName", model.red.team_name);
+        root->setProperty("blueTeamName", model.blue.team_name);
 
-    root->setProperty("redScore", model.red.score);
-    root->setProperty("blueScore", model.blue.score);
-    root->setProperty("clockText", model.clock);
-    root->setProperty("roundText", model.round);
-    root->setProperty("stageText", model.stage);
-    root->setProperty("clockCritical", model.clock_critical);
+        root->setProperty("redScore", model.red.score);
+        root->setProperty("blueScore", model.blue.score);
+        root->setProperty("clockText", model.clock);
+        root->setProperty("roundText", model.round);
+        root->setProperty("stageText", model.stage);
+        root->setProperty("clockCritical", model.clock_critical);
 
-    root->setProperty("redRobots", top_bar_cards(model.red));
-    root->setProperty("blueRobots", top_bar_cards(model.blue));
-}
+        root->setProperty("redRobots", top_bar_cards(model.red));
+        root->setProperty("blueRobots", top_bar_cards(model.blue));
+    }
 
-}  // namespace rm_terminal
+} // namespace rm_terminal

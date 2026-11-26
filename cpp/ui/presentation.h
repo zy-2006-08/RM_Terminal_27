@@ -4,36 +4,41 @@
 #include <QString>
 #include <set>
 
-namespace rm_terminal {
+namespace rm_terminal
+{
 
-QString freshness_text(Freshness freshness);
-QString quality_text(Quality quality);
-QString snapshot_text(const Snapshot& snapshot);
+    QString freshness_text(Freshness freshness);
+    QString quality_text(Quality quality);
+    QString snapshot_text(const Snapshot& snapshot);
 
-// RMUC 2027 阵容（规则手册表 3-1，协议附录二）：1 重装 / 3,4 步兵 / 6 空中 / 7 哨兵，
-// 蓝方 +100，故 101 与 1 同为重装。
-// 返回空字符串表示该编号不在已知阵容内 —— 调用方必须显示编号本身而非编造兵种。
-QString robot_class_name(std::uint32_t robot_id);
+    // RMUC 2027 阵容（规则手册表 3-1，协议附录二）：1 重装 / 3,4 步兵 / 6 空中 / 7 哨兵，
+    // 蓝方 +100，故 101 与 1 同为重装。
+    // 返回空字符串表示该编号不在已知阵容内 —— 调用方必须显示编号本身而非编造兵种。
+    QString robot_class_name(std::uint32_t robot_id);
 
-// 官方选手端两侧均显示本方编号，以红/蓝配色区分阵营，不显示 101+ 的内部偏移编号。
-// 传入内部 ID，返回操作手看到的编号。
-std::uint32_t display_robot_number(std::uint32_t robot_id);
+    // 官方选手端两侧均显示本方编号，以红/蓝配色区分阵营，不显示 101+ 的内部偏移编号。
+    // 传入内部 ID，返回操作手看到的编号。
+    std::uint32_t display_robot_number(std::uint32_t robot_id);
 
-// Reports fields that aged into Stale since the previous call, so a field that
-// stays stale logs once per transition rather than once per snapshot.
-class StaleReporter {
-public:
-    void inspect(const Snapshot& snapshot);
-private:
-    std::set<QString> stale_;
-};
+    // Reports fields that aged into Stale since the previous call, so a field that
+    // stays stale logs once per transition rather than once per snapshot.
+    class StaleReporter
+    {
+    public:
+        void inspect(const Snapshot& snapshot);
 
-class PresentationState {
-public:
-    explicit PresentationState(Snapshot snapshot) : snapshot_(std::move(snapshot)) {}
-    const Snapshot& snapshot() const { return snapshot_; }
-private:
-    const Snapshot snapshot_;
-};
+    private:
+        std::set<QString> stale_;
+    };
 
-}
+    class PresentationState
+    {
+    public:
+        explicit PresentationState(Snapshot snapshot) : snapshot_(std::move(snapshot)) {}
+        const Snapshot& snapshot() const { return snapshot_; }
+
+    private:
+        const Snapshot snapshot_;
+    };
+
+} // namespace rm_terminal

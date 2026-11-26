@@ -15,26 +15,32 @@
 #include <cstdio>
 #include <cstdlib>
 
-namespace {
+namespace
+{
 
-void check(bool condition, const char* what) {
-    if (condition) return;
-    std::fprintf(stderr, "replay_player_test: FAILED: %s\n", what);
-    std::exit(1);
-}
-
-void process_for(int milliseconds) {
-    QElapsedTimer clock;
-    clock.start();
-    while (clock.elapsed() < milliseconds) {
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-        QThread::msleep(5);
+    void check(bool condition, const char* what)
+    {
+        if (condition)
+            return;
+        std::fprintf(stderr, "replay_player_test: FAILED: %s\n", what);
+        std::exit(1);
     }
-}
 
-}  // namespace
+    void process_for(int milliseconds)
+    {
+        QElapsedTimer clock;
+        clock.start();
+        while (clock.elapsed() < milliseconds)
+        {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            QThread::msleep(5);
+        }
+    }
 
-int main(int argc, char* argv[]) {
+} // namespace
+
+int main(int argc, char* argv[])
+{
     QCoreApplication app(argc, argv);
 
     QTemporaryDir directory;
@@ -46,7 +52,8 @@ int main(int argc, char* argv[]) {
     QString error;
     check(recorder.start(directory.path(), metadata, &error), "recorder start");
 
-    const auto publish = [&recorder](int score) {
+    const auto publish = [&recorder](int score)
+    {
         rm::GameStatus status;
         status.set_current_round(1);
         status.set_red_score(score);

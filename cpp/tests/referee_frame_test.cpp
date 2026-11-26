@@ -5,139 +5,155 @@
 #include <cstdio>
 #include <cstring>
 
-namespace {
+namespace
+{
 
-int failures = 0;
+    int failures = 0;
 
-void check(bool condition, const char* label) {
-    if (condition) return;
-    std::fprintf(stderr, "FAIL %s\n", label);
-    ++failures;
-}
-
-QByteArray joints_payload(const float (&joints)[6]) {
-    QByteArray data(rm_terminal::kCustomControllerDataBytes, '\0');
-    std::memcpy(data.data(), joints, sizeof(joints));
-    return data;
-}
-
-// 控制器固件(RM_Lib.hpp Data_Concatenation + 两张 CRC 表)按同样输入打出来的帧。
-// 字节由固件的查表逐字节复算得到;任何一张表抄错一项,这里就对不上。
-const char kFirmwareFrameHex[] =
-    "a51e0007fe0203cdcccc3dcdcc4c3e9a99993ecdcccc3e0000003f9a99193f0000000000004dee";
-
-void crc_matches_the_firmware_tables() {
-    const auto* text = reinterpret_cast<const std::uint8_t*>("123456789");
-    // CRC-16/MCRF4XX 的标准校验值:多项式 0x8408、初值 0xFFFF、不取反。
-    check(rm_terminal::referee_crc16(text, 9) == 0x6F91, "crc16 standard check value");
-    check(rm_terminal::referee_crc8(text, 9) == 0x0B, "crc8 with init 0xFF");
-}
-
-void encoding_matches_a_firmware_frame() {
-    const float joints[6] = {0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f};
-    const QByteArray frame = rm_terminal::encode_referee_frame(
-        rm_terminal::kCustomControllerCmd, joints_payload(joints), 7);
-    check(frame.size() == 39, "a 30-byte payload makes a 39-byte frame");
-    check(frame.toHex() == QByteArray(kFirmwareFrameHex), "byte-identical to the firmware frame");
-}
-
-void a_frame_split_across_reads_still_parses() {
-    const QByteArray frame = QByteArray::fromHex(kFirmwareFrameHex);
-    rm_terminal::RefereeFrameParser parser;
-    parser.feed(frame.constData(), 4);
-    check(!parser.next().has_value(), "half a header is not a frame yet");
-    parser.feed(frame.constData() + 4, 20);
-    check(!parser.next().has_value(), "half a frame is not a frame yet");
-    parser.feed(frame.constData() + 24, frame.size() - 24);
-    const auto parsed = parser.next();
-    check(parsed.has_value(), "the completed frame parses");
-    if (!parsed) return;
-    check(parsed->cmd_id == rm_terminal::kCustomControllerCmd, "command id 0x0302");
-    check(parsed->seq == 7, "sequence number");
-    check(parsed->data.size() == rm_terminal::kCustomControllerDataBytes, "30 data bytes");
-    float joints[6] = {};
-    std::memcpy(joints, parsed->data.constData(), sizeof(joints));
-    check(joints[0] == 0.1f && joints[5] == 0.6f, "joint floats survive little-endian");
-    check(parser.badFrames() == 0, "a clean stream has no bad frames");
-}
-
-void garbage_and_a_corrupt_frame_do_not_hide_the_next_good_one() {
-    const QByteArray good = QByteArray::fromHex(kFirmwareFrameHex);
-    QByteArray corrupt = good;
-    corrupt[20] = static_cast<char>(corrupt[20] ^ 0x01);
-
-    // 插拔时的典型字节流:一段含 0xA5 的垃圾、一帧数据段被翻转一位的坏帧、两帧好帧。
-    QByteArray stream = QByteArray::fromHex("00a5ff13a5");
-    stream += corrupt;
-    stream += good;
-    stream += good;
-
-    rm_terminal::RefereeFrameParser parser;
-    parser.feed(stream.constData(), stream.size());
-    int parsed = 0;
-    while (const auto frame = parser.next()) {
-        check(frame->data == good.mid(7, 30), "only the intact payload comes out");
-        ++parsed;
+    void check(bool condition, const char* label)
+    {
+        if (condition)
+            return;
+        std::fprintf(stderr, "FAIL %s\n", label);
+        ++failures;
     }
-    check(parsed == 2, "both good frames survive the garbage and the corrupt frame");
-    check(parser.badFrames() >= 1, "the corrupt frame is counted");
-}
 
-void an_absurd_length_resynchronises_immediately() {
-    // 帧头 CRC8 正确但长度 0xFFFF:不能为它干等 65535 字节。
-    QByteArray fake = QByteArray::fromHex("a5ffff00");
-    fake.append(static_cast<char>(
-        rm_terminal::referee_crc8(reinterpret_cast<const std::uint8_t*>(fake.constData()), 4)));
-    const QByteArray good = QByteArray::fromHex(kFirmwareFrameHex);
+    QByteArray joints_payload(const float (&joints)[6])
+    {
+        QByteArray data(rm_terminal::kCustomControllerDataBytes, '\0');
+        std::memcpy(data.data(), joints, sizeof(joints));
+        return data;
+    }
 
-    rm_terminal::RefereeFrameParser parser;
-    parser.feed(fake.constData(), fake.size());
-    parser.feed(good.constData(), good.size());
-    const auto frame = parser.next();
-    check(frame.has_value(), "the good frame after a fake length header parses at once");
-    check(parser.badFrames() == 1, "the fake header is counted once");
-}
+    // 控制器固件(RM_Lib.hpp Data_Concatenation + 两张 CRC 表)按同样输入打出来的帧。
+    // 字节由固件的查表逐字节复算得到;任何一张表抄错一项,这里就对不上。
+    const char kFirmwareFrameHex[] =
+        "a51e0007fe0203cdcccc3dcdcc4c3e9a99993ecdcccc3e0000003f9a99193f0000000000004dee";
 
-// sim/arm_protocol.py 按同样输入(关节 0.1..0.6、标志 2、seq 9)打出来的 0x0309 帧。
-const char kFeedbackFrameHex[] =
-    "a51e0009e10903cdcccc3dcdcc4c3e9a99993ecdcccc3e0000003f9a99193f020000000000fd52";
+    void crc_matches_the_firmware_tables()
+    {
+        const auto* text = reinterpret_cast<const std::uint8_t*>("123456789");
+        // CRC-16/MCRF4XX 的标准校验值:多项式 0x8408、初值 0xFFFF、不取反。
+        check(rm_terminal::referee_crc16(text, 9) == 0x6F91, "crc16 standard check value");
+        check(rm_terminal::referee_crc8(text, 9) == 0x0B, "crc8 with init 0xFF");
+    }
 
-QByteArray feedback_block(float first, std::uint8_t flag, int size = rm_terminal::kArmFeedbackBytes) {
-    const float joints[6] = {first, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f};
-    QByteArray block(size, '\0');
-    std::memcpy(block.data(), joints, sizeof(joints));
-    block[24] = static_cast<char>(flag);
-    return block;
-}
+    void encoding_matches_a_firmware_frame()
+    {
+        const float joints[6] = {0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f};
+        const QByteArray frame = rm_terminal::encode_referee_frame(
+            rm_terminal::kCustomControllerCmd, joints_payload(joints), 7);
+        check(frame.size() == 39, "a 30-byte payload makes a 39-byte frame");
+        check(frame.toHex() == QByteArray(kFirmwareFrameHex), "byte-identical to the firmware frame");
+    }
 
-void arm_feedback_is_relayed_in_the_firmware_0x0309_layout() {
-    const auto frame = rm_terminal::arm_feedback_frame(feedback_block(0.1f, 2), 9);
-    check(frame.has_value(), "a 25-byte block becomes a frame");
-    if (!frame) return;
-    check(frame->toHex() == QByteArray(kFeedbackFrameHex), "byte-identical to the simulator frame");
-    // 控制器固件 data_deal 的判法:[0]==0xA5、[5]==0x09、[6]==0x03,关节从第 7 字节起,标志在第 31 字节。
-    check(static_cast<std::uint8_t>(frame->at(5)) == 0x09 && frame->at(6) == 0x03,
-          "the command bytes are what the firmware checks");
-    check(frame->at(31) == 2, "the follow flag sits where the firmware reads it");
+    void a_frame_split_across_reads_still_parses()
+    {
+        const QByteArray frame = QByteArray::fromHex(kFirmwareFrameHex);
+        rm_terminal::RefereeFrameParser parser;
+        parser.feed(frame.constData(), 4);
+        check(!parser.next().has_value(), "half a header is not a frame yet");
+        parser.feed(frame.constData() + 4, 20);
+        check(!parser.next().has_value(), "half a frame is not a frame yet");
+        parser.feed(frame.constData() + 24, frame.size() - 24);
+        const auto parsed = parser.next();
+        check(parsed.has_value(), "the completed frame parses");
+        if (!parsed)
+            return;
+        check(parsed->cmd_id == rm_terminal::kCustomControllerCmd, "command id 0x0302");
+        check(parsed->seq == 7, "sequence number");
+        check(parsed->data.size() == rm_terminal::kCustomControllerDataBytes, "30 data bytes");
+        float joints[6] = {};
+        std::memcpy(joints, parsed->data.constData(), sizeof(joints));
+        check(joints[0] == 0.1f && joints[5] == 0.6f, "joint floats survive little-endian");
+        check(parser.badFrames() == 0, "a clean stream has no bad frames");
+    }
 
-    const auto longer = rm_terminal::arm_feedback_frame(feedback_block(0.1f, 2, 300), 9);
-    check(longer && *longer == *frame, "a padded 300-byte block relays only the first 25 bytes");
-    check(!rm_terminal::arm_feedback_frame(feedback_block(0.1f, 2).left(24), 9),
-          "a short block is not relayed");
-    check(!rm_terminal::arm_feedback_frame(feedback_block(std::nanf(""), 2), 9),
-          "a non-finite joint angle is not relayed");
-}
+    void garbage_and_a_corrupt_frame_do_not_hide_the_next_good_one()
+    {
+        const QByteArray good = QByteArray::fromHex(kFirmwareFrameHex);
+        QByteArray corrupt = good;
+        corrupt[20] = static_cast<char>(corrupt[20] ^ 0x01);
 
-}  // namespace
+        // 插拔时的典型字节流:一段含 0xA5 的垃圾、一帧数据段被翻转一位的坏帧、两帧好帧。
+        QByteArray stream = QByteArray::fromHex("00a5ff13a5");
+        stream += corrupt;
+        stream += good;
+        stream += good;
 
-int main() {
+        rm_terminal::RefereeFrameParser parser;
+        parser.feed(stream.constData(), stream.size());
+        int parsed = 0;
+        while (const auto frame = parser.next())
+        {
+            check(frame->data == good.mid(7, 30), "only the intact payload comes out");
+            ++parsed;
+        }
+        check(parsed == 2, "both good frames survive the garbage and the corrupt frame");
+        check(parser.badFrames() >= 1, "the corrupt frame is counted");
+    }
+
+    void an_absurd_length_resynchronises_immediately()
+    {
+        // 帧头 CRC8 正确但长度 0xFFFF:不能为它干等 65535 字节。
+        QByteArray fake = QByteArray::fromHex("a5ffff00");
+        fake.append(static_cast<char>(
+            rm_terminal::referee_crc8(reinterpret_cast<const std::uint8_t*>(fake.constData()), 4)));
+        const QByteArray good = QByteArray::fromHex(kFirmwareFrameHex);
+
+        rm_terminal::RefereeFrameParser parser;
+        parser.feed(fake.constData(), fake.size());
+        parser.feed(good.constData(), good.size());
+        const auto frame = parser.next();
+        check(frame.has_value(), "the good frame after a fake length header parses at once");
+        check(parser.badFrames() == 1, "the fake header is counted once");
+    }
+
+    // sim/arm_protocol.py 按同样输入(关节 0.1..0.6、标志 2、seq 9)打出来的 0x0309 帧。
+    const char kFeedbackFrameHex[] =
+        "a51e0009e10903cdcccc3dcdcc4c3e9a99993ecdcccc3e0000003f9a99193f020000000000fd52";
+
+    QByteArray feedback_block(float first, std::uint8_t flag, int size = rm_terminal::kArmFeedbackBytes)
+    {
+        const float joints[6] = {first, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f};
+        QByteArray block(size, '\0');
+        std::memcpy(block.data(), joints, sizeof(joints));
+        block[24] = static_cast<char>(flag);
+        return block;
+    }
+
+    void arm_feedback_is_relayed_in_the_firmware_0x0309_layout()
+    {
+        const auto frame = rm_terminal::arm_feedback_frame(feedback_block(0.1f, 2), 9);
+        check(frame.has_value(), "a 25-byte block becomes a frame");
+        if (!frame)
+            return;
+        check(frame->toHex() == QByteArray(kFeedbackFrameHex), "byte-identical to the simulator frame");
+        // 控制器固件 data_deal 的判法:[0]==0xA5、[5]==0x09、[6]==0x03,关节从第 7 字节起,标志在第 31 字节。
+        check(static_cast<std::uint8_t>(frame->at(5)) == 0x09 && frame->at(6) == 0x03,
+              "the command bytes are what the firmware checks");
+        check(frame->at(31) == 2, "the follow flag sits where the firmware reads it");
+
+        const auto longer = rm_terminal::arm_feedback_frame(feedback_block(0.1f, 2, 300), 9);
+        check(longer && *longer == *frame, "a padded 300-byte block relays only the first 25 bytes");
+        check(!rm_terminal::arm_feedback_frame(feedback_block(0.1f, 2).left(24), 9),
+              "a short block is not relayed");
+        check(!rm_terminal::arm_feedback_frame(feedback_block(std::nanf(""), 2), 9),
+              "a non-finite joint angle is not relayed");
+    }
+
+} // namespace
+
+int main()
+{
     crc_matches_the_firmware_tables();
     encoding_matches_a_firmware_frame();
     a_frame_split_across_reads_still_parses();
     garbage_and_a_corrupt_frame_do_not_hide_the_next_good_one();
     an_absurd_length_resynchronises_immediately();
     arm_feedback_is_relayed_in_the_firmware_0x0309_layout();
-    if (failures != 0) {
+    if (failures != 0)
+    {
         std::fprintf(stderr, "referee_frame_test: %d check(s) failed\n", failures);
         return 1;
     }

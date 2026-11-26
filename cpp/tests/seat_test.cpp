@@ -5,17 +5,22 @@
 
 using namespace rm_terminal;
 
-namespace {
+namespace
+{
 
-void check(bool condition, const char* name) {
-    if (!condition) throw std::runtime_error(name);
-    std::cout << "PASS " << name << '\n';
-}
+    void check(bool condition, const char* name)
+    {
+        if (!condition)
+            throw std::runtime_error(name);
+        std::cout << "PASS " << name << '\n';
+    }
 
-}  // namespace
+} // namespace
 
-int main() {
-    try {
+int main()
+{
+    try
+    {
         for (const int id : {1, 3, 4, 6, 101, 103, 104, 106})
             check(Seat::fromRobotId(id).has_value(), "every 2027 operator seat is legal");
         for (const int id : {0, 2, 5, 7, 8, 100, 102, 105, 107, 111, -3})
@@ -40,7 +45,9 @@ int main() {
                   role_name(Role::Commander) == QStringLiteral("commander") &&
                   role_name(Role::Infantry) == QStringLiteral("infantry"),
               "role names for logs and layout dumps");
-    } catch (const std::exception& error) {
+    }
+    catch (const std::exception& error)
+    {
         std::cerr << "FAIL " << error.what() << '\n';
         return 1;
     }

@@ -17,131 +17,136 @@
 #include <optional>
 #include <vector>
 
-namespace rm_terminal {
+namespace rm_terminal
+{
 
-// 2027 雷达消息每次报 8 台(双方 1、3、4、7),地图据此说「收到 4/8」而不是看起来齐全。
-constexpr std::size_t kExpectedRobotCount = 8;
+    // 2027 雷达消息每次报 8 台(双方 1、3、4、7),地图据此说「收到 4/8」而不是看起来齐全。
+    constexpr std::size_t kExpectedRobotCount = 8;
 
-// 故障行的行距。故障行叠在场地上而不是占用独立状态带:预留出来的带子在常态下
-// 是一条永久黑缝,而故障是不常见情况,不该长期收走地图高度。
-constexpr int kStatusLineHeight = 16;
+    // 故障行的行距。故障行叠在场地上而不是占用独立状态带:预留出来的带子在常态下
+    // 是一条永久黑缝,而故障是不常见情况,不该长期收走地图高度。
+    constexpr int kStatusLineHeight = 16;
 
-// 场地是横向的(28:15),纵向槽位里多出来的高度只能画成上下黑边 —— 占掉格高却
-// 不承载信息。地图据此申报自己用得上的高度,富余留给别的面板。
-int map_height_for_width(const FieldExtent& field, int width);
+    // 场地是横向的(28:15),纵向槽位里多出来的高度只能画成上下黑边 —— 占掉格高却
+    // 不承载信息。地图据此申报自己用得上的高度,富余留给别的面板。
+    int map_height_for_width(const FieldExtent& field, int width);
 
-// Where the field is actually drawn inside a widget of this size: fit_viewport over
-// the whole widget, so a widget sized at map_height_for_width is covered edge to
-// edge. Exposed so callers and tests can locate the field without duplicating the
-// layout.
-MapViewport map_viewport(const FieldExtent& field, int widget_width, int widget_height);
+    // Where the field is actually drawn inside a widget of this size: fit_viewport over
+    // the whole widget, so a widget sized at map_height_for_width is covered edge to
+    // edge. Exposed so callers and tests can locate the field without duplicating the
+    // layout.
+    MapViewport map_viewport(const FieldExtent& field, int widget_width, int widget_height);
 
-QColor faction_color(std::uint32_t faction);
+    QColor faction_color(std::uint32_t faction);
 
-// A Snapshot field group reduced to the values the painter needs. The pane keeps
-// these by value: a Snapshot is a per-tick temporary, so holding a reference to
-// one would dangle.
-struct MapMarker {
-    RobotId id{0};
-    std::uint32_t faction = 0;
-    bool is_self = false;
-    double x_m = 0.0;
-    double y_m = 0.0;
-    double yaw_deg = 0.0;
-    bool has_position = false;
-    bool has_yaw = false;
-    bool stale = false;
-    // 雷达特殊标识:0 否 1 是 2 是但目标定位模块离线。
-    std::uint32_t highlight = 0;
-};
+    // A Snapshot field group reduced to the values the painter needs. The pane keeps
+    // these by value: a Snapshot is a per-tick temporary, so holding a reference to
+    // one would dangle.
+    struct MapMarker
+    {
+        RobotId id{0};
+        std::uint32_t faction = 0;
+        bool is_self = false;
+        double x_m = 0.0;
+        double y_m = 0.0;
+        double yaw_deg = 0.0;
+        bool has_position = false;
+        bool has_yaw = false;
+        bool stale = false;
+        // 雷达特殊标识:0 否 1 是 2 是但目标定位模块离线。
+        std::uint32_t highlight = 0;
+    };
 
-std::vector<MapMarker> markers_from(const std::vector<MapRobot>& robots);
+    std::vector<MapMarker> markers_from(const std::vector<MapRobot>& robots);
 
-QString robot_label(const MapMarker& marker);
+    QString robot_label(const MapMarker& marker);
 
-// An empty spot on the map cannot distinguish "no data" from "not in this match"
-// from "renderer broke", and under time pressure reads as "that robot is not
-// here". So whatever is not drawn must be named in text instead.
-struct MapStatus {
-    QStringList missing;
-    QStringList out_of_bounds;
-    std::size_t received = 0;
-    bool self_position_unavailable = false;
-};
+    // An empty spot on the map cannot distinguish "no data" from "not in this match"
+    // from "renderer broke", and under time pressure reads as "that robot is not
+    // here". So whatever is not drawn must be named in text instead.
+    struct MapStatus
+    {
+        QStringList missing;
+        QStringList out_of_bounds;
+        std::size_t received = 0;
+        bool self_position_unavailable = false;
+    };
 
-MapStatus map_status(const std::vector<MapMarker>& markers, const FieldExtent& field);
+    MapStatus map_status(const std::vector<MapMarker>& markers, const FieldExtent& field);
 
-// 能量机关增益的倒计时圈,画在场地正中的能量机关上。fraction 是还剩多少(1 = 满圈),
-// 不知道开了多久时画满圈。
-struct RuneRing {
-    std::uint32_t faction = 0;
-    QString label;
-    double fraction = 1.0;
-    bool paused = false;
-    bool estimated = false;
-};
+    // 能量机关增益的倒计时圈,画在场地正中的能量机关上。fraction 是还剩多少(1 = 满圈),
+    // 不知道开了多久时画满圈。
+    struct RuneRing
+    {
+        std::uint32_t faction = 0;
+        QString label;
+        double fraction = 1.0;
+        bool paused = false;
+        bool estimated = false;
+    };
 
-class MapPane final : public QWidget {
-public:
-    explicit MapPane(QWidget* parent = nullptr);
+    class MapPane final : public QWidget
+    {
+    public:
+        explicit MapPane(QWidget* parent = nullptr);
 
-    void setRobots(const std::vector<MapRobot>& robots);
+        void setRobots(const std::vector<MapRobot>& robots);
 
-    // 我方基地被攻击时闪我方半场的边框。`bright` 由调用方按时间交替,实现闪烁。
-    void setBaseAlert(bool active, bool our_side_left, bool bright);
+        // 我方基地被攻击时闪我方半场的边框。`bright` 由调用方按时间交替,实现闪烁。
+        void setBaseAlert(bool active, bool our_side_left, bool bright);
 
-    // 地图标记(收到的和自己发的)与哨兵规划路径,每个 tick 由调用方整体替换。
-    void setMarks(const std::vector<DrawnMark>& marks);
-    // 残血敌人(机器人 id),标记外面套一圈红光,和花名册的残血提示对上。
-    void setLowHealth(const std::vector<std::uint32_t>& ids);
-    void setSentryPath(const std::vector<std::pair<double, double>>& points);
-    void setRuneRings(const std::vector<RuneRing>& rings);
-    // 事件动画(map_effects.h)。now 是这一批算出来的时刻:动画按它往后用本机时钟走,
-    // 回放时也对得上。有动画时地图每 33 毫秒重画一次,没有就停。
-    void setEffects(std::vector<MapEffect> effects, MonotonicMs now);
-    const std::vector<MapEffect>& effects() const { return effects_; }
+        // 地图标记(收到的和自己发的)与哨兵规划路径,每个 tick 由调用方整体替换。
+        void setMarks(const std::vector<DrawnMark>& marks);
+        // 残血敌人(机器人 id),标记外面套一圈红光,和花名册的残血提示对上。
+        void setLowHealth(const std::vector<std::uint32_t>& ids);
+        void setSentryPath(const std::vector<std::pair<double, double>>& points);
+        void setRuneRings(const std::vector<RuneRing>& rings);
+        // 事件动画(map_effects.h)。now 是这一批算出来的时刻:动画按它往后用本机时钟走,
+        // 回放时也对得上。有动画时地图每 33 毫秒重画一次,没有就停。
+        void setEffects(std::vector<MapEffect> effects, MonotonicMs now);
+        const std::vector<MapEffect>& effects() const { return effects_; }
 
-    // 操作手的界面设置:场地底图不透明度(0.2–1.0),画不画敌方机器人和地图标记。
-    // 藏起来的敌方只是不画,地图下方的「位置缺失」文字照常,点选敌方标记照常。
-    void setDisplayOptions(double background_opacity, bool show_enemies, bool show_marks,
-                           std::uint32_t own_faction);
+        // 操作手的界面设置:场地底图不透明度(0.2–1.0),画不画敌方机器人和地图标记。
+        // 藏起来的敌方只是不画,地图下方的「位置缺失」文字照常,点选敌方标记照常。
+        void setDisplayOptions(double background_opacity, bool show_enemies, bool show_marks,
+                               std::uint32_t own_faction);
 
-    // 指挥手:点地图下标记。点到敌方机器人(22 像素内)时 enemy_id 有值,否则是点位标记。
-    // 没设回调时地图不响应点击。
-    using ClickHandler = std::function<void(double x_m, double y_m, std::optional<std::uint32_t> enemy_id)>;
-    void setClickHandler(ClickHandler handler, std::uint32_t own_faction);
-    // 给测试和截图用:模拟一次点击,返回是否落在场地内。
-    bool clickAt(QPointF pixel);
+        // 指挥手:点地图下标记。点到敌方机器人(22 像素内)时 enemy_id 有值,否则是点位标记。
+        // 没设回调时地图不响应点击。
+        using ClickHandler = std::function<void(double x_m, double y_m, std::optional<std::uint32_t> enemy_id)>;
+        void setClickHandler(ClickHandler handler, std::uint32_t own_faction);
+        // 给测试和截图用:模拟一次点击,返回是否落在场地内。
+        bool clickAt(QPointF pixel);
 
-    bool hasHeightForWidth() const override { return true; }
-    int heightForWidth(int width) const override;
-    QSize sizeHint() const override;
+        bool hasHeightForWidth() const override { return true; }
+        int heightForWidth(int width) const override;
+        QSize sizeHint() const override;
 
-protected:
-    void paintEvent(QPaintEvent* event) override;
-    void mousePressEvent(QMouseEvent* event) override;
+    protected:
+        void paintEvent(QPaintEvent* event) override;
+        void mousePressEvent(QMouseEvent* event) override;
 
-private:
-    std::vector<MapMarker> markers_;
-    std::vector<DrawnMark> marks_;
-    std::vector<std::uint32_t> low_health_;
-    std::vector<std::pair<double, double>> sentry_path_;
-    std::vector<RuneRing> rune_rings_;
-    std::vector<MapEffect> effects_;
-    MonotonicMs effects_now_ = 0;
-    MonotonicMs effects_wall_ = 0;
-    QTimer effect_timer_;
-    ClickHandler click_handler_;
-    std::uint32_t own_faction_ = 1;
-    FieldExtent field_ = default_field_extent();
-    bool base_alert_ = false;
-    bool base_alert_left_ = true;
-    bool base_alert_bright_ = true;
-    double background_opacity_;
-    QPixmap scaled_background_;
-    bool show_enemies_ = true;
-    bool show_marks_ = true;
-    std::uint32_t display_faction_ = 1;
-};
+    private:
+        std::vector<MapMarker> markers_;
+        std::vector<DrawnMark> marks_;
+        std::vector<std::uint32_t> low_health_;
+        std::vector<std::pair<double, double>> sentry_path_;
+        std::vector<RuneRing> rune_rings_;
+        std::vector<MapEffect> effects_;
+        MonotonicMs effects_now_ = 0;
+        MonotonicMs effects_wall_ = 0;
+        QTimer effect_timer_;
+        ClickHandler click_handler_;
+        std::uint32_t own_faction_ = 1;
+        FieldExtent field_ = default_field_extent();
+        bool base_alert_ = false;
+        bool base_alert_left_ = true;
+        bool base_alert_bright_ = true;
+        double background_opacity_;
+        QPixmap scaled_background_;
+        bool show_enemies_ = true;
+        bool show_marks_ = true;
+        std::uint32_t display_faction_ = 1;
+    };
 
-}  // namespace rm_terminal
+} // namespace rm_terminal

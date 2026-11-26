@@ -6,17 +6,22 @@
 #include <cstdio>
 #include <stdexcept>
 
-namespace {
+namespace
+{
 
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
+    void check(bool condition, const char* message)
+    {
+        if (!condition)
+            throw std::runtime_error(message);
+    }
 
-}  // namespace
+} // namespace
 
-int main() {
+int main()
+{
     QTemporaryDir directory;
-    if (!directory.isValid()) throw std::runtime_error("temporary directory unavailable");
+    if (!directory.isValid())
+        throw std::runtime_error("temporary directory unavailable");
 
     rm_terminal::RecordingMetadata metadata;
     metadata.self_robot_id = 3;

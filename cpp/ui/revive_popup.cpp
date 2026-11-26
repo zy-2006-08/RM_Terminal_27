@@ -11,156 +11,181 @@
 
 #include <algorithm>
 
-namespace rm_terminal {
+namespace rm_terminal
+{
 
-namespace {
+    namespace
+    {
 
-constexpr int kWidth = 460;
-constexpr int kTitleHeight = 40;
-constexpr int kBarHeight = 8;
-constexpr int kLineHeight = 18;
-constexpr int kPad = 16;
+        constexpr int kWidth = 460;
+        constexpr int kTitleHeight = 40;
+        constexpr int kBarHeight = 8;
+        constexpr int kLineHeight = 18;
+        constexpr int kPad = 16;
 
-QPushButton* make_button(QWidget* parent, const char* name) {
-    auto* button = new GlassButton(QString(), parent);
-    button->setObjectName(QString::fromLatin1(name));
-    button->setCursor(Qt::PointingHandCursor);
-    button->setFocusPolicy(Qt::NoFocus);
-    return button;
-}
+        QPushButton* make_button(QWidget* parent, const char* name)
+        {
+            auto* button = new GlassButton(QString(), parent);
+            button->setObjectName(QString::fromLatin1(name));
+            button->setCursor(Qt::PointingHandCursor);
+            button->setFocusPolicy(Qt::NoFocus);
+            return button;
+        }
 
-}  // namespace
+    } // namespace
 
-RevivePopup::RevivePopup(QWidget* host) : QWidget(host) {
-    setObjectName(QStringLiteral("revivePopup"));
-    auto* column = new QVBoxLayout(this);
-    column->setContentsMargins(kPad, kPad + kTitleHeight + kBarHeight + 10, kPad, kPad);
-    column->setSpacing(8);
-    auto* buttons = new QHBoxLayout;
-    buttons->setSpacing(8);
-    pay_button_ = make_button(this, "revivePay");
-    free_button_ = make_button(this, "reviveFree");
-    buttons->addWidget(pay_button_, 1);
-    buttons->addWidget(free_button_, 1);
-    column->addLayout(buttons);
-    column->addSpacing(kLineHeight * 2 + 4);
+    RevivePopup::RevivePopup(QWidget* host) : QWidget(host)
+    {
+        setObjectName(QStringLiteral("revivePopup"));
+        auto* column = new QVBoxLayout(this);
+        column->setContentsMargins(kPad, kPad + kTitleHeight + kBarHeight + 10, kPad, kPad);
+        column->setSpacing(8);
+        auto* buttons = new QHBoxLayout;
+        buttons->setSpacing(8);
+        pay_button_ = make_button(this, "revivePay");
+        free_button_ = make_button(this, "reviveFree");
+        buttons->addWidget(pay_button_, 1);
+        buttons->addWidget(free_button_, 1);
+        column->addLayout(buttons);
+        column->addSpacing(kLineHeight * 2 + 4);
 
-    QObject::connect(pay_button_, &QPushButton::clicked, this, [this] {
-        if (pay_) pay_();
-    });
-    QObject::connect(free_button_, &QPushButton::clicked, this, [this] {
-        if (confirm_free_) confirm_free_();
-    });
-    if (host) host->installEventFilter(this);
-    setVisible(false);
-    refresh();
-}
-
-void RevivePopup::setView(const SelfCommandView& view) {
-    view_ = view;
-    refresh();
-}
-
-void RevivePopup::setLinkUp(bool up) {
-    link_up_ = up;
-    refresh();
-}
-
-void RevivePopup::setActions(std::function<void()> confirm_free, std::function<void()> pay) {
-    confirm_free_ = std::move(confirm_free);
-    pay_ = std::move(pay);
-}
-
-void RevivePopup::setStatus(const QString& status) {
-    if (status_ == status) return;
-    status_ = status;
-    update();
-}
-
-void RevivePopup::setWindowActive(bool active) {
-    if (window_active_ == active) return;
-    window_active_ = active;
-    update();
-}
-
-QString RevivePopup::titleText() const {
-    if (view_.can_free_revive.value_or(false)) return QStringLiteral("可以复活");
-    if (view_.revive_total && view_.revive_current && *view_.revive_total >= *view_.revive_current)
-        return QStringLiteral("复活中 %1s").arg(*view_.revive_total - *view_.revive_current);
-    return QStringLiteral("复活中");
-}
-
-void RevivePopup::refresh() {
-    const bool dead = view_.dead.value_or(false);
-    const bool can_pay = view_.can_pay_revive.value_or(true);
-    const QString cost = view_.revive_cost ? QString::number(*view_.revive_cost) : QStringLiteral("--");
-    pay_button_->setText(can_pay ? QStringLiteral("金币复活 · %1金 [F1]").arg(cost)
-                                 : QStringLiteral("%1 金币不足").arg(cost));
-    pay_button_->setEnabled(link_up_ && can_pay);
-    free_button_->setText(QStringLiteral("免费复活 [Y]"));
-    free_button_->setEnabled(link_up_ && view_.can_free_revive.value_or(false));
-    if (dead != isVisible()) setVisible(dead);
-    if (dead) {
-        place();
-        raise();
-    }
-    update();
-}
-
-void RevivePopup::place() {
-    QWidget* host = parentWidget();
-    if (!host) return;
-    const int width = std::min(kWidth, host->width() - 40);
-    const int height = sizeHint().height();
-    // 中心放在半高处:上面是「下一步」三张卡(第 1 张也会说怎么复活),不能盖住。
-    setGeometry((host->width() - width) / 2, std::max(0, host->height() / 2 - height / 2), width, height);
-}
-
-QSize RevivePopup::sizeHint() const {
-    return QSize(kWidth, kPad * 2 + kTitleHeight + kBarHeight + 10 + 42 + 8 + kLineHeight * 2 + 4);
-}
-
-bool RevivePopup::eventFilter(QObject* watched, QEvent* event) {
-    if (watched == parentWidget() && event->type() == QEvent::Resize && isVisible()) place();
-    return false;
-}
-
-void RevivePopup::paintEvent(QPaintEvent*) {
-    QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    const QRectF box = QRectF(rect()).adjusted(1, 1, -1, -1);
-    theme::paintGlass(painter, box, 10, false, theme::kOverlay, theme::kOk, true);
-
-    const int inner = width() - kPad * 2;
-    painter.setFont(theme::labelPx(24, QFont::Bold));
-    painter.setPen(theme::kTextPrimary);
-    painter.drawText(QRect(kPad, kPad, inner, kTitleHeight), Qt::AlignCenter, titleText());
-
-    const QRect track(kPad + 30, kPad + kTitleHeight, inner - 60, kBarHeight);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor(255, 255, 255, 18));
-    painter.drawPath(theme::skewBar(QRectF(track), -24));
-    if (view_.revive_total && *view_.revive_total > 0) {
-        const double ratio =
-            std::clamp(static_cast<double>(view_.revive_current.value_or(0)) / *view_.revive_total, 0.0, 1.0);
-        painter.setBrush(theme::kOk);
-        painter.drawPath(theme::skewBar(QRectF(track.left(), track.top(), track.width() * ratio, track.height()), -24));
+        QObject::connect(pay_button_, &QPushButton::clicked, this, [this]
+                         {
+        if (pay_) pay_(); });
+        QObject::connect(free_button_, &QPushButton::clicked, this, [this]
+                         {
+        if (confirm_free_) confirm_free_(); });
+        if (host)
+            host->installEventFilter(this);
+        setVisible(false);
+        refresh();
     }
 
-    const int text_top = pay_button_->geometry().bottom() + 10;
-    painter.setFont(theme::labelPx(13));
-    painter.setPen(theme::kTextSecondary);
-    painter.drawText(QRect(kPad, text_top, inner, kLineHeight), Qt::AlignLeft | Qt::AlignVCenter,
-                     painter.fontMetrics().elidedText(
-                         QStringLiteral("免费复活后 10% 血量、进入虚弱(发射机构锁定),占增益点解除"),
-                         Qt::ElideRight, inner));
-    const QString second = !link_up_          ? QStringLiteral("断线，指令不会发送")
-                           : !window_active_   ? QStringLiteral("终端窗口不在前台：先点一下终端，再按 Y")
-                           : !status_.isEmpty() ? status_
-                                                : QStringLiteral("金币复活满血，3 秒后解除虚弱");
-    painter.setPen(!link_up_ ? theme::kDanger : !window_active_ ? theme::kWarn : theme::kTextMuted);
-    painter.drawText(QRect(kPad, text_top + kLineHeight, inner, kLineHeight), Qt::AlignLeft | Qt::AlignVCenter,
-                     painter.fontMetrics().elidedText(second, Qt::ElideRight, inner));
-}
+    void RevivePopup::setView(const SelfCommandView& view)
+    {
+        view_ = view;
+        refresh();
+    }
 
-}  // namespace rm_terminal
+    void RevivePopup::setLinkUp(bool up)
+    {
+        link_up_ = up;
+        refresh();
+    }
+
+    void RevivePopup::setActions(std::function<void()> confirm_free, std::function<void()> pay)
+    {
+        confirm_free_ = std::move(confirm_free);
+        pay_ = std::move(pay);
+    }
+
+    void RevivePopup::setStatus(const QString& status)
+    {
+        if (status_ == status)
+            return;
+        status_ = status;
+        update();
+    }
+
+    void RevivePopup::setWindowActive(bool active)
+    {
+        if (window_active_ == active)
+            return;
+        window_active_ = active;
+        update();
+    }
+
+    QString RevivePopup::titleText() const
+    {
+        if (view_.can_free_revive.value_or(false))
+            return QStringLiteral("可以复活");
+        if (view_.revive_total && view_.revive_current && *view_.revive_total >= *view_.revive_current)
+            return QStringLiteral("复活中 %1s").arg(*view_.revive_total - *view_.revive_current);
+        return QStringLiteral("复活中");
+    }
+
+    void RevivePopup::refresh()
+    {
+        const bool dead = view_.dead.value_or(false);
+        const bool can_pay = view_.can_pay_revive.value_or(true);
+        const QString cost = view_.revive_cost ? QString::number(*view_.revive_cost) : QStringLiteral("--");
+        pay_button_->setText(can_pay ? QStringLiteral("金币复活 · %1金 [F1]").arg(cost)
+                                     : QStringLiteral("%1 金币不足").arg(cost));
+        pay_button_->setEnabled(link_up_ && can_pay);
+        free_button_->setText(QStringLiteral("免费复活 [Y]"));
+        free_button_->setEnabled(link_up_ && view_.can_free_revive.value_or(false));
+        if (dead != isVisible())
+            setVisible(dead);
+        if (dead)
+        {
+            place();
+            raise();
+        }
+        update();
+    }
+
+    void RevivePopup::place()
+    {
+        QWidget* host = parentWidget();
+        if (!host)
+            return;
+        const int width = std::min(kWidth, host->width() - 40);
+        const int height = sizeHint().height();
+        // 中心放在半高处:上面是「下一步」三张卡(第 1 张也会说怎么复活),不能盖住。
+        setGeometry((host->width() - width) / 2, std::max(0, host->height() / 2 - height / 2), width, height);
+    }
+
+    QSize RevivePopup::sizeHint() const
+    {
+        return QSize(kWidth, kPad * 2 + kTitleHeight + kBarHeight + 10 + 42 + 8 + kLineHeight * 2 + 4);
+    }
+
+    bool RevivePopup::eventFilter(QObject* watched, QEvent* event)
+    {
+        if (watched == parentWidget() && event->type() == QEvent::Resize && isVisible())
+            place();
+        return false;
+    }
+
+    void RevivePopup::paintEvent(QPaintEvent*)
+    {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        const QRectF box = QRectF(rect()).adjusted(1, 1, -1, -1);
+        theme::paintGlass(painter, box, 10, false, theme::kOverlay, theme::kOk, true);
+
+        const int inner = width() - kPad * 2;
+        painter.setFont(theme::labelPx(24, QFont::Bold));
+        painter.setPen(theme::kTextPrimary);
+        painter.drawText(QRect(kPad, kPad, inner, kTitleHeight), Qt::AlignCenter, titleText());
+
+        const QRect track(kPad + 30, kPad + kTitleHeight, inner - 60, kBarHeight);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(255, 255, 255, 18));
+        painter.drawPath(theme::skewBar(QRectF(track), -24));
+        if (view_.revive_total && *view_.revive_total > 0)
+        {
+            const double ratio =
+                std::clamp(static_cast<double>(view_.revive_current.value_or(0)) / *view_.revive_total, 0.0, 1.0);
+            painter.setBrush(theme::kOk);
+            painter.drawPath(theme::skewBar(QRectF(track.left(), track.top(), track.width() * ratio, track.height()), -24));
+        }
+
+        const int text_top = pay_button_->geometry().bottom() + 10;
+        painter.setFont(theme::labelPx(13));
+        painter.setPen(theme::kTextSecondary);
+        painter.drawText(QRect(kPad, text_top, inner, kLineHeight), Qt::AlignLeft | Qt::AlignVCenter,
+                         painter.fontMetrics().elidedText(
+                             QStringLiteral("免费复活后 10% 血量、进入虚弱(发射机构锁定),占增益点解除"),
+                             Qt::ElideRight, inner));
+        const QString second = !link_up_            ? QStringLiteral("断线，指令不会发送")
+                               : !window_active_    ? QStringLiteral("终端窗口不在前台：先点一下终端，再按 Y")
+                               : !status_.isEmpty() ? status_
+                                                    : QStringLiteral("金币复活满血，3 秒后解除虚弱");
+        painter.setPen(!link_up_ ? theme::kDanger : !window_active_ ? theme::kWarn
+                                                                    : theme::kTextMuted);
+        painter.drawText(QRect(kPad, text_top + kLineHeight, inner, kLineHeight), Qt::AlignLeft | Qt::AlignVCenter,
+                         painter.fontMetrics().elidedText(second, Qt::ElideRight, inner));
+    }
+
+} // namespace rm_terminal

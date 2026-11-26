@@ -6,250 +6,277 @@
 
 using namespace rm_terminal;
 
-namespace {
+namespace
+{
 
-void check(bool condition, const char* name) {
-    if (!condition) throw std::runtime_error(name);
-    std::cout << "PASS " << name << '\n';
-}
-
-template <class T>
-Field<T> present(T value, Freshness freshness = Freshness::Fresh) {
-    Field<T> field;
-    field.value = value;
-    field.quality = Quality::Valid;
-    field.freshness = freshness;
-    return field;
-}
-
-RobotHealth health(std::uint32_t id, std::uint32_t faction, std::uint32_t hp,
-                   std::uint32_t max_hp) {
-    RobotHealth entry;
-    entry.id = RobotId{id};
-    entry.faction = faction;
-    entry.current_hp = present<std::uint32_t>(hp);
-    entry.max_hp = present<std::uint32_t>(max_hp);
-    return entry;
-}
-
-Snapshot full_field_snapshot() {
-    Snapshot snapshot;
-    snapshot.game.red_base_hp = present<std::uint32_t>(1456);
-    snapshot.game.red_base_max_hp = present<std::uint32_t>(1500);
-    snapshot.game.blue_base_hp = present<std::uint32_t>(1417);
-    snapshot.game.blue_base_max_hp = present<std::uint32_t>(1500);
-    snapshot.game.red_score = present<std::uint32_t>(1);
-    snapshot.game.blue_score = present<std::uint32_t>(2);
-    snapshot.game.stage_countdown_sec = present<std::int32_t>(273);
-    snapshot.game.current_stage = present<std::uint32_t>(4);
-    snapshot.game.current_round = present<std::uint32_t>(1);
-    snapshot.game.total_rounds = present<std::uint32_t>(3);
-
-    for (std::uint32_t n : {1u, 3u, 4u, 7u}) {
-        snapshot.robot_health.push_back(health(n, 1, 300 + n * 40, 600));
-        snapshot.robot_health.push_back(health(100 + n, 2, 500 - n * 30, 600));
-    }
-    return snapshot;
-}
-
-// 用户明确要求红方 3/4 号不得再是灰色。灰色的成因是这两台没有血量来源,所以这里
-// 断言的是「协议报了就在线且带血量」,而不是断言颜色。
-void every_reported_robot_fills_its_slot() {
-    const TopBarModel model = top_bar_model(full_field_snapshot());
-
-    for (std::size_t i = 0; i < kTopBarSlotsPerSide; ++i) {
-        check(model.red.cards[i].online, "every represented red robot is online");
-        check(model.red.cards[i].has_hp(), "every represented red robot carries HP");
-        check(model.blue.cards[i].online, "every represented blue robot is online");
-        check(model.blue.cards[i].has_hp(), "every represented blue robot carries HP");
+    void check(bool condition, const char* name)
+    {
+        if (!condition)
+            throw std::runtime_error(name);
+        std::cout << "PASS " << name << '\n';
     }
 
-    check(model.red.cards[2].display_number == 4, "the third red slot is number 4");
-    check(model.red.cards[2].robot_class == QStringLiteral("步兵"), "red 4 is infantry");
-    check(model.red.cards[3].display_number == 7 &&
-              model.red.cards[3].robot_class == QStringLiteral("哨兵"),
-          "the last red slot is the sentry");
-}
-
-void blue_ids_are_displayed_without_the_internal_offset() {
-    const TopBarModel model = top_bar_model(full_field_snapshot());
-    const std::uint32_t expected_numbers[] = {1u, 3u, 4u, 7u};
-    for (std::size_t i = 0; i < kTopBarSlotsPerSide; ++i) {
-        check(model.blue.cards[i].display_number == expected_numbers[i],
-              "the blue slot displays its local number");
-        check(model.blue.cards[i].id == expected_numbers[i] + 100, "the blue slot keeps the blue id");
+    template <class T>
+    Field<T> present(T value, Freshness freshness = Freshness::Fresh)
+    {
+        Field<T> field;
+        field.value = value;
+        field.quality = Quality::Valid;
+        field.freshness = freshness;
+        return field;
     }
-}
 
-// 缺席必须是占位,不能补成在线/满血 —— 否则界面谎报一台不存在的机器人。
-void an_absent_robot_is_a_placeholder_not_a_healthy_one() {
-    Snapshot snapshot = full_field_snapshot();
-    std::vector<RobotHealth> kept;
-    for (const RobotHealth& entry : snapshot.robot_health) {
-        if (entry.id.value != 4) kept.push_back(entry);
+    RobotHealth health(std::uint32_t id, std::uint32_t faction, std::uint32_t hp,
+                       std::uint32_t max_hp)
+    {
+        RobotHealth entry;
+        entry.id = RobotId{id};
+        entry.faction = faction;
+        entry.current_hp = present<std::uint32_t>(hp);
+        entry.max_hp = present<std::uint32_t>(max_hp);
+        return entry;
     }
-    snapshot.robot_health = kept;
 
-    const TopBarModel model = top_bar_model(snapshot);
-    check(!model.red.cards[2].online, "the absent robot is not reported online");
-    check(!model.red.cards[2].has_hp(), "the absent robot carries no HP");
-    check(model.red.cards[2].display_number == 4, "the absent slot still holds its place");
-    check(model.red.cards[2].robot_class == QStringLiteral("步兵"),
-          "the absent slot still names its class so the position is identifiable");
-    check(model.red.cards[1].online && model.red.cards[3].online, "its neighbours are unaffected");
-}
+    Snapshot full_field_snapshot()
+    {
+        Snapshot snapshot;
+        snapshot.game.red_base_hp = present<std::uint32_t>(1456);
+        snapshot.game.red_base_max_hp = present<std::uint32_t>(1500);
+        snapshot.game.blue_base_hp = present<std::uint32_t>(1417);
+        snapshot.game.blue_base_max_hp = present<std::uint32_t>(1500);
+        snapshot.game.red_score = present<std::uint32_t>(1);
+        snapshot.game.blue_score = present<std::uint32_t>(2);
+        snapshot.game.stage_countdown_sec = present<std::int32_t>(273);
+        snapshot.game.current_stage = present<std::uint32_t>(4);
+        snapshot.game.current_round = present<std::uint32_t>(1);
+        snapshot.game.total_rounds = present<std::uint32_t>(3);
 
-// 基地血量必须来自 GameStatus 的基地字段,而不是全队血量合计。
-void base_hp_comes_from_the_base_fields() {
-    const TopBarModel model = top_bar_model(full_field_snapshot());
-    check(model.red.has_base_hp() && *model.red.base_hp == 1456, "red base HP is the base field");
-    check(model.blue.has_base_hp() && *model.blue.base_hp == 1417,
-          "blue base HP is present rather than missing");
-    check(*model.red.base_max_hp == 1500 && *model.blue.base_max_hp == 1500,
-          "both bases carry their maximum");
-}
-
-// 规则手册 5.6.1、表 5-21:前哨站只有被打掉、重建时才换主人,牌子按主人上色。
-void outpost_badge_follows_the_owner() {
-    Snapshot snapshot = full_field_snapshot();
-    snapshot.game.red_outpost_hp = present<std::uint32_t>(1000);
-    snapshot.game.blue_outpost_hp = present<std::uint32_t>(1000);
-    snapshot.game.red_outpost_zone = present<std::uint32_t>(3);
-    snapshot.game.blue_outpost_zone = present<std::uint32_t>(1);
-    const TopBarModel standing = top_bar_model(snapshot);
-    check(!standing.red.outpost_owned_by_blue,
-          "blue standing 5 s on a living red outpost is only temporary control: still red");
-    check(standing.blue.outpost_owned_by_blue,
-          "red standing 5 s on a living blue outpost is only temporary control: still blue");
-
-    snapshot.game.red_outpost_hp = present<std::uint32_t>(0);
-    snapshot.game.red_outpost_zone = present<std::uint32_t>(1);
-    const TopBarModel destroyed = top_bar_model(snapshot);
-    check(!destroyed.red.outpost_owned_by_blue,
-          "a destroyed red outpost under red temporary control is still red's");
-
-    snapshot.game.red_outpost_hp = present<std::uint32_t>(500);
-    snapshot.game.red_outpost_zone = present<std::uint32_t>(4);
-    const TopBarModel rebuilt = top_bar_model(snapshot);
-    check(rebuilt.red.outpost_owned_by_blue, "blue full control means it was rebuilt as blue's");
-
-    snapshot.game.red_outpost_zone = present<std::uint32_t>(1);
-    const TopBarModel retaking = top_bar_model(snapshot);
-    check(retaking.red.outpost_owned_by_blue,
-          "red standing on the rebuilt outpost does not take it back yet");
-
-    snapshot.game.red_outpost_zone = present<std::uint32_t>(2);
-    const TopBarModel retaken = top_bar_model(snapshot);
-    check(!retaken.red.outpost_owned_by_blue, "red full control again means it was rebuilt as red's");
-
-    snapshot.game.red_outpost_zone = present<std::uint32_t>(0);
-    snapshot.game.blue_outpost_zone = Field<std::uint32_t>{};
-    const TopBarModel fallback = top_bar_model(snapshot);
-    check(!fallback.red.outpost_owned_by_blue,
-          "a neutral red outpost falls back to the red badge");
-    check(fallback.blue.outpost_owned_by_blue,
-          "missing blue outpost data falls back to the blue badge");
-}
-
-// 没有基地血量时不得画成满血,必须报告为缺失。
-void a_missing_base_hp_is_reported_as_missing() {
-    Snapshot snapshot = full_field_snapshot();
-    snapshot.game.blue_base_hp = Field<std::uint32_t>{};
-    const TopBarModel model = top_bar_model(snapshot);
-    check(!model.blue.has_base_hp(), "a missing base HP is not silently filled in");
-    check(model.red.has_base_hp(), "the other side is unaffected");
-}
-
-void score_and_clock_read_from_the_protocol() {
-    const TopBarModel model = top_bar_model(full_field_snapshot());
-    check(model.red.score == QStringLiteral("1") && model.blue.score == QStringLiteral("2"),
-          "the score is the round score, not a cumulative points figure");
-    check(model.clock == QStringLiteral("04:33"), "the clock is mm:ss of the countdown");
-    check(model.round == QStringLiteral("1/3"), "the round reads current/total");
-    check(model.stage == QStringLiteral("比赛中"), "the stage is named");
-    check(!model.clock_critical, "a mid-match clock is not critical");
-}
-
-void an_empty_snapshot_states_that_nothing_is_known() {
-    const Snapshot empty;
-    const TopBarModel model = top_bar_model(empty);
-    const std::uint32_t expected_numbers[] = {1u, 3u, 4u, 7u};
-
-    check(model.clock == QStringLiteral("--:--"), "an absent countdown reads as unknown");
-    check(model.round == QStringLiteral("-/-"), "an absent round reads as unknown");
-    check(model.red.score == QStringLiteral("--"), "an absent score reads as unknown");
-    check(!model.red.has_base_hp() && !model.blue.has_base_hp(),
-          "absent base HP is not invented");
-
-    for (std::size_t i = 0; i < kTopBarSlotsPerSide; ++i) {
-        check(!model.red.cards[i].online && !model.red.cards[i].has_hp(),
-              "no robot is claimed online without data");
-        check(model.red.cards[i].display_number == expected_numbers[i],
-              "the layout still holds four placeholder slots");
+        for (std::uint32_t n : {1u, 3u, 4u, 7u})
+        {
+            snapshot.robot_health.push_back(health(n, 1, 300 + n * 40, 600));
+            snapshot.robot_health.push_back(health(100 + n, 2, 500 - n * 30, 600));
+        }
+        return snapshot;
     }
-}
 
-// 最后 10 秒转红。边界值单独钉住:11 秒不该报警,0 秒必须报警。
-void the_clock_turns_critical_in_the_last_ten_seconds() {
-    Snapshot snapshot = full_field_snapshot();
+    // 用户明确要求红方 3/4 号不得再是灰色。灰色的成因是这两台没有血量来源,所以这里
+    // 断言的是「协议报了就在线且带血量」,而不是断言颜色。
+    void every_reported_robot_fills_its_slot()
+    {
+        const TopBarModel model = top_bar_model(full_field_snapshot());
 
-    snapshot.game.stage_countdown_sec = present<std::int32_t>(11);
-    check(!top_bar_model(snapshot).clock_critical, "11 seconds is not yet critical");
+        for (std::size_t i = 0; i < kTopBarSlotsPerSide; ++i)
+        {
+            check(model.red.cards[i].online, "every represented red robot is online");
+            check(model.red.cards[i].has_hp(), "every represented red robot carries HP");
+            check(model.blue.cards[i].online, "every represented blue robot is online");
+            check(model.blue.cards[i].has_hp(), "every represented blue robot carries HP");
+        }
 
-    snapshot.game.stage_countdown_sec = present<std::int32_t>(10);
-    check(top_bar_model(snapshot).clock_critical, "10 seconds is critical");
-
-    snapshot.game.stage_countdown_sec = present<std::int32_t>(0);
-    const TopBarModel expired = top_bar_model(snapshot);
-    check(expired.clock_critical, "0 seconds is critical");
-    check(expired.clock == QStringLiteral("00:00"), "an expired clock reads 00:00");
-}
-
-// 0 血是「阵亡」,和「没有数据」是两件事,不能都塌成灰色占位。
-void a_dead_robot_is_distinct_from_an_absent_one() {
-    Snapshot snapshot = full_field_snapshot();
-    snapshot.robot_health[0] = health(1, 1, 0, 600);
-
-    const TopBarModel model = top_bar_model(snapshot);
-    check(model.red.cards[0].online, "a dead robot is still online");
-    check(model.red.cards[0].has_hp(), "a dead robot still carries HP data");
-    check(*model.red.cards[0].hp == 0, "a dead robot reports zero HP");
-}
-
-// 未知编号不得挤掉正常槽位,也不得凭空多出一格。
-void an_out_of_roster_id_is_ignored() {
-    Snapshot snapshot = full_field_snapshot();
-    snapshot.robot_health.push_back(health(2, 1, 500, 600));
-    snapshot.robot_health.push_back(health(106, 2, 500, 600));
-
-    const TopBarModel model = top_bar_model(snapshot);
-    const std::uint32_t expected_numbers[] = {1u, 3u, 4u, 7u};
-    check(model.red.cards.size() == kTopBarSlotsPerSide, "the red side keeps exactly 4 cards");
-    for (std::size_t i = 0; i < kTopBarSlotsPerSide; ++i) {
-        check(model.red.cards[i].display_number == expected_numbers[i],
-              "an unknown id does not displace a real slot");
+        check(model.red.cards[2].display_number == 4, "the third red slot is number 4");
+        check(model.red.cards[2].robot_class == QStringLiteral("步兵"), "red 4 is infantry");
+        check(model.red.cards[3].display_number == 7 &&
+                  model.red.cards[3].robot_class == QStringLiteral("哨兵"),
+              "the last red slot is the sentry");
     }
-}
 
-// 防御状态和控制度只透传「真收到了」的值;没收到时 QML 整块不画。
-void defense_and_control_pass_through() {
-    Snapshot snapshot = full_field_snapshot();
-    TopBarModel model = top_bar_model(snapshot);
-    check(!model.red.base_status && !model.red.control_points, "nothing invented before data");
-    snapshot.game.red_base_status = present<std::uint32_t>(2);
-    snapshot.game.blue_base_status = present<std::uint32_t>(0);
-    snapshot.game.red_control_points = present<std::uint32_t>(0);
-    snapshot.game.blue_control_points = present<std::uint32_t>(45);
-    model = top_bar_model(snapshot);
-    check(model.red.base_status == 2u && model.blue.base_status == 0u, "base status by side");
-    check(model.red.control_points == 0u && model.blue.control_points == 45u,
-          "a real zero control score is kept");
-}
+    void blue_ids_are_displayed_without_the_internal_offset()
+    {
+        const TopBarModel model = top_bar_model(full_field_snapshot());
+        const std::uint32_t expected_numbers[] = {1u, 3u, 4u, 7u};
+        for (std::size_t i = 0; i < kTopBarSlotsPerSide; ++i)
+        {
+            check(model.blue.cards[i].display_number == expected_numbers[i],
+                  "the blue slot displays its local number");
+            check(model.blue.cards[i].id == expected_numbers[i] + 100, "the blue slot keeps the blue id");
+        }
+    }
 
-}  // namespace
+    // 缺席必须是占位,不能补成在线/满血 —— 否则界面谎报一台不存在的机器人。
+    void an_absent_robot_is_a_placeholder_not_a_healthy_one()
+    {
+        Snapshot snapshot = full_field_snapshot();
+        std::vector<RobotHealth> kept;
+        for (const RobotHealth& entry : snapshot.robot_health)
+        {
+            if (entry.id.value != 4)
+                kept.push_back(entry);
+        }
+        snapshot.robot_health = kept;
 
-int main() {
-    try {
+        const TopBarModel model = top_bar_model(snapshot);
+        check(!model.red.cards[2].online, "the absent robot is not reported online");
+        check(!model.red.cards[2].has_hp(), "the absent robot carries no HP");
+        check(model.red.cards[2].display_number == 4, "the absent slot still holds its place");
+        check(model.red.cards[2].robot_class == QStringLiteral("步兵"),
+              "the absent slot still names its class so the position is identifiable");
+        check(model.red.cards[1].online && model.red.cards[3].online, "its neighbours are unaffected");
+    }
+
+    // 基地血量必须来自 GameStatus 的基地字段,而不是全队血量合计。
+    void base_hp_comes_from_the_base_fields()
+    {
+        const TopBarModel model = top_bar_model(full_field_snapshot());
+        check(model.red.has_base_hp() && *model.red.base_hp == 1456, "red base HP is the base field");
+        check(model.blue.has_base_hp() && *model.blue.base_hp == 1417,
+              "blue base HP is present rather than missing");
+        check(*model.red.base_max_hp == 1500 && *model.blue.base_max_hp == 1500,
+              "both bases carry their maximum");
+    }
+
+    // 规则手册 5.6.1、表 5-21:前哨站只有被打掉、重建时才换主人,牌子按主人上色。
+    void outpost_badge_follows_the_owner()
+    {
+        Snapshot snapshot = full_field_snapshot();
+        snapshot.game.red_outpost_hp = present<std::uint32_t>(1000);
+        snapshot.game.blue_outpost_hp = present<std::uint32_t>(1000);
+        snapshot.game.red_outpost_zone = present<std::uint32_t>(3);
+        snapshot.game.blue_outpost_zone = present<std::uint32_t>(1);
+        const TopBarModel standing = top_bar_model(snapshot);
+        check(!standing.red.outpost_owned_by_blue,
+              "blue standing 5 s on a living red outpost is only temporary control: still red");
+        check(standing.blue.outpost_owned_by_blue,
+              "red standing 5 s on a living blue outpost is only temporary control: still blue");
+
+        snapshot.game.red_outpost_hp = present<std::uint32_t>(0);
+        snapshot.game.red_outpost_zone = present<std::uint32_t>(1);
+        const TopBarModel destroyed = top_bar_model(snapshot);
+        check(!destroyed.red.outpost_owned_by_blue,
+              "a destroyed red outpost under red temporary control is still red's");
+
+        snapshot.game.red_outpost_hp = present<std::uint32_t>(500);
+        snapshot.game.red_outpost_zone = present<std::uint32_t>(4);
+        const TopBarModel rebuilt = top_bar_model(snapshot);
+        check(rebuilt.red.outpost_owned_by_blue, "blue full control means it was rebuilt as blue's");
+
+        snapshot.game.red_outpost_zone = present<std::uint32_t>(1);
+        const TopBarModel retaking = top_bar_model(snapshot);
+        check(retaking.red.outpost_owned_by_blue,
+              "red standing on the rebuilt outpost does not take it back yet");
+
+        snapshot.game.red_outpost_zone = present<std::uint32_t>(2);
+        const TopBarModel retaken = top_bar_model(snapshot);
+        check(!retaken.red.outpost_owned_by_blue, "red full control again means it was rebuilt as red's");
+
+        snapshot.game.red_outpost_zone = present<std::uint32_t>(0);
+        snapshot.game.blue_outpost_zone = Field<std::uint32_t>{};
+        const TopBarModel fallback = top_bar_model(snapshot);
+        check(!fallback.red.outpost_owned_by_blue,
+              "a neutral red outpost falls back to the red badge");
+        check(fallback.blue.outpost_owned_by_blue,
+              "missing blue outpost data falls back to the blue badge");
+    }
+
+    // 没有基地血量时不得画成满血,必须报告为缺失。
+    void a_missing_base_hp_is_reported_as_missing()
+    {
+        Snapshot snapshot = full_field_snapshot();
+        snapshot.game.blue_base_hp = Field<std::uint32_t>{};
+        const TopBarModel model = top_bar_model(snapshot);
+        check(!model.blue.has_base_hp(), "a missing base HP is not silently filled in");
+        check(model.red.has_base_hp(), "the other side is unaffected");
+    }
+
+    void score_and_clock_read_from_the_protocol()
+    {
+        const TopBarModel model = top_bar_model(full_field_snapshot());
+        check(model.red.score == QStringLiteral("1") && model.blue.score == QStringLiteral("2"),
+              "the score is the round score, not a cumulative points figure");
+        check(model.clock == QStringLiteral("04:33"), "the clock is mm:ss of the countdown");
+        check(model.round == QStringLiteral("1/3"), "the round reads current/total");
+        check(model.stage == QStringLiteral("比赛中"), "the stage is named");
+        check(!model.clock_critical, "a mid-match clock is not critical");
+    }
+
+    void an_empty_snapshot_states_that_nothing_is_known()
+    {
+        const Snapshot empty;
+        const TopBarModel model = top_bar_model(empty);
+        const std::uint32_t expected_numbers[] = {1u, 3u, 4u, 7u};
+
+        check(model.clock == QStringLiteral("--:--"), "an absent countdown reads as unknown");
+        check(model.round == QStringLiteral("-/-"), "an absent round reads as unknown");
+        check(model.red.score == QStringLiteral("--"), "an absent score reads as unknown");
+        check(!model.red.has_base_hp() && !model.blue.has_base_hp(),
+              "absent base HP is not invented");
+
+        for (std::size_t i = 0; i < kTopBarSlotsPerSide; ++i)
+        {
+            check(!model.red.cards[i].online && !model.red.cards[i].has_hp(),
+                  "no robot is claimed online without data");
+            check(model.red.cards[i].display_number == expected_numbers[i],
+                  "the layout still holds four placeholder slots");
+        }
+    }
+
+    // 最后 10 秒转红。边界值单独钉住:11 秒不该报警,0 秒必须报警。
+    void the_clock_turns_critical_in_the_last_ten_seconds()
+    {
+        Snapshot snapshot = full_field_snapshot();
+
+        snapshot.game.stage_countdown_sec = present<std::int32_t>(11);
+        check(!top_bar_model(snapshot).clock_critical, "11 seconds is not yet critical");
+
+        snapshot.game.stage_countdown_sec = present<std::int32_t>(10);
+        check(top_bar_model(snapshot).clock_critical, "10 seconds is critical");
+
+        snapshot.game.stage_countdown_sec = present<std::int32_t>(0);
+        const TopBarModel expired = top_bar_model(snapshot);
+        check(expired.clock_critical, "0 seconds is critical");
+        check(expired.clock == QStringLiteral("00:00"), "an expired clock reads 00:00");
+    }
+
+    // 0 血是「阵亡」,和「没有数据」是两件事,不能都塌成灰色占位。
+    void a_dead_robot_is_distinct_from_an_absent_one()
+    {
+        Snapshot snapshot = full_field_snapshot();
+        snapshot.robot_health[0] = health(1, 1, 0, 600);
+
+        const TopBarModel model = top_bar_model(snapshot);
+        check(model.red.cards[0].online, "a dead robot is still online");
+        check(model.red.cards[0].has_hp(), "a dead robot still carries HP data");
+        check(*model.red.cards[0].hp == 0, "a dead robot reports zero HP");
+    }
+
+    // 未知编号不得挤掉正常槽位,也不得凭空多出一格。
+    void an_out_of_roster_id_is_ignored()
+    {
+        Snapshot snapshot = full_field_snapshot();
+        snapshot.robot_health.push_back(health(2, 1, 500, 600));
+        snapshot.robot_health.push_back(health(106, 2, 500, 600));
+
+        const TopBarModel model = top_bar_model(snapshot);
+        const std::uint32_t expected_numbers[] = {1u, 3u, 4u, 7u};
+        check(model.red.cards.size() == kTopBarSlotsPerSide, "the red side keeps exactly 4 cards");
+        for (std::size_t i = 0; i < kTopBarSlotsPerSide; ++i)
+        {
+            check(model.red.cards[i].display_number == expected_numbers[i],
+                  "an unknown id does not displace a real slot");
+        }
+    }
+
+    // 防御状态和控制度只透传「真收到了」的值;没收到时 QML 整块不画。
+    void defense_and_control_pass_through()
+    {
+        Snapshot snapshot = full_field_snapshot();
+        TopBarModel model = top_bar_model(snapshot);
+        check(!model.red.base_status && !model.red.control_points, "nothing invented before data");
+        snapshot.game.red_base_status = present<std::uint32_t>(2);
+        snapshot.game.blue_base_status = present<std::uint32_t>(0);
+        snapshot.game.red_control_points = present<std::uint32_t>(0);
+        snapshot.game.blue_control_points = present<std::uint32_t>(45);
+        model = top_bar_model(snapshot);
+        check(model.red.base_status == 2u && model.blue.base_status == 0u, "base status by side");
+        check(model.red.control_points == 0u && model.blue.control_points == 45u,
+              "a real zero control score is kept");
+    }
+
+} // namespace
+
+int main()
+{
+    try
+    {
         every_reported_robot_fills_its_slot();
         blue_ids_are_displayed_without_the_internal_offset();
         an_absent_robot_is_a_placeholder_not_a_healthy_one();
@@ -262,7 +289,9 @@ int main() {
         a_dead_robot_is_distinct_from_an_absent_one();
         an_out_of_roster_id_is_ignored();
         defense_and_control_pass_through();
-    } catch (const std::exception& error) {
+    }
+    catch (const std::exception& error)
+    {
         std::cerr << "FAIL " << error.what() << '\n';
         return 1;
     }

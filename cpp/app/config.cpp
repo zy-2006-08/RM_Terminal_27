@@ -3,248 +3,380 @@
 
 #include <QFile>
 
-namespace rm_terminal {
-namespace {
-bool parse_integer(const QString& value, const QString& key, int line, int* result, QString* error) {
-    bool ok = false;
-    const int parsed = value.toInt(&ok);
-    if (!ok || parsed <= 0) {
-        if (error) {
-            *error = QStringLiteral("line %1: invalid %2=%3; expected positive integer")
-                         .arg(line).arg(key, value);
+namespace rm_terminal
+{
+    namespace
+    {
+        bool parse_integer(const QString& value, const QString& key, int line, int* result, QString* error)
+        {
+            bool ok = false;
+            const int parsed = value.toInt(&ok);
+            if (!ok || parsed <= 0)
+            {
+                if (error)
+                {
+                    *error = QStringLiteral("line %1: invalid %2=%3; expected positive integer")
+                                 .arg(line)
+                                 .arg(key, value);
+                }
+                return false;
+            }
+            *result = parsed;
+            return true;
         }
-        return false;
-    }
-    *result = parsed;
-    return true;
-}
 
-// Deliberate exception to parse_integer's `> 0` rule: blind_stale_fallback_ms
-// accepts 0, which DISABLES the stale-blind fallback so the UI never leaves
-// info mode merely because blind telemetry went stale. An operator who does not
-// trust the fallback needs a way to switch it off; rejecting 0 would force them
-// to fake a huge timeout instead. Negative values remain invalid.
-bool parse_non_negative_integer(const QString& value, const QString& key, int line, int* result,
-                                QString* error) {
-    bool ok = false;
-    const int parsed = value.toInt(&ok);
-    if (!ok || parsed < 0) {
-        if (error) {
-            *error = QStringLiteral("line %1: invalid %2=%3; expected non-negative integer "
-                                    "(0 disables the fallback)")
-                         .arg(line).arg(key, value);
+        // Deliberate exception to parse_integer's `> 0` rule: blind_stale_fallback_ms
+        // accepts 0, which DISABLES the stale-blind fallback so the UI never leaves
+        // info mode merely because blind telemetry went stale. An operator who does not
+        // trust the fallback needs a way to switch it off; rejecting 0 would force them
+        // to fake a huge timeout instead. Negative values remain invalid.
+        bool parse_non_negative_integer(const QString& value, const QString& key, int line, int* result,
+                                        QString* error)
+        {
+            bool ok = false;
+            const int parsed = value.toInt(&ok);
+            if (!ok || parsed < 0)
+            {
+                if (error)
+                {
+                    *error = QStringLiteral("line %1: invalid %2=%3; expected non-negative integer "
+                                            "(0 disables the fallback)")
+                                 .arg(line)
+                                 .arg(key, value);
+                }
+                return false;
+            }
+            *result = parsed;
+            return true;
         }
-        return false;
-    }
-    *result = parsed;
-    return true;
-}
 
-bool parse_boolean(const QString& value, const QString& key, int line, bool* result,
-                   QString* error) {
-    if (value == QLatin1String("true")) {
-        *result = true;
-        return true;
-    }
-    if (value == QLatin1String("false")) {
-        *result = false;
-        return true;
-    }
-    if (error) {
-        *error = QStringLiteral("line %1: invalid %2=%3; expected true or false")
-                     .arg(line).arg(key, value);
-    }
-    return false;
-}
-}
-
-bool parse_log_level(const QString& name, LogLevel* out) {
-    if (name == QLatin1String("debug")) *out = LogLevel::debug;
-    else if (name == QLatin1String("info")) *out = LogLevel::info;
-    else if (name == QLatin1String("warning")) *out = LogLevel::warning;
-    else if (name == QLatin1String("error")) *out = LogLevel::error;
-    else return false;
-    return true;
-}
-
-bool valid_self_robot_id(int id) { return Seat::fromRobotId(id).has_value(); }
-
-const QStringList& alert_kind_names() {
-    static const QStringList names{
-        QStringLiteral("outpost"), QStringLiteral("control"), QStringLiteral("fortress"),
-        QStringLiteral("dart"),    QStringLiteral("energy"),
-        QStringLiteral("low_hp"),  QStringLiteral("base"), QStringLiteral("intrusion")};
-    return names;
-}
-
-bool valid_controller_baud(int baud) {
-    for (const int known : {9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600})
-        if (baud == known) return true;
-    return false;
-}
-
-bool valid_ipv4(const QString& text) {
-    const QStringList parts = text.split(QLatin1Char('.'));
-    if (parts.size() != 4) return false;
-    for (const QString& part : parts) {
-        if (part.isEmpty() || part.size() > 3) return false;
-        for (const QChar c : part)
-            if (c < QLatin1Char('0') || c > QLatin1Char('9')) return false;
-        if (part.toInt() > 255) return false;
-    }
-    return true;
-}
-
-bool load_config(const QString& path, Config* config, QString* error) {
-    *config = Config{};
-    QFile file(path);
-    if (!file.exists()) return true;
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        if (error) *error = file.errorString();
-        return false;
-    }
-    int line = 0;
-    while (!file.atEnd()) {
-        ++line;
-        const QString text = QString::fromUtf8(file.readLine()).trimmed();
-        if (text.isEmpty() || text.startsWith('#')) continue;
-        const int separator = text.indexOf('=');
-        if (separator <= 0) {
-            if (error) *error = QString("line %1: expected key=value").arg(line);
-            return false;
-        }
-        const QString key = text.left(separator).trimmed();
-        const QString value = text.mid(separator + 1).trimmed();
-        if (value.isEmpty()) {
-            if (error) {
-                *error = QStringLiteral("line %1: %2 has an empty value").arg(line).arg(key);
+        bool parse_boolean(const QString& value, const QString& key, int line, bool* result,
+                           QString* error)
+        {
+            if (value == QLatin1String("true"))
+            {
+                *result = true;
+                return true;
+            }
+            if (value == QLatin1String("false"))
+            {
+                *result = false;
+                return true;
+            }
+            if (error)
+            {
+                *error = QStringLiteral("line %1: invalid %2=%3; expected true or false")
+                             .arg(line)
+                             .arg(key, value);
             }
             return false;
         }
-        if (key == QLatin1String("mqtt_host")) {
-            config->mqtt_host = value;
-        } else if (key == QLatin1String("log_destination")) {
-            config->log_destination = value;
-        } else if (key == QLatin1String("mqtt_port")) {
-            if (!parse_integer(value, key, line, &config->mqtt_port, error)) return false;
-        } else if (key == QLatin1String("udp_port")) {
-            if (!parse_integer(value, key, line, &config->udp_port, error)) return false;
-        } else if (key == QLatin1String("video_hwaccel")) {
-            if (value != QLatin1String("none") && value != QLatin1String("vaapi")) {
-                if (error) {
-                    *error = QStringLiteral("line %1: invalid video_hwaccel=%2; expected none or vaapi")
-                                 .arg(line).arg(value);
+    } // namespace
+
+    bool parse_log_level(const QString& name, LogLevel* out)
+    {
+        if (name == QLatin1String("debug"))
+            *out = LogLevel::debug;
+        else if (name == QLatin1String("info"))
+            *out = LogLevel::info;
+        else if (name == QLatin1String("warning"))
+            *out = LogLevel::warning;
+        else if (name == QLatin1String("error"))
+            *out = LogLevel::error;
+        else
+            return false;
+        return true;
+    }
+
+    bool valid_self_robot_id(int id) { return Seat::fromRobotId(id).has_value(); }
+
+    const QStringList& alert_kind_names()
+    {
+        static const QStringList names{
+            QStringLiteral("outpost"), QStringLiteral("control"), QStringLiteral("fortress"),
+            QStringLiteral("dart"), QStringLiteral("energy"),
+            QStringLiteral("low_hp"), QStringLiteral("base"), QStringLiteral("intrusion")};
+        return names;
+    }
+
+    bool valid_controller_baud(int baud)
+    {
+        for (const int known : {9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600})
+            if (baud == known)
+                return true;
+        return false;
+    }
+
+    bool valid_ipv4(const QString& text)
+    {
+        const QStringList parts = text.split(QLatin1Char('.'));
+        if (parts.size() != 4)
+            return false;
+        for (const QString& part : parts)
+        {
+            if (part.isEmpty() || part.size() > 3)
+                return false;
+            for (const QChar c : part)
+                if (c < QLatin1Char('0') || c > QLatin1Char('9'))
+                    return false;
+            if (part.toInt() > 255)
+                return false;
+        }
+        return true;
+    }
+
+    bool load_config(const QString& path, Config* config, QString* error)
+    {
+        *config = Config{};
+        QFile file(path);
+        if (!file.exists())
+            return true;
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+        {
+            if (error)
+                *error = file.errorString();
+            return false;
+        }
+        int line = 0;
+        while (!file.atEnd())
+        {
+            ++line;
+            const QString text = QString::fromUtf8(file.readLine()).trimmed();
+            if (text.isEmpty() || text.startsWith('#'))
+                continue;
+            const int separator = text.indexOf('=');
+            if (separator <= 0)
+            {
+                if (error)
+                    *error = QString("line %1: expected key=value").arg(line);
+                return false;
+            }
+            const QString key = text.left(separator).trimmed();
+            const QString value = text.mid(separator + 1).trimmed();
+            if (value.isEmpty())
+            {
+                if (error)
+                {
+                    *error = QStringLiteral("line %1: %2 has an empty value").arg(line).arg(key);
                 }
                 return false;
             }
-            config->video_hwaccel = value;
-        } else if (key == QLatin1String("self_robot_id")) {
-            if (!parse_integer(value, key, line, &config->self_robot_id, error)) return false;
-            if (!valid_self_robot_id(config->self_robot_id)) {
-                if (error) {
-                    *error = QStringLiteral("line %1: invalid self_robot_id=%2; expected "
-                                            "1, 3, 4, 6, 101, 103, 104, or 106")
-                                 .arg(line).arg(config->self_robot_id);
-                }
-                return false;
+            if (key == QLatin1String("mqtt_host"))
+            {
+                config->mqtt_host = value;
             }
-            config->self_robot_id_set = true;
-        } else if (key == QLatin1String("stale_window_ms")) {
-            if (!parse_integer(value, key, line, &config->stale_window_ms, error)) return false;
-        } else if (key == QLatin1String("mode_exit_hysteresis_ms")) {
-            if (!parse_integer(value, key, line, &config->mode_exit_hysteresis_ms, error)) {
-                return false;
+            else if (key == QLatin1String("log_destination"))
+            {
+                config->log_destination = value;
             }
-        } else if (key == QLatin1String("event_history_capacity")) {
-            if (!parse_integer(value, key, line, &config->event_history_capacity, error)) {
-                return false;
+            else if (key == QLatin1String("mqtt_port"))
+            {
+                if (!parse_integer(value, key, line, &config->mqtt_port, error))
+                    return false;
             }
-        } else if (key == QLatin1String("blind_stale_fallback_ms")) {
-            if (!parse_non_negative_integer(value, key, line, &config->blind_stale_fallback_ms,
-                                            error)) {
-                return false;
+            else if (key == QLatin1String("udp_port"))
+            {
+                if (!parse_integer(value, key, line, &config->udp_port, error))
+                    return false;
             }
-        } else if (key == QLatin1String("map_enabled")) {
-            if (!parse_boolean(value, key, line, &config->map_enabled, error)) return false;
-        } else if (key == QLatin1String("map_mark_ms")) {
-            if (!parse_integer(value, key, line, &config->map_mark_ms, error)) return false;
-        } else if (key == QLatin1String("display_fullscreen")) {
-            if (!parse_boolean(value, key, line, &config->display_fullscreen, error)) return false;
-        } else if (key == QLatin1String("display_screen")) {
-            config->display_screen = value;
-        } else if (key == QLatin1String("controller_serial")) {
-            config->controller_serial = value;
-        } else if (key == QLatin1String("controller_baud")) {
-            if (!parse_integer(value, key, line, &config->controller_baud, error)) return false;
-            if (!valid_controller_baud(config->controller_baud)) {
-                if (error) {
-                    *error = QStringLiteral("line %1: invalid controller_baud=%2; expected 9600, "
-                                            "19200, 38400, 57600, 115200, 230400, 460800, or "
-                                            "921600").arg(line).arg(value);
-                }
-                return false;
-            }
-        } else if (key == QLatin1String("mqtt_keepalive_s")) {
-            if (!parse_integer(value, key, line, &config->mqtt_keepalive_s, error)) return false;
-        } else if (key == QLatin1String("alert_control_gap")) {
-            if (!parse_integer(value, key, line, &config->alert_control_gap, error)) return false;
-        } else if (key == QLatin1String("speech_dir")) {
-            config->speech_dir = value;
-        } else if (key == QLatin1String("alerts_disabled")) {
-            config->alerts_disabled.clear();
-            for (const QString& part : value.split(QLatin1Char(','), Qt::SkipEmptyParts)) {
-                const QString name = part.trimmed();
-                if (!alert_kind_names().contains(name)) {
-                    if (error) {
-                        *error = QStringLiteral("line %1: unknown alert kind %2 in alerts_disabled; "
-                                                "expected some of %3")
-                                     .arg(line).arg(name, alert_kind_names().join(QLatin1Char(',')));
+            else if (key == QLatin1String("video_hwaccel"))
+            {
+                if (value != QLatin1String("none") && value != QLatin1String("vaapi"))
+                {
+                    if (error)
+                    {
+                        *error = QStringLiteral("line %1: invalid video_hwaccel=%2; expected none or vaapi")
+                                     .arg(line)
+                                     .arg(value);
                     }
                     return false;
                 }
-                config->alerts_disabled << name;
+                config->video_hwaccel = value;
             }
-        } else if (key == QLatin1String("log_level")) {
-            if (!parse_log_level(value, &config->log_level)) {
-                if (error) {
-                    *error = QStringLiteral("line %1: invalid log_level=%2; expected debug, info, "
-                                            "warning, or error").arg(line).arg(value);
+            else if (key == QLatin1String("self_robot_id"))
+            {
+                if (!parse_integer(value, key, line, &config->self_robot_id, error))
+                    return false;
+                if (!valid_self_robot_id(config->self_robot_id))
+                {
+                    if (error)
+                    {
+                        *error = QStringLiteral("line %1: invalid self_robot_id=%2; expected "
+                                                "1, 3, 4, 6, 101, 103, 104, or 106")
+                                     .arg(line)
+                                     .arg(config->self_robot_id);
+                    }
+                    return false;
                 }
+                config->self_robot_id_set = true;
+            }
+            else if (key == QLatin1String("stale_window_ms"))
+            {
+                if (!parse_integer(value, key, line, &config->stale_window_ms, error))
+                    return false;
+            }
+            else if (key == QLatin1String("mode_exit_hysteresis_ms"))
+            {
+                if (!parse_integer(value, key, line, &config->mode_exit_hysteresis_ms, error))
+                {
+                    return false;
+                }
+            }
+            else if (key == QLatin1String("event_history_capacity"))
+            {
+                if (!parse_integer(value, key, line, &config->event_history_capacity, error))
+                {
+                    return false;
+                }
+            }
+            else if (key == QLatin1String("blind_stale_fallback_ms"))
+            {
+                if (!parse_non_negative_integer(value, key, line, &config->blind_stale_fallback_ms,
+                                                error))
+                {
+                    return false;
+                }
+            }
+            else if (key == QLatin1String("map_enabled"))
+            {
+                if (!parse_boolean(value, key, line, &config->map_enabled, error))
+                    return false;
+            }
+            else if (key == QLatin1String("map_mark_ms"))
+            {
+                if (!parse_integer(value, key, line, &config->map_mark_ms, error))
+                    return false;
+            }
+            else if (key == QLatin1String("display_fullscreen"))
+            {
+                if (!parse_boolean(value, key, line, &config->display_fullscreen, error))
+                    return false;
+            }
+            else if (key == QLatin1String("display_screen"))
+            {
+                config->display_screen = value;
+            }
+            else if (key == QLatin1String("controller_serial"))
+            {
+                config->controller_serial = value;
+            }
+            else if (key == QLatin1String("controller_baud"))
+            {
+                if (!parse_integer(value, key, line, &config->controller_baud, error))
+                    return false;
+                if (!valid_controller_baud(config->controller_baud))
+                {
+                    if (error)
+                    {
+                        *error = QStringLiteral("line %1: invalid controller_baud=%2; expected 9600, "
+                                                "19200, 38400, 57600, 115200, 230400, 460800, or "
+                                                "921600")
+                                     .arg(line)
+                                     .arg(value);
+                    }
+                    return false;
+                }
+            }
+            else if (key == QLatin1String("mqtt_keepalive_s"))
+            {
+                if (!parse_integer(value, key, line, &config->mqtt_keepalive_s, error))
+                    return false;
+            }
+            else if (key == QLatin1String("alert_control_gap"))
+            {
+                if (!parse_integer(value, key, line, &config->alert_control_gap, error))
+                    return false;
+            }
+            else if (key == QLatin1String("speech_dir"))
+            {
+                config->speech_dir = value;
+            }
+            else if (key == QLatin1String("alerts_disabled"))
+            {
+                config->alerts_disabled.clear();
+                for (const QString& part : value.split(QLatin1Char(','), Qt::SkipEmptyParts))
+                {
+                    const QString name = part.trimmed();
+                    if (!alert_kind_names().contains(name))
+                    {
+                        if (error)
+                        {
+                            *error = QStringLiteral("line %1: unknown alert kind %2 in alerts_disabled; "
+                                                    "expected some of %3")
+                                         .arg(line)
+                                         .arg(name, alert_kind_names().join(QLatin1Char(',')));
+                        }
+                        return false;
+                    }
+                    config->alerts_disabled << name;
+                }
+            }
+            else if (key == QLatin1String("log_level"))
+            {
+                if (!parse_log_level(value, &config->log_level))
+                {
+                    if (error)
+                    {
+                        *error = QStringLiteral("line %1: invalid log_level=%2; expected debug, info, "
+                                                "warning, or error")
+                                     .arg(line)
+                                     .arg(value);
+                    }
+                    return false;
+                }
+            }
+            else if (key == QLatin1String("video_relay_host"))
+            {
+                if (!valid_ipv4(value))
+                {
+                    if (error)
+                    {
+                        *error = QStringLiteral("line %1: invalid video_relay_host=%2; expected an IPv4 "
+                                                "address such as 10.27.0.6")
+                                     .arg(line)
+                                     .arg(value);
+                    }
+                    return false;
+                }
+                config->video_relay_host = value;
+            }
+            else if (key == QLatin1String("video_wall_port"))
+            {
+                if (!parse_integer(value, key, line, &config->video_wall_port, error))
+                    return false;
+                if (config->video_wall_port > 65531)
+                {
+                    if (error)
+                    {
+                        *error = QStringLiteral("line %1: invalid video_wall_port=%2; expected at most "
+                                                "65531 (robot 4 listens on video_wall_port + 4)")
+                                     .arg(line)
+                                     .arg(value);
+                    }
+                    return false;
+                }
+            }
+            else
+            {
+                if (error)
+                    *error = QStringLiteral("line %1: unknown key %2").arg(line).arg(key);
                 return false;
             }
-        } else if (key == QLatin1String("video_relay_host")) {
-            if (!valid_ipv4(value)) {
-                if (error) {
-                    *error = QStringLiteral("line %1: invalid video_relay_host=%2; expected an IPv4 "
-                                            "address such as 10.27.0.6").arg(line).arg(value);
-                }
-                return false;
+        }
+        // 指挥手的主图传口和图传墙的三个口在同一台电脑上,撞了谁都收不到。两个键可能写在任意一行,读完再查。
+        for (const int robot : {1, 3, 4})
+        {
+            if (config->video_wall_port + robot != config->udp_port)
+                continue;
+            if (error)
+            {
+                *error = QStringLiteral("invalid video_wall_port=%1; video_wall_port + %2 is udp_port %3")
+                             .arg(config->video_wall_port)
+                             .arg(robot)
+                             .arg(config->udp_port);
             }
-            config->video_relay_host = value;
-        } else if (key == QLatin1String("video_wall_port")) {
-            if (!parse_integer(value, key, line, &config->video_wall_port, error)) return false;
-            if (config->video_wall_port > 65531) {
-                if (error) {
-                    *error = QStringLiteral("line %1: invalid video_wall_port=%2; expected at most "
-                                            "65531 (robot 4 listens on video_wall_port + 4)")
-                                 .arg(line).arg(value);
-                }
-                return false;
-            }
-        } else {
-            if (error) *error = QStringLiteral("line %1: unknown key %2").arg(line).arg(key);
             return false;
         }
+        return true;
     }
-    // 指挥手的主图传口和图传墙的三个口在同一台电脑上,撞了谁都收不到。两个键可能写在任意一行,读完再查。
-    for (const int robot : {1, 3, 4}) {
-        if (config->video_wall_port + robot != config->udp_port) continue;
-        if (error) {
-            *error = QStringLiteral("invalid video_wall_port=%1; video_wall_port + %2 is udp_port %3")
-                         .arg(config->video_wall_port).arg(robot).arg(config->udp_port);
-        }
-        return false;
-    }
-    return true;
-}
-}
+} // namespace rm_terminal

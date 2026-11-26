@@ -10,18 +10,22 @@
 
 using namespace rm_terminal;
 
-void check(bool condition, const char* name) {
-    if (!condition) throw std::runtime_error(name);
+void check(bool condition, const char* name)
+{
+    if (!condition)
+        throw std::runtime_error(name);
     std::cout << "PASS " << name << '\n';
 }
 
 // Clears the global sink on every exit path, including a failed check, so the
 // captured vectors below can never be written to after they go out of scope.
-struct SinkGuard {
+struct SinkGuard
+{
     ~SinkGuard() { set_log_sink(nullptr); }
 };
 
-void robot_class_names_match_2027_lineup() {
+void robot_class_names_match_2027_lineup()
+{
     check(robot_class_name(1) == QStringLiteral("重装"), "1 is 重装");
     check(robot_class_name(2).isEmpty(), "2 is not in the lineup");
     check(robot_class_name(3) == QStringLiteral("步兵"), "3 is 步兵");
@@ -43,10 +47,12 @@ void robot_class_names_match_2027_lineup() {
 
 // build_roster feeds the ally/enemy columns: four field robots per side, the aerial
 // seat never takes a row because it has no health.
-void roster_splits_the_2027_lineup_by_faction() {
+void roster_splits_the_2027_lineup_by_faction()
+{
     Snapshot snapshot;
     snapshot.self = RobotId{3};
-    for (std::uint32_t id : {1u, 3u, 4u, 7u, 101u, 103u, 104u, 107u}) {
+    for (std::uint32_t id : {1u, 3u, 4u, 7u, 101u, 103u, 104u, 107u})
+    {
         RobotHealth robot;
         robot.id = RobotId{id};
         robot.faction = faction_of(id);
@@ -76,7 +82,8 @@ void roster_splits_the_2027_lineup_by_faction() {
     check(self_faction(snapshot) == kBlue, "self faction comes from the seat");
 }
 
-EventRecord make_event(MonotonicMs at, std::uint32_t level, const char* text) {
+EventRecord make_event(MonotonicMs at, std::uint32_t level, const char* text)
+{
     EventRecord record;
     record.level = level;
     record.text = text;
@@ -86,7 +93,8 @@ EventRecord make_event(MonotonicMs at, std::uint32_t level, const char* text) {
 
 // recent() must return newest first. Reversed order would put the oldest alert at
 // the top of the panel, so the operator reads history as current.
-void event_history_orders_newest_first() {
+void event_history_orders_newest_first()
+{
     EventHistory history(10);
     history.push(make_event(1, 0, "first"));
     history.push(make_event(2, 1, "second"));
@@ -104,9 +112,11 @@ void event_history_orders_newest_first() {
 
 // Unbounded growth over a whole match is the failure being prevented, so the
 // ring must overwrite and report the loss rather than expand.
-void event_history_discards_oldest_when_full() {
+void event_history_discards_oldest_when_full()
+{
     EventHistory history(3);
-    for (MonotonicMs i = 1; i <= 5; ++i) {
+    for (MonotonicMs i = 1; i <= 5; ++i)
+    {
         history.push(make_event(i, 0, i == 1 ? "oldest" : "later"));
     }
     check(history.size() == 3, "size stops at capacity");
@@ -117,12 +127,14 @@ void event_history_discards_oldest_when_full() {
     check(recent.size() == 3, "only capacity worth of records survive");
     check(recent[0].received_at == 5, "newest survivor is the last pushed");
     check(recent[2].received_at == 3, "oldest survivor is capacity back");
-    for (const auto& record : recent) {
+    for (const auto& record : recent)
+    {
         check(record.text != "oldest", "the evicted record is really gone");
     }
 }
 
-void event_history_empty_returns_nothing() {
+void event_history_empty_returns_nothing()
+{
     EventHistory history(5);
     check(history.recent(3).empty(), "empty history returns no records");
     check(history.size() == 0, "empty history has zero size");
@@ -131,7 +143,8 @@ void event_history_empty_returns_nothing() {
 
 // 2027 的 Event 是触发式发送,没有 2026 那种 5Hz 重发:两条一样的事件就是两次事件
 // (比如同一台车两次击毁同一个对手),都得记下。
-void store_keeps_every_triggered_event() {
+void store_keeps_every_triggered_event()
+{
     Store store(10, 20);
     store.setSelf(RobotId{3});
     inbound::Event kill;
@@ -149,11 +162,12 @@ void store_keeps_every_triggered_event() {
 
 // 规则手册 5.6.1:前哨站打掉重建后换主人。Event 2 的参数只说是哪一侧那座,
 // 「我方 / 敌方」要按击毁前它归谁写,血量当场记成 0。
-void store_names_the_owner_of_a_destroyed_outpost() {
+void store_names_the_owner_of_a_destroyed_outpost()
+{
     Store store(10, 20);
     store.setSelf(RobotId{3});
     inbound::GameStatus game;
-    game.red_outpost_zone = 4;   // 红方一侧的前哨阵地被蓝方完全控制:那座前哨站已重建成蓝方的
+    game.red_outpost_zone = 4; // 红方一侧的前哨阵地被蓝方完全控制:那座前哨站已重建成蓝方的
     game.red_outpost_hp = 500;
     game.red_outpost_max_hp = 1000;
     check(store.apply(game, 0), "captured outpost state accepted");
@@ -178,14 +192,15 @@ void store_names_the_owner_of_a_destroyed_outpost() {
 // Task 5 acceptance: a field aging into Stale must log once per TRANSITION, not
 // once per snapshot. The GUI inspects on a 250ms timer, so per-snapshot logging
 // would bury every other event under thousands of duplicates during a stall.
-void stale_reporter_logs_once_per_transition() {
+void stale_reporter_logs_once_per_transition()
+{
     std::vector<QString> events;
     std::vector<QString> details;
     SinkGuard guard;
-    set_log_sink([&events, &details](LogLevel, const QString& event, const QStringList& fields) {
+    set_log_sink([&events, &details](LogLevel, const QString& event, const QStringList& fields)
+                 {
         events.push_back(event);
-        details.push_back(fields.join(QLatin1Char(' ')));
-    });
+        details.push_back(fields.join(QLatin1Char(' '))); });
 
     Store store(10);
     StaleReporter reporter;
@@ -225,7 +240,8 @@ void stale_reporter_logs_once_per_transition() {
     check(details.back().contains(QLatin1String("robots=1")), "stale record reports the robot count");
 }
 
-inbound::RadarEntry radar_entry(std::uint32_t id, std::optional<double> x, std::optional<double> y) {
+inbound::RadarEntry radar_entry(std::uint32_t id, std::optional<double> x, std::optional<double> y)
+{
     inbound::RadarEntry entry;
     entry.robot_id = id;
     entry.x = x;
@@ -235,7 +251,8 @@ inbound::RadarEntry radar_entry(std::uint32_t id, std::optional<double> x, std::
 
 // The radar message is a full snapshot of the eight robots, not a delta, and the
 // drawing order must not depend on delivery order.
-void store_replaces_and_sorts_radar_robots() {
+void store_replaces_and_sorts_radar_robots()
+{
     Store store(10);
     store.setSelf(RobotId{3});
     inbound::RadarSet radar;
@@ -265,7 +282,8 @@ void store_replaces_and_sorts_radar_robots() {
 // The single-robot path is the only authority for our own coordinates. If the
 // radar could overwrite them, a real robot would silently render from somebody
 // else's estimate.
-void store_keeps_authoritative_self_position() {
+void store_keeps_authoritative_self_position()
+{
     Store store(10);
     store.setSelf(RobotId{3});
     inbound::RadarSet radar;
@@ -289,7 +307,8 @@ void store_keeps_authoritative_self_position() {
     check(snapshot.map_robots[1].position.x.value == 1.0, "a teammate still uses the radar");
 }
 
-void store_carries_base_hp_through_conversion() {
+void store_carries_base_hp_through_conversion()
+{
     Store store(10);
     inbound::GameStatus game;
     game.red_base_hp = 10000;
@@ -312,7 +331,8 @@ void store_carries_base_hp_through_conversion() {
 }
 
 // 上限血量协议不发:别的车取本局见过的最高血量(不低于兵种下限),换局清零。
-void store_estimates_max_hp_per_round() {
+void store_estimates_max_hp_per_round()
+{
     Store store(10);
     store.setSelf(RobotId{3});
     inbound::GameStatus game;
@@ -334,11 +354,21 @@ void store_estimates_max_hp_per_round() {
     check(store.snapshot(4).robot_health[1].max_hp.value == 150u, "the estimate resets with the round");
 }
 
-int main() {
-    try {
-        for (auto threshold : {-1, 0}) {
+int main()
+{
+    try
+    {
+        for (auto threshold : {-1, 0})
+        {
             bool rejected = false;
-            try { Store invalid(threshold); } catch (const std::invalid_argument&) { rejected = true; }
+            try
+            {
+                Store invalid(threshold);
+            }
+            catch (const std::invalid_argument&)
+            {
+                rejected = true;
+            }
             check(rejected, "non-positive threshold rejected");
         }
         Store store(10);
@@ -371,7 +401,8 @@ int main() {
         check(snapshot.robots.at(RobotId{1}).dynamic.current_hp.freshness == Freshness::Stale, "independent group freshness");
         check(!copy.robots.at(RobotId{1}).position.y.value, "copied snapshot isolation");
         check(snapshot.robots.at(RobotId{2}).dynamic.current_hp.value == 50u, "two identities isolated");
-        for (double invalid : {std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity()}) {
+        for (double invalid : {std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity()})
+        {
             position.x = invalid;
             position.y.reset();
             check(!store.apply(position, RobotId{1}, 10), "nonfinite input rejected");
@@ -394,7 +425,14 @@ int main() {
         check(store.snapshot(10).game.red_score.freshness == Freshness::Stale, "event cannot refresh match");
         check(!store.apply(event, 9), "backwards update time rejected");
         bool rejected = false;
-        try { store.snapshot(9); } catch (const std::invalid_argument&) { rejected = true; }
+        try
+        {
+            store.snapshot(9);
+        }
+        catch (const std::invalid_argument&)
+        {
+            rejected = true;
+        }
         check(rejected, "backwards snapshot time rejected");
         stale_reporter_logs_once_per_transition();
         robot_class_names_match_2027_lineup();
@@ -410,7 +448,9 @@ int main() {
         store_estimates_max_hp_per_round();
         std::cout << "All domain checks passed (no assert, no sleep).\n";
         return 0;
-    } catch (const std::exception& error) {
+    }
+    catch (const std::exception& error)
+    {
         std::cerr << "FAIL " << error.what() << '\n';
         return 1;
     }
