@@ -181,11 +181,13 @@ namespace rm_terminal
             }
             else if (key == QLatin1String("video_hwaccel"))
             {
-                if (value != QLatin1String("none") && value != QLatin1String("vaapi"))
+                if (value != QLatin1String("none") && value != QLatin1String("vaapi") &&
+                    value != QLatin1String("auto"))
                 {
                     if (error)
                     {
-                        *error = QStringLiteral("line %1: invalid video_hwaccel=%2; expected none or vaapi")
+                        *error = QStringLiteral(
+                                     "line %1: invalid video_hwaccel=%2; expected none, vaapi, or auto")
                                      .arg(line)
                                      .arg(value);
                     }

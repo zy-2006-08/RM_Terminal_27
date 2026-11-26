@@ -83,6 +83,8 @@ namespace rm_terminal
         void decoderOutput();
         void tick();
         bool launchDecoder();
+        void resolveDecoder();
+        bool fallBackToSoftware(const QString& reason);
         void stopDecoder();
         void fail(const QString& reason);
         QByteArray primeAccessUnit(const QByteArray& frame);
@@ -94,6 +96,9 @@ namespace rm_terminal
         QElapsedTimer clock_;
         VideoReassembler reassembler_;
         VideoEndpoint endpoint_;
+        // 实际用于 ffmpeg 的解码方式:auto 在启动时解析成 vaapi/none;硬解失败后落到 none。
+        QString active_hwaccel_ = QStringLiteral("none");
+        bool hwaccel_fallback_done_ = false;
         std::function<void(const QByteArray&)> datagram_observer_;
 
         QByteArray raw_, latest_;

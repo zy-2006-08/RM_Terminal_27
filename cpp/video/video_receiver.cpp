@@ -2,6 +2,7 @@
 #include "logging.h"
 #include <QCoreApplication>
 #include <QCryptographicHash>
+#include <QFileInfo>
 #include <QMetaObject>
 #include <QMutexLocker>
 #include <QStandardPaths>
@@ -24,6 +25,12 @@ namespace rm_terminal
                 return;
             }
             QMetaObject::invokeMethod(owner, std::forward<F>(work), Qt::BlockingQueuedConnection);
+        }
+
+        bool vaapiDeviceUsable()
+        {
+            const QFileInfo device(QStringLiteral("/dev/dri/renderD128"));
+            return device.exists() && device.isReadable();
         }
     } // namespace
 
@@ -53,7 +60,11 @@ namespace rm_terminal
         connect(&decoder_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError)
                 {
         PublishOnExit at_exit(this);
-        if(!stopping_)fail(decoder_.errorString()); });
+        if(!stopping_)
+        {
+            fallBackToSoftware(QStringLiteral("decoder_error"));
+            fail(decoder_.errorString());
+        } });
         connect(&decoder_, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this,
                 [this](int code, QProcess::ExitStatus)
                 {
@@ -65,7 +76,10 @@ namespace rm_terminal
                         raw_.clear();
                     }
                     if (!stopping_)
+                    {
+                        fallBackToSoftware(QStringLiteral("decoder_exit=%1").arg(code));
                         fail(QString("decoder_exit=%1").arg(code));
+                    }
                 });
         connect(&timer_, &QTimer::timeout, this, &VideoReceiver::tick);
         timer_.setInterval(50);
@@ -83,6 +97,42 @@ namespace rm_terminal
                   QStringLiteral("decoded_frames=%1").arg(decoded_frames_),
                   QStringLiteral("port=%1").arg(socket_.localPort())});
     }
+    void VideoReceiver::resolveDecoder()
+    {
+        hwaccel_fallback_done_ = false;
+        const bool device_usable = vaapiDeviceUsable();
+        active_hwaccel_ = endpoint_.hwaccel;
+        if (active_hwaccel_ == QLatin1String("auto"))
+            active_hwaccel_ = device_usable ? QStringLiteral("vaapi") : QStringLiteral("none");
+        if (active_hwaccel_ == QLatin1String("vaapi") && !device_usable)
+        {
+            active_hwaccel_ = QStringLiteral("none");
+            hwaccel_fallback_done_ = true;
+            emit_log(LogLevel::warning, QStringLiteral("decode_fallback"),
+                     {QStringLiteral("requested=%1").arg(endpoint_.hwaccel),
+                      QStringLiteral("from=vaapi"), QStringLiteral("to=none"),
+                      QStringLiteral("reason=vaapi_device_unavailable")});
+        }
+        if (endpoint_.hwaccel == QLatin1String("auto"))
+            emit_log(LogLevel::info, QStringLiteral("decode_hwaccel"),
+                     {QStringLiteral("requested=auto"),
+                      QStringLiteral("active=%1").arg(active_hwaccel_)});
+    }
+
+    bool VideoReceiver::fallBackToSoftware(const QString& reason)
+    {
+        if (hwaccel_fallback_done_ || active_hwaccel_ != QLatin1String("vaapi"))
+            return false;
+        hwaccel_fallback_done_ = true;
+        active_hwaccel_ = QStringLiteral("none");
+        emit_log(LogLevel::warning, QStringLiteral("decode_fallback"),
+                 {QStringLiteral("requested=%1").arg(endpoint_.hwaccel),
+                  QStringLiteral("from=vaapi"), QStringLiteral("to=none"),
+                  QStringLiteral("reason=%1").arg(reason),
+                  QStringLiteral("port=%1").arg(socket_.localPort())});
+        return true;
+    }
+
     bool VideoReceiver::launchDecoder()
     {
         last_launch_ = clock_.elapsed();
@@ -111,7 +161,7 @@ namespace rm_terminal
         width_ = 640;
         height_ = 360;
         frame_bytes_ = qsizetype(width_) * height_ * 3;
-        const QStringList hwaccel = endpoint_.hwaccel == QLatin1String("vaapi")
+        const QStringList hwaccel = active_hwaccel_ == QLatin1String("vaapi")
                                         ? QStringList{"-hwaccel", "vaapi", "-hwaccel_device", "/dev/dri/renderD128"}
                                         : QStringList{"-hwaccel", "none"};
         decoder_.setArguments(QStringList{"-hide_banner", "-loglevel", "error"} + hwaccel + QStringList{"-fflags", "nobuffer", "-flags", "low_delay", "-threads", "2", "-probesize", "262144", "-analyzeduration", "2000000", "-f", "hevc", "-c:v", "hevc", "-i", "pipe:0", "-vf", "scale=640:360", "-threads", "2", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "bgr24", "pipe:1"});
@@ -156,6 +206,7 @@ namespace rm_terminal
             return false;
         }
         socket_.setSocketOption(QAbstractSocket::ReceiveBufferSizeSocketOption, 4 * 1024 * 1024);
+        resolveDecoder();
         if (!launchDecoder())
         {
             socket_.close();
@@ -228,6 +279,7 @@ namespace rm_terminal
         reassembler_.resetSession();
         recovery_ = VideoRecoveryPolicy{};
         socket_.close();
+        resolveDecoder();
         if (!launchDecoder())
             return false;
         running_ = true;
@@ -421,6 +473,7 @@ namespace rm_terminal
         {
             // 先取值:下面把 submitted_ 清成 -1,清完再读就只能记出 -1。
             const auto stalled_ms = submitted_ >= 0 ? now - submitted_ : -1;
+            fallBackToSoftware(QStringLiteral("decoder_stall"));
             stopDecoder();
             submitted_ = -1;
             failure_.clear();

@@ -31,8 +31,9 @@ mqtt_port=3333
 udp_port=3334
 
 # 本机图传用什么解码：none = 软件解码（默认），vaapi = Intel 核显硬解
-#（走 /dev/dri/renderD128，当前用户必须在 render 组里）。
-#video_hwaccel=vaapi
+#（走 /dev/dri/renderD128，当前用户必须在 render 组里），auto = 有可用 render
+# 设备就用硬解，没有或硬解失败自动退回软解。
+#video_hwaccel=auto
 
 # 席位（2027 选手端）：红方 1 重装、3/4 步兵、6 指挥手；蓝方 +100。
 # 一般不用写：不写的话每次启动都会弹选席位页。

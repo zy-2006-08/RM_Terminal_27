@@ -452,6 +452,11 @@ namespace
             check(!rm_terminal::load_config(path, &cfg, &error), item.name);
             check(error.contains(QLatin1String(item.key)), item.name);
         }
+
+        check(write_file(path, QStringLiteral("video_hwaccel=auto\n")), "write auto decoder");
+        error.clear();
+        check(rm_terminal::load_config(path, &cfg, &error), "auto decoder loads");
+        check(cfg.video_hwaccel == QLatin1String("auto"), "auto decoder is accepted");
     }
 
 } // namespace
