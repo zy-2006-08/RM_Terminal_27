@@ -17,7 +17,10 @@ rm_terminal.log
 /RM 终端.app/
 
 # Editor / IDE
-.vscode/
+# 只跟踪团队共享的两份 VSCode 配置，其余本机文件忽略
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
 .idea/
 *.swp
 

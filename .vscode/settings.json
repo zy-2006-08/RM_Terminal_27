@@ -1,0 +1,8 @@
+{
+    // 团队共享的 VSCode 设置（跟着仓库走）：让 .conf / .conf.sample 当「Properties」
+    // 语言高亮，# 注释、key、value 会分色显示。
+    "files.associations": {
+        "*.conf": "properties",
+        "*.conf.sample": "properties"
+    }
+}

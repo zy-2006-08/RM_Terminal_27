@@ -23,6 +23,8 @@ PointerAlignment: Left        # QLabel* p
 DerivePointerAlignment: false
 AllowShortFunctionsOnASingleLine: All
 AllowShortCaseLabelsOnASingleLine: true
+# 连续多行的行尾注释（//）对齐到同一列：以这段代码里最长的一行为基准
+AlignTrailingComments: true
 SpacesBeforeTrailingComments: 1
 FixNamespaceComments: true
 # 不重排 #include，避免批量格式化时改变头文件顺序
