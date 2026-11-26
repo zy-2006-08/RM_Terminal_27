@@ -109,10 +109,12 @@ ARM=$!
 sleep 1
 
 # 终端在模拟环境里经链路开关连 Broker，串口接假机械臂。其余配置沿用 ./rm_terminal.conf；
-# 配置文件不允许重复的键，所以先去掉这三项再追加。
+# 配置文件不允许重复的键，所以 mqtt_host、mqtt_port、controller_serial 先去掉再追加。
+# video_relay_host、display_fullscreen、display_screen 也一起去掉：仓库里那份是队内
+# 统一的真机配置，模拟器不该跟着往指挥手转发图传，也不该抢着全屏。
 SIM_CONF="$LOGS/sim.conf"
 {
-  [ -f rm_terminal.conf ] && grep -vE '^[[:space:]]*(mqtt_host|mqtt_port|controller_serial)[[:space:]]*=' rm_terminal.conf
+  [ -f rm_terminal.conf ] && grep -vE '^[[:space:]]*(mqtt_host|mqtt_port|controller_serial|video_relay_host|display_fullscreen|display_screen)[[:space:]]*=' rm_terminal.conf
   echo "mqtt_host=127.0.0.1"
   echo "mqtt_port=3335"
   echo "controller_serial=$ARM_PATH"

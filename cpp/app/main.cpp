@@ -302,6 +302,34 @@ int main(int argc, char* argv[])
         return rm_terminal::kExitBadArguments;
     }
 
+    // 启动器要能挑屏幕:--display-screen 填 QScreen::name()(启动日志的 screens 一行里列出来),
+    // 指定了哪块屏幕就当成要全屏,覆盖配置里的 display_fullscreen/display_screen。
+    QString display_screen;
+    const int display_screen_at = args.indexOf(QLatin1String("--display-screen"));
+    if (display_screen_at >= 0)
+    {
+        if (display_screen_at + 1 >= args.size())
+        {
+            qCritical().noquote() << "Missing screen name after --display-screen";
+            return rm_terminal::kExitBadArguments;
+        }
+        display_screen = args.at(display_screen_at + 1);
+        args.removeAt(display_screen_at + 1);
+        args.removeAt(display_screen_at);
+    }
+    if (args.contains(QLatin1String("--display-screen")))
+    {
+        qCritical().noquote() << "Duplicate --display-screen is not supported";
+        return rm_terminal::kExitBadArguments;
+    }
+
+    const bool force_fullscreen = args.removeOne(QLatin1String("--fullscreen"));
+    if (args.contains(QLatin1String("--fullscreen")))
+    {
+        qCritical().noquote() << "Duplicate --fullscreen is not supported";
+        return rm_terminal::kExitBadArguments;
+    }
+
     std::optional<int> cli_seat;
     const int seat_at = args.indexOf(QLatin1String("--seat"));
     if (seat_at >= 0)
@@ -416,6 +444,12 @@ int main(int argc, char* argv[])
             << "--force-mode requires the GUI; it cannot combine with --safe-smoke or --diagnostic";
         return rm_terminal::kExitBadArguments;
     }
+    if ((force_fullscreen || !display_screen.isEmpty()) && (safe_smoke || diagnostic))
+    {
+        qCritical().noquote() << "--fullscreen and --display-screen require the GUI; they cannot"
+                                 " combine with --safe-smoke or --diagnostic";
+        return rm_terminal::kExitBadArguments;
+    }
     if (!dump_layout_path.isEmpty() && (safe_smoke || diagnostic))
     {
         qCritical().noquote() << "--dump-layout requires the GUI; it cannot combine with"
@@ -488,6 +522,7 @@ int main(int argc, char* argv[])
     {
         qCritical().noquote() << "Unknown argument; supported: --safe-smoke, --config <path>,"
                                  " --seat <id>, --screenshot <path>, --force-mode <info|video>,"
+                                 " --fullscreen, --display-screen <name>,"
                                  " --replay <path> [--from/--to <s>, --export-video <mp4>],"
                                  " --dump-layout <path>, --no-record,"
                                  " --diagnostic <host> <port> <seconds>";
@@ -502,6 +537,13 @@ int main(int argc, char* argv[])
     QString seat_source;
     if (!prepare_runtime(config_path, &cfg, cli_seat, &seat_source))
         return rm_terminal::kExitConfigError;
+    if (force_fullscreen)
+        cfg.display_fullscreen = true;
+    if (!display_screen.isEmpty())
+    {
+        cfg.display_screen = display_screen;
+        cfg.display_fullscreen = true;
+    }
     QObject::connect(input_method_guard, &rm_terminal::InputMethodGuard::blocked, &app, [](const QString& what)
                      { rm_terminal::StructuredLog::write(rm_terminal::LogLevel::info, QStringLiteral("input_method_blocked"),
                                                          {QStringLiteral("object=%1").arg(what)}); });

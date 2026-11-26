@@ -5,9 +5,6 @@ build/
 __pycache__/
 *.py[cod]
 
-# Local runtime config; rm_terminal.conf.sample is tracked as the template
-rm_terminal.conf
-
 # Runtime logs (log_destination default; appends across restarts)
 rm_terminal.log
 *.log.[0-9]*

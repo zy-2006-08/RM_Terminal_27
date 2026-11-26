@@ -7,9 +7,12 @@
 #   rm-terminal-launch replay  弹窗选录像，然后回放
 # 仓库位置从本文件的真实路径推出来（本文件在仓库的 scripts/ubuntu/ 里），仓库放在哪都行。
 REPO="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)"
-# 真机用的配置，每台电脑一份，不进仓库。install_ubuntu.sh 第一次从 scripts/ubuntu/ 里的模板复制过来。
-# 服务器地址、端口、串口都在这个文件里改，改完不用重新编译。
-REAL_CONF="$HOME/rm_terminal.26engine.conf"
+# 真机用的配置：仓库里那份是队内统一的，提交进仓库，所有人共用，谁都不用改自己电脑。
+# 服务器地址、端口、串口、指挥手转发都在这个文件里改，改完 commit / pull，不用重新编译。
+# 老电脑上可能还留着以前那份 ~/rm_terminal.26engine.conf，仓库里没有时才用它兜底。
+REAL_CONF="$REPO/rm_terminal.conf"
+LEGACY_CONF="$HOME/rm_terminal.26engine.conf"
+[ -f "$REAL_CONF" ] || REAL_CONF="$LEGACY_CONF"
 cd "$REPO" || { zenity --error --text="找不到项目文件夹：$REPO"; exit 1; }
 
 pause_on_error() {
@@ -47,7 +50,7 @@ case "$1" in
     pause_on_error $?
     ;;
   real)
-    [ -f "$REAL_CONF" ] || { zenity --error --text="找不到真机配置：$REAL_CONF\n运行一次 bash scripts/install_ubuntu.sh 会放好一份。"; exit 1; }
+    [ -f "$REAL_CONF" ] || { zenity --error --title="RM 真机" --text="找不到真机配置。\n队内统一配置应该在仓库里：$REPO/rm_terminal.conf\n（老电脑的兜底位置：$LEGACY_CONF）\n先 git pull 把仓库更新到最新。"; exit 1; }
     [ -x build/ubuntu/rm_terminal ] || { zenity --error --text="终端还没编译：$REPO/build/ubuntu/rm_terminal\n运行一次 bash scripts/install_ubuntu.sh 会编译好。"; exit 1; }
     # 同一个席位号只能连一个终端，后连的会把先连的踢掉；模拟图传也往本机 3334 发，会混进真画面。
     if pgrep -x rm_terminal >/dev/null || pgrep -f 'match_server|video_sender' >/dev/null; then
@@ -57,10 +60,30 @@ case "$1" in
     fi
     id=$(pick_seat "RM 真机" "选和官方选手端登录的同一台车（选手端登录 R3 就选红方 3 号）") || exit 0
     [ -n "$id" ] || exit 0
+    # 重装和指挥手接官方 1080p 显示器，这两个席位全屏；显示器接了几个由这里看，配置里不写。
+    display_args=()
+    case "$id" in
+      1 | 101 | 6 | 106)
+        display_args=(--fullscreen)
+        screens=()
+        if command -v xrandr >/dev/null; then
+          mapfile -t screens < <(xrandr --query 2>/dev/null | awk '/ connected/{print $1}' | sort -u)
+        fi
+        if [ "${#screens[@]}" -gt 1 ]; then
+          pick=$(zenity --list --title="选择显示器" --text="全屏开在哪个屏上？" \
+            --column=显示器 --width=360 --height=320 \
+            "笔记本主屏（主屏）" "${screens[@]}") || exit 0
+          case "$pick" in
+            "" | "笔记本主屏（主屏）") ;;
+            *) display_args+=(--display-screen "$pick") ;;
+          esac
+        fi
+        ;;
+    esac
     # 席位用 --seat 传，优先于配置里的 self_robot_id，所以配置不用改。
     # xcb：键鼠控制要 X11，Wayland 下鼠标会卡在屏幕边。
     # GSETTINGS_BACKEND=memory：开着系统代理时图传端口绑不上（26 引擎教程附录 B）。
-    GSETTINGS_BACKEND=memory QT_QPA_PLATFORM=xcb build/ubuntu/rm_terminal --config "$REAL_CONF" --seat "$id"
+    GSETTINGS_BACKEND=memory QT_QPA_PLATFORM=xcb build/ubuntu/rm_terminal --config "$REAL_CONF" --seat "$id" "${display_args[@]}"
     pause_on_error $?
     ;;
   replay)

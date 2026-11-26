@@ -6,7 +6,7 @@
 
 Mac 上装成双击就能用的程序：[在 Mac 上装终端：宝宝教程](docs/guides/Mac上装终端-宝宝教程.md)。
 
-Ubuntu 上装成桌面图标（「RM 模拟器」「RM 真机」「RM 回放」）：clone 下来以后运行一次 `bash scripts/install_ubuntu.sh`。它会检查系统软件、建 `.venv`、编译、装图标，再在主文件夹放一份真机配置 `~/rm_terminal.26engine.conf`；已经装好的步骤会跳过。
+Ubuntu 上装成桌面图标（「RM 模拟器」「RM 真机」「RM 回放」）：clone 下来以后运行一次 `bash scripts/install_ubuntu.sh`。它会检查系统软件、建 `.venv`、编译、装图标；已经装好的步骤会跳过。真机配置不用拷也不用改——仓库根目录的 `rm_terminal.conf` 就是队内统一那份（已提交进仓库，所有人共用），「RM 真机」直接读它。
 
 面向 2027 赛季 RoboMaster 超级对抗赛的自定义选手端终端。
 
@@ -444,11 +444,9 @@ build/macos/rm_terminal --safe-smoke
 
 ### 改配置
 
-```sh
-cp rm_terminal.conf.sample rm_terminal.conf
-```
+仓库根目录的 `rm_terminal.conf` 是队内统一配置，已经提交进仓库，所有人共用，不要每台电脑各改一份。要调就在仓库里改这份，然后 commit / pull，全队一起更新。`rm_terminal.conf.sample` 不参与运行，是现场参考模板：所有键的完整说明和可选项都在里面。
 
-然后用文本编辑器打开 `rm_terminal.conf` 改。常用的几项：
+用文本编辑器打开 `rm_terminal.conf` 改。常用的几项：
 
 | 键 | 默认 | 意思 |
 | --- | --- | --- |

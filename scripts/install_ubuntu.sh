@@ -4,7 +4,7 @@
 #   bash scripts/install_ubuntu.sh
 #
 # 按顺序做：检查系统软件 -> 建 .venv（模拟器用）-> 编译终端 -> 装启动脚本 -> 装桌面图标
-# -> 放一份真机配置 -> 问要不要装离线语音。已经装好的步骤会跳过，重复运行没关系。
+# -> 指一下仓库里的队内真机配置 -> 问要不要装离线语音。已经装好的步骤会跳过，重复运行没关系。
 # 只往仓库里的 .venv、build/ubuntu 和你的主文件夹里写，不用管理员权限；缺系统软件时只打印安装命令。
 set -euo pipefail
 
@@ -103,13 +103,12 @@ for name in rm-terminal rm-terminal-real rm-terminal-replay; do
 done
 step "5/6 图标：$DESKTOP 和应用列表里各三个"
 
-# 6. 真机配置：每台电脑一份，在主文件夹里。已经有了就不动。
-REAL_CONF="$HOME/rm_terminal.26engine.conf"
-if [ -f "$REAL_CONF" ]; then
-  step "6/6 真机配置已经有了，不动：$REAL_CONF"
-else
-  cp scripts/ubuntu/rm_terminal.26engine.conf "$REAL_CONF"
-  step "6/6 放好真机配置：$REAL_CONF（服务器地址、串口要改就改这份）"
+# 6. 真机配置：队内统一那份在仓库里，跟着 git 走，新装的电脑不用拷也不用改。
+step "6/6 真机配置就是仓库里这份（提交进仓库，全队共用）：$REPO/rm_terminal.conf"
+step "    要改服务器地址、串口、指挥手转发就在仓库里改这份，然后 commit / pull，全队一起更新。"
+LEGACY_CONF="$HOME/rm_terminal.26engine.conf"
+if [ -f "$LEGACY_CONF" ]; then
+  step "    主文件夹里那份旧配置留着不动，只在仓库那份不存在时兜底：$LEGACY_CONF"
 fi
 
 # 离线语音（可选）：要联网下载，装好约占 265MB，所以先问一句。

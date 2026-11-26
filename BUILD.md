@@ -50,7 +50,11 @@ application code uses Qt and standard C++ APIs.
 ## Configuration
 
 Runtime settings come from a `key=value` file; no source edit or rebuild is
-required to change them. Copy `rm_terminal.conf.sample` and edit it.
+required to change them. The repo-root `rm_terminal.conf` is the team-wide
+config and is tracked in git: edit it in the repo and commit/pull so every
+machine shares it, rather than keeping a per-machine copy.
+`rm_terminal.conf.sample` is not loaded at runtime; it is the field reference
+and template documenting every key.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
