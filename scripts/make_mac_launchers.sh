@@ -1,7 +1,8 @@
 #!/bin/bash
 # 在仓库根目录生成两个开发用的 .app（空壳启动器，不打包程序）：
 #   「RM 模拟器.app」= 双击 启动.command（终端里打开，选席位、看日志）
-#   「RM 终端.app」  = 运行 build/macos/rm_terminal，配置/日志/录像都在 ~/Library/Application Support/rm_terminal
+#   「RM 终端.app」  = 运行 build/macos/rm_terminal；配置读仓库里的 rm_terminal.conf，日志/录像在
+#                      ~/Library/Application Support/rm_terminal
 # 每次运行时按 .app 所在位置算仓库路径，所以仓库挪了、代码改了都不用重新生成（C++ 改了要重新编译）。
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -81,11 +82,16 @@ cat >"$APP_TERM/Contents/MacOS/launch" <<'EOF'
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
 DATA="$HOME/Library/Application Support/rm_terminal"
 mkdir -p "$DATA"
-[ -f "$DATA/rm_terminal.conf" ] || cp "$REPO/rm_terminal.conf.sample" "$DATA/rm_terminal.conf"
+# 队内统一配置在仓库里，直接读它；仓库里没有才退回 data 目录/样例（旧电脑兜底）。
+CONF="$REPO/rm_terminal.conf"
+if [ ! -f "$CONF" ]; then
+  CONF="$DATA/rm_terminal.conf"
+  [ -f "$CONF" ] || cp "$REPO/rm_terminal.conf.sample" "$CONF"
+fi
 # 从程序坞启动不读 shell 配置，补上 Homebrew 的 ffmpeg 路径。
 export PATH="/opt/homebrew/bin:/usr/local/bin:/opt/homebrew/sbin:$PATH"
 cd "$DATA"
-exec "$REPO/build/macos/rm_terminal" "$@"
+exec "$REPO/build/macos/rm_terminal" --config "$CONF" "$@"
 EOF
 new_app "$APP_TERM" "RM 终端" "com.robobraver.rm-terminal"
 

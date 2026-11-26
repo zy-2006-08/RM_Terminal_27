@@ -72,7 +72,7 @@ case "$1" in
         if [ "${#screens[@]}" -gt 1 ]; then
           pick=$(zenity --list --title="选择显示器" --text="全屏开在哪个屏上？" \
             --column=显示器 --width=360 --height=320 \
-            "笔记本主屏（主屏）" "${screens[@]}") || exit 0
+            "笔记本主屏（主屏）" "${screens[@]}") || pick=""
           case "$pick" in
             "" | "笔记本主屏（主屏）") ;;
             *) display_args+=(--display-screen "$pick") ;;

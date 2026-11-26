@@ -114,21 +114,22 @@ Wi-Fi 上网不受影响。【未验证】不同 macOS 版本菜单的名字可�
 
 **通过**（和 26 引擎教程第 7 节一样）：「裁判」灯绿；自检页「席位」是「席位正确」；「图传」灯绿，图传窗口有画面。
 
-## 6. 改配置（服务器地址、串口）
+## 6. 配置（一般不用改）
 
-第一次打开以后，配置文件在 `~/Library/Application Support/rm_terminal/rm_terminal.conf`，日志 `rm_terminal.log` 和录像也在这个文件夹。用「文本编辑」打开配置：
+程序包里带的是仓库里的队内统一配置（项目根目录的 `rm_terminal.conf`）：服务器 `192.168.12.1`、端口 `3333/3334`、控制器串口 `auto`、指挥手图传转发等，全队一样。第一次打开时终端把它复制到：
 
-```sh
-open -e ~/Library/Application\ Support/rm_terminal/rm_terminal.conf
-```
+`~/Library/Application Support/rm_terminal/rm_terminal.conf`
 
-改完保存，**退出「RM 终端」（Command+Q）再打开**才生效。
+日志 `rm_terminal.log` 和录像也在这个文件夹。**正常不用打开它**。
 
-| 想做什么 | 怎么改 |
+| 想做什么 | 怎么做 |
 | --- | --- |
-| 换服务器地址 | 改 `mqtt_host=` 那一行。连真实裁判系统就是 `192.168.12.1`，不用动 |
-| 接自定义控制器 | 插上控制器，运行 `ls /dev/cu.*`，找新多出来的那个（一般带 `usbserial`）。配置里去掉 `# controller_serial=` 开头的 `#`，路径换成它 |
-| 不想每次选席位 | 加一行 `self_robot_id=3`（3 换成你的车号，蓝方加 100）。换车时记得改 |
+| 换服务器地址 / 指挥手 IP | 在项目里改仓库根目录的 `rm_terminal.conf`，提交/推送后重新打包；个人 Mac 不用各改一份 |
+| 接自定义控制器 | 默认 `controller_serial=auto` 自动识别；auto 认不到时，才在 data 目录那份里写固定路径（只影响这台 Mac） |
+| 重装/指挥手接外接显示器 | 不用配置：选完席位后自动全屏，并弹窗选开在哪块屏上（没接外接屏不会弹） |
+| 不想每次选席位 | 可以在 data 目录那份加 `self_robot_id=3`（只影响这台 Mac）。默认每次选更安全 |
+
+> 已经装过的 Mac：程序包更新后，如果要用新包里的队内配置，先退出「RM 终端」，删掉 `~/Library/Application Support/rm_terminal/rm_terminal.conf`，再打开一次；日志和录像不受影响。
 
 每一项的意思见项目里的 `rm_terminal.conf.sample`。
 

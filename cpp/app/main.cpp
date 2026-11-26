@@ -7,6 +7,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QImage>
+#include <QInputDialog>
 #include <QLabel>
 #include <QScreen>
 #include <QStandardPaths>
@@ -572,6 +573,36 @@ int main(int argc, char* argv[])
         }
         cfg.self_robot_id = static_cast<int>(seat->robotId());
         seat_source = QStringLiteral("picker");
+    }
+
+    // macOS 没有 zenity 启动器：重装/指挥手选完席位后，如果接了外接屏，在这里弹窗选全屏目标。
+    // 其他平台由启动器在拉起程序前处理（Linux 用 zenity，把 --fullscreen/--display-screen 传进来）。
+    // 截图/导出布局这类无人值守模式不弹窗，否则自动化会被模态框卡住。
+    if (replay_path.isEmpty() && screenshot_path.isEmpty() && dump_layout_path.isEmpty() &&
+        QGuiApplication::platformName() == QLatin1String("cocoa"))
+    {
+        const std::optional<rm_terminal::Seat> display_seat =
+            rm_terminal::Seat::fromRobotId(cfg.self_robot_id);
+        const bool wants_external_screen =
+            display_seat && (display_seat->role() == rm_terminal::Role::Hero ||
+                             display_seat->role() == rm_terminal::Role::Commander);
+        if (wants_external_screen)
+        {
+            cfg.display_fullscreen = true;
+            if (cfg.display_screen.isEmpty() && QGuiApplication::screens().size() > 1)
+            {
+                QStringList screen_names;
+                for (const QScreen* screen : QGuiApplication::screens())
+                    screen_names << screen->name();
+                bool picked_ok = false;
+                const QString picked =
+                    QInputDialog::getItem(nullptr, QStringLiteral("选择显示器"),
+                                          QStringLiteral("全屏开在哪个屏上？"), screen_names, 0,
+                                          false, &picked_ok);
+                if (picked_ok && !picked.isEmpty())
+                    cfg.display_screen = picked;
+            }
+        }
     }
     if (replay_path.isEmpty())
         rm_terminal::StructuredLog::write(rm_terminal::LogLevel::info, QStringLiteral("startup"),

@@ -77,20 +77,9 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$OUT/rm_terminal" "$APP/Contents/MacOS/rm_terminal"
 cp "$FF_DIR/ffmpeg" "$APP/Contents/MacOS/ffmpeg"
-# 第一次双击打开时，终端把这份配置复制到 ~/Library/Application Support/rm_terminal/（cpp/app/main.cpp）。
-cat >"$APP/Contents/Resources/rm_terminal.conf" <<'EOF'
-# RM 终端（Mac）的配置。第一次双击打开时从程序包里复制过来，之后改这个文件，不用重新打包。
-# 每一项的意思见项目里的 rm_terminal.conf.sample 和 BUILD.md 的 Configuration 一节。
-#
-# 连真实裁判系统：官方选手端电脑接终端的那个网口是 192.168.12.1。
-# 这台 Mac 接选手端的网口要手动设成 192.168.12.2，子网掩码 255.255.255.0，路由器（网关）空着。
-mqtt_host=192.168.12.1
-mqtt_port=3333
-udp_port=3334
-# 席位不写：每次打开先弹选席位页。
-# 接自定义控制器时，去掉下一行开头的 #，路径换成 ls /dev/cu.* 查到的那个：
-# controller_serial=/dev/cu.usbserial-XXXX
-EOF
+# 程序包带上仓库里那份队内统一配置；第一次双击打开时，终端把它复制到
+# ~/Library/Application Support/rm_terminal/（cpp/app/main.cpp）。正常不用改，改配置在仓库里改。
+cp "$ROOT/rm_terminal.conf" "$APP/Contents/Resources/rm_terminal.conf"
 VERSION=$(sed -nE 's/^project\(rm_terminal VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
 # 用 Homebrew 的库编出来的程序只能在同版本或更新的 macOS 上运行，所以最低版本写这台机器的。
 cat >"$APP/Contents/Info.plist" <<EOF
@@ -235,6 +224,6 @@ rm -rf "$STAGE"
 step "好了。"
 step "  程序：${DEST}（启动台里也有，双击就开；可以拖到程序坞上）"
 step "  第一次打开会问能不能访问本地网络，点「允许」，不然连不上裁判系统。"
-step "  配置：~/Library/Application Support/rm_terminal/rm_terminal.conf（第一次打开以后才有），日志和录像也在这个文件夹"
+step "  配置：程序包里带的是仓库里的队内统一配置，第一次打开会复制到 ~/Library/Application Support/rm_terminal/rm_terminal.conf（正常不用改）；日志和录像也在那个文件夹"
 step "  给别的 Mac：${DMG}（要 Apple 芯片、macOS ${MACOS%%.*} 或更新；第一次打开被拦时，去「系统设置 → 隐私与安全性」点「仍要打开」）"
 open -R "$DEST"
