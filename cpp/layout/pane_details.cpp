@@ -210,7 +210,7 @@ namespace rm_terminal
         add_page(this, root, &pages_, &l); // Alerts
         alert_voice_ = new QCheckBox(QStringLiteral("提醒时念出来"), this);
         l->addWidget(alert_voice_);
-        auto* kinds = new QLabel(QStringLiteral("要提醒的事"), this);
+        auto* kinds = new QLabel(QStringLiteral("念哪几种提醒"), this);
         kinds->setProperty("heading", true);
         l->addWidget(kinds);
         for (const QString& kind : alert_kind_names())
@@ -224,7 +224,7 @@ namespace rm_terminal
                 options.alerts_muted.removeAll(kind);
                 if (!on) options.alerts_muted.append(kind); }); });
         }
-        l->addWidget(hint(QStringLiteral("关掉的事不出横幅也不念。战术提醒在状态条的「战术提醒」里改。"), this));
+        l->addWidget(hint(QStringLiteral("取消勾选只是不念，横幅照常显示。战术提醒在状态条的「战术提醒」里改。"), this));
 
         connect(map_background_, &QSlider::valueChanged, this, [this](int value)
                 {
@@ -324,12 +324,6 @@ namespace rm_terminal
         adjustSize();
     }
 
-    void PaneDetails::setConfigDisabledAlerts(const QStringList& kinds)
-    {
-        config_disabled_ = kinds;
-        refresh();
-    }
-
     void PaneDetails::editOptions(const std::function<void(UiOptions&)>& edit)
     {
         UiOptions options = controller_->activeScheme().options;
@@ -365,10 +359,7 @@ namespace rm_terminal
         for (auto& [kind, box] : alert_kinds_)
         {
             const QSignalBlocker blocker(box);
-            const bool by_config = config_disabled_.contains(kind);
-            box->setEnabled(!by_config);
-            box->setText(alert_kind_title(kind) + (by_config ? QStringLiteral("（配置文件已关）") : QString()));
-            box->setChecked(!by_config && !options.alerts_muted.contains(kind));
+            box->setChecked(!options.alerts_muted.contains(kind));
         }
     }
 

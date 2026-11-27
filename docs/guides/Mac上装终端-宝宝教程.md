@@ -116,20 +116,18 @@ Wi-Fi 上网不受影响。【未验证】不同 macOS 版本菜单的名字可�
 
 ## 6. 配置（一般不用改）
 
-程序包里带的是仓库里的队内统一配置（项目根目录的 `rm_terminal.conf`）：服务器 `192.168.12.1`、端口 `3333/3334`、控制器串口 `auto`、指挥手图传转发等，全队一样。第一次打开时终端把它复制到：
+程序包里带的是仓库里的队内统一配置（项目根目录的 `rm_terminal.conf`）：服务器 `192.168.12.1`、端口 `3333/3334`、控制器串口 `auto`、指挥手图传转发等，全队一样。终端每次直接读包里那份，跟着 app 版本走——更新 app 后配置自然就是新的，不用删任何文件。
 
-`~/Library/Application Support/rm_terminal/rm_terminal.conf`
-
-日志 `rm_terminal.log` 和录像也在这个文件夹。**正常不用打开它**。
+日志 `rm_terminal.log` 和录像在 `~/Library/Application Support/rm_terminal/`。
 
 | 想做什么 | 怎么做 |
 | --- | --- |
 | 换服务器地址 / 指挥手 IP | 在项目里改仓库根目录的 `rm_terminal.conf`，提交/推送后重新打包；个人 Mac 不用各改一份 |
-| 接自定义控制器 | 默认 `controller_serial=auto` 自动识别；auto 认不到时，才在 data 目录那份里写固定路径（只影响这台 Mac） |
+| 接自定义控制器 | 默认 `controller_serial=auto` 自动识别；auto 认不到时，在终端里加 `--config` 启动并指向自己的配置（只影响这台 Mac） |
 | 重装/指挥手接外接显示器 | 不用配置：选完席位后自动全屏，并弹窗选开在哪块屏上（没接外接屏不会弹） |
-| 不想每次选席位 | 可以在 data 目录那份加 `self_robot_id=3`（只影响这台 Mac）。默认每次选更安全 |
+| 不想每次选席位 | 默认每次选更安全；要固定就在终端里加 `--seat 3` 启动 |
 
-> 已经装过的 Mac：程序包更新后，如果要用新包里的队内配置，先退出「RM 终端」，删掉 `~/Library/Application Support/rm_terminal/rm_terminal.conf`，再打开一次；日志和录像不受影响。
+> 以前版本会自动把配置复制到 `~/Library/Application Support/rm_terminal/rm_terminal.conf`；现在终端不再读那份拷贝，留着删掉都行。
 
 每一项的意思见项目里的 `rm_terminal.conf.sample`。
 

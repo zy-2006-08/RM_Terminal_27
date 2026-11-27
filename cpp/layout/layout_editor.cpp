@@ -358,8 +358,6 @@ namespace rm_terminal
         refreshTileImages();
     }
 
-    void LayoutEditor::setConfigDisabledAlerts(const QStringList& kinds) { details_->setConfigDisabledAlerts(kinds); }
-
     const PaneSlot* LayoutEditor::cell(PaneId pane) const
     {
         for (const PaneSlot& slot : working_.cells)

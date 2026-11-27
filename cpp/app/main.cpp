@@ -76,9 +76,10 @@ namespace
 
     // 从访达、程序坞双击 Mac 的 .app 时工作目录是 /:默认的 ./rm_terminal.conf 找不到,rm_terminal.log
     // 也写不进去,程序一打开就以退出码 4 退出。这种启动方式下把工作目录换到本机数据目录
-    // (~/Library/Application Support/rm_terminal,录像也在这里),第一次打开时把包里带的配置放过去。
+    // (~/Library/Application Support/rm_terminal,录像也在这里),配置直接读包里那份。
+    // 不往数据目录复制配置:复制出来的那份会盖过以后新版包里带的配置,升级后还得手动删。
     // 在终端里运行时工作目录不是 /,什么都不变。
-    void use_data_dir_when_launched_from_bundle()
+    void use_data_dir_when_launched_from_bundle(QString* config_path)
     {
         if (QDir::currentPath() != QLatin1String("/"))
             return;
@@ -88,11 +89,11 @@ namespace
         const QString data = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
         if (!QDir().mkpath(data) || !QDir::setCurrent(data))
             return;
-        const QString config = QString::fromLatin1(rm_terminal::kDefaultConfigFileName);
-        const QString bundled = contents.filePath(QStringLiteral("Resources/") + config);
-        if (!QFileInfo::exists(config) && QFile::copy(bundled, config))
-            QFile::setPermissions(config, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ReadGroup |
-                                              QFileDevice::ReadOther);
+        // 没显式指定配置(还是默认相对路径)时读包里那份,跟着 app 版本走;旧版本留下的拷贝一概不认。
+        const QString bundled = contents.filePath(
+            QStringLiteral("Resources/") + QString::fromLatin1(rm_terminal::kDefaultConfigFileName));
+        if (*config_path == QString::fromLatin1(rm_terminal::kDefaultConfigFileName) && QFileInfo::exists(bundled))
+            *config_path = bundled;
     }
 
     // 席位从哪来:--seat > RM_SELF_ID > 配置里显式写的 self_robot_id;都没有时返回空,
@@ -100,9 +101,10 @@ namespace
     bool prepare_runtime(const QString& config_path, rm_terminal::Config* cfg,
                          std::optional<int> cli_seat = std::nullopt, QString* seat_source = nullptr)
     {
-        use_data_dir_when_launched_from_bundle();
+        QString effective_config = config_path;
+        use_data_dir_when_launched_from_bundle(&effective_config);
         QString error;
-        if (!rm_terminal::load_config(config_path, cfg, &error))
+        if (!rm_terminal::load_config(effective_config, cfg, &error))
         {
             fprintf(stderr, "config error: %s\n", error.toUtf8().constData());
             return false;
@@ -496,7 +498,7 @@ int main(int argc, char* argv[])
             return rm_terminal::kExitConfigError;
         rm_terminal::StructuredLog::write(rm_terminal::LogLevel::info, QStringLiteral("startup"),
                                           startup_fields(QStringLiteral("diagnostic"), cfg, seat_source));
-        rm_terminal::Store store(cfg.stale_window_ms);
+        rm_terminal::Store store(cfg.stale_window_ms, cfg.event_history_capacity);
         rm_terminal::MqttIntake intake(store, args.at(1), port, cfg.self_robot_id);
         QObject::connect(&intake, &rm_terminal::MqttIntake::diagnostic,
                          [](const QString& text)
@@ -620,7 +622,7 @@ int main(int argc, char* argv[])
         app.quit(); });
     quit_signal_poll.start(100);
 
-    rm_terminal::Store store(cfg.stale_window_ms);
+    rm_terminal::Store store(cfg.stale_window_ms, cfg.event_history_capacity);
     rm_terminal::MqttIntake intake(store, cfg.mqtt_host, cfg.mqtt_port,
                                    cfg.self_robot_id);
     QObject::connect(&intake, &rm_terminal::MqttIntake::diagnostic,
@@ -848,7 +850,6 @@ int main(int argc, char* argv[])
     if (const auto seat = rm_terminal::Seat::fromRobotId(cfg.self_robot_id))
         alert_settings.role = seat->role();
     alert_settings.control_gap = cfg.alert_control_gap;
-    alert_settings.disabled = cfg.alerts_disabled;
     rm_terminal::MatchAlerts match_alerts(alert_settings);
     rm_terminal::AlertVoice alert_voice(make_speech_backend(&app, cfg.speech_dir));
     // 步兵进入 15 秒自检阶段还没选性能体系时念的那一句。
@@ -880,21 +881,18 @@ int main(int argc, char* argv[])
     rm_terminal::UiProfileController ui_profiles(ui_profile_files, seat_role);
     if (!picked_operator.isEmpty())
         ui_profiles.switchOperator(picked_operator);
-    // 操作手关掉的提醒叠加在配置文件 alerts_disabled 之上,语音开关只管事件提醒的声音。
+    // 事件提醒的横幅始终全开;界面方案里的提醒开关只管这一类念不念语音。
     bool alert_voice_on = true;
+    QStringList voice_muted;
     const auto apply_alert_choices = [&]
     {
         const rm_terminal::UiOptions& options = ui_profiles.activeScheme().options;
-        QStringList disabled = cfg.alerts_disabled;
-        for (const QString& kind : options.alerts_muted)
-            if (!disabled.contains(kind))
-                disabled << kind;
-        match_alerts.setDisabled(disabled);
+        voice_muted = options.alerts_muted;
         alert_voice_on = options.alert_voice;
     };
     apply_alert_choices();
     QObject::connect(&ui_profiles, &rm_terminal::UiProfileController::changed, &dashboard, apply_alert_choices);
-    dashboard.attachUiProfiles(&ui_profiles, cfg.alerts_disabled);
+    dashboard.attachUiProfiles(&ui_profiles);
     QObject::connect(&reminders, &rm_terminal::ReminderController::reminderDue, &dashboard,
                      [&dashboard](const QString& text)
                      {
@@ -1506,7 +1504,7 @@ int main(int argc, char* argv[])
     QObject::connect(&freshness_timer, &QTimer::timeout,
                      [&store, &reporter, &dashboard, &video, &wall, &reminders, &intake,
                       &recorder, &replay, &sample_links, &cfg, &recordings, speech,
-                      &match_alerts, &alert_voice, &alert_voice_on, assembly, dart, sentry,
+                      &match_alerts, &alert_voice, &alert_voice_on, &voice_muted, assembly, dart, sentry,
                       &seat_matched, &logged_event_at, &logged_sentry_result_at,
                       &logged_dart, &logged_mark_at, self_commands, revive_popup, &keyboard_mouse,
                       &self_log, purchases, &self_dead, &pause_keyboard_mouse, settings_panel, seat_role,
@@ -1573,7 +1571,8 @@ int main(int argc, char* argv[])
                              match_log.note(alert.banner);
                              if (alert.kind == rm_terminal::AlertKind::BaseAttacked)
                                  dashboard.flashBase(now);
-                             if (!replay && alert_voice_on)
+                             if (!replay && alert_voice_on &&
+                                 !voice_muted.contains(rm_terminal::alert_kind_name(alert.kind)))
                                  reminders.announce(alert_voice.pathFor(alert.speech));
                          }
                          if (round_over && !replay && snapshot.self)

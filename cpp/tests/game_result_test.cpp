@@ -255,14 +255,15 @@ namespace
     {
         Snapshot never_received;
         never_received.self = RobotId{3};
-        const SettlementRow& cold = row_named(settlement_model(never_received),
-                                              QStringLiteral("击杀数"));
+        const SettlementModel cold_model = settlement_model(never_received);
+        const SettlementRow& cold = row_named(cold_model, QStringLiteral("击杀数"));
         check(!cold.red.has_value() && !cold.blue.has_value(),
               "kills are unknown before any match state is received");
 
         Snapshot counting = settled_snapshot(1);
         counting.kills = KillTally{0, 3};
-        const SettlementRow& warm = row_named(settlement_model(counting), QStringLiteral("击杀数"));
+        const SettlementModel warm_model = settlement_model(counting);
+        const SettlementRow& warm = row_named(warm_model, QStringLiteral("击杀数"));
         check(warm.red.has_value() && *warm.red == 0,
               "once counting, zero kills is a real 0");
         check(warm.blue.has_value() && *warm.blue == 3, "the blue tally is carried through");
@@ -273,8 +274,8 @@ namespace
     void the_robot_hp_sum_skips_missing_robots_and_stays_absent_when_empty()
     {
         Snapshot empty = settled_snapshot(1);
-        const SettlementRow& none = row_named(settlement_model(empty),
-                                              QStringLiteral("机器人剩余血量"));
+        const SettlementModel empty_model = settlement_model(empty);
+        const SettlementRow& none = row_named(empty_model, QStringLiteral("机器人剩余血量"));
         check(!none.red.has_value() && !none.blue.has_value(),
               "with no robot health at all the sum is absent, not 0");
 
@@ -305,16 +306,16 @@ namespace
     {
         Snapshot red_seat = settled_snapshot(1);
         red_seat.game.rune_status = present<std::uint32_t>(3);
-        const SettlementRow& red_row = row_named(settlement_model(red_seat),
-                                                 QStringLiteral("能量机关"));
+        const SettlementModel red_model = settlement_model(red_seat);
+        const SettlementRow& red_row = row_named(red_model, QStringLiteral("能量机关"));
         check(red_row.red_text == QStringLiteral("已激活"), "a red seat fills the red side");
         check(red_row.blue_text.isEmpty(), "the enemy rune state is never invented");
 
         Snapshot blue_seat = settled_snapshot(2);
         blue_seat.self = RobotId{103};
         blue_seat.game.rune_status = present<std::uint32_t>(2);
-        const SettlementRow& blue_row = row_named(settlement_model(blue_seat),
-                                                  QStringLiteral("能量机关"));
+        const SettlementModel blue_model = settlement_model(blue_seat);
+        const SettlementRow& blue_row = row_named(blue_model, QStringLiteral("能量机关"));
         check(blue_row.blue_text == QStringLiteral("激活中"), "a blue seat fills the blue side");
         check(blue_row.red_text.isEmpty(), "the enemy side stays empty for a blue seat");
     }

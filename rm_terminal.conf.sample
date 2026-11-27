@@ -64,9 +64,6 @@ event_history_capacity=50
 # 只有明确收到「致盲」信号才切。这是唯一接受 0 的整型键；-1 仍然非法。
 blind_stale_fallback_ms=15000
 
-# info 模式下是否绘制战术地图面板：true 或 false。
-map_enabled=true
-
 # 地图标记在地图上保留多久（毫秒，最后 5 秒淡出）。
 map_mark_ms=30000
 
@@ -99,10 +96,6 @@ controller_baud=115200
 # MQTT 保活时间（秒）。网线被拔掉后，大约要两个保活周期才能发现；
 # 裁判灯则是不管怎样，2 秒没数据就变红。
 mqtt_keepalive_s=5
-
-# 要关掉的事件提醒种类，用逗号分隔：outpost、control、fortress、dart、
-# energy、low_hp、base、intrusion（敌方进入我方半场）。默认全部开启。
-#alerts_disabled=dart,energy
 
 # 控制度落后多少分触发一次提醒。
 alert_control_gap=30

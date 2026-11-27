@@ -456,7 +456,6 @@ build/macos/rm_terminal --safe-smoke
 | `stale_window_ms` | `2200` | 多久没更新算过期（**不要低于 1000**） |
 | `mode_exit_hysteresis_ms` | `3000` | 遮挡结束后等多久才退出全屏 |
 | `log_level` | `info` | 日志详细程度 |
-| `map_enabled` | `true` | 是否画战术地图 |
 | `self_robot_id` | （不写） | 席位；不写就每次开机弹选席位页 |
 | `display_fullscreen` | `false` | 开机全屏（重装、指挥手接官方 1080p 显示器时打开） |
 | `video_relay_host` | （不写） | 地面席位把图传原样转发给指挥手：填指挥手终端在组网网口上的 IPv4 地址 |

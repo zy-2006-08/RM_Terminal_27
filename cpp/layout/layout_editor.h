@@ -47,7 +47,6 @@ namespace rm_terminal
         void setPreview(const QPixmap& window, const QRect& grid);
         // 画某个组件真样子的缩略图(主界面给)。
         void setPaneImageSource(std::function<QPixmap(PaneId, QSize)> source);
-        void setConfigDisabledAlerts(const QStringList& kinds);
         // 主界面现在该按哪一份排(拖缝还没松手时是拖到一半的样子)。
         const UiScheme& working() const { return working_; }
 

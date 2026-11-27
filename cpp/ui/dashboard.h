@@ -199,8 +199,8 @@ namespace rm_terminal
 
         // 操作手的界面设置。挂上后状态条出现「界面设置」按钮,当前方案立刻生效,以后每次改动
         // 都会重排。不挂时(测试、回放截图)用席位默认布局。比赛中(收到「比赛中」阶段)按钮
-        // 置灰、设置页收起,直到收到别的阶段。`config_disabled_alerts` 是配置文件关掉的提醒。
-        void attachUiProfiles(UiProfileController* controller, const QStringList& config_disabled_alerts);
+        // 置灰、设置页收起,直到收到别的阶段。
+        void attachUiProfiles(UiProfileController* controller);
         // 按方案藏面板、调细项。attachUiProfiles 之外也给测试直接调用。
         // editing:界面设置页开着时按它正在改的那份排,「有急事才弹出」的「下一步」也画在格子里好摆。
         void applyUiScheme(const UiScheme& scheme, bool editing = false);

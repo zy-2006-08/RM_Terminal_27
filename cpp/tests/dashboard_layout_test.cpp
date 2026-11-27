@@ -1116,7 +1116,7 @@ namespace
         config.self_robot_id = 3;
         Dashboard dashboard(config);
         dashboard.resize(1440, 900);
-        dashboard.attachUiProfiles(&profiles, {QStringLiteral("base")});
+        dashboard.attachUiProfiles(&profiles);
         int toggled = 0;
         int opened = 0;
         dashboard.setKeyboardMouseToggle([&toggled]
@@ -1648,7 +1648,7 @@ void the_ui_settings_page_hides_panes_saves_and_locks()
     config.self_robot_id = 3;
     Dashboard dashboard(config);
     dashboard.resize(1440, 900);
-    dashboard.attachUiProfiles(&profiles, {QStringLiteral("base")});
+    dashboard.attachUiProfiles(&profiles);
     dashboard.update(pre_match_snapshot(), nullptr, 1000);
     settle(dashboard);
     auto* entry = dashboard.findChild<QPushButton*>(QStringLiteral("uiSettingsEntry"));

@@ -1,6 +1,5 @@
 #include "config.h"
 #include "seat.h"
-
 #include <QFile>
 
 namespace rm_terminal
@@ -30,8 +29,7 @@ namespace rm_terminal
         // info mode merely because blind telemetry went stale. An operator who does not
         // trust the fallback needs a way to switch it off; rejecting 0 would force them
         // to fake a huge timeout instead. Negative values remain invalid.
-        bool parse_non_negative_integer(const QString& value, const QString& key, int line, int* result,
-                                        QString* error)
+        bool parse_non_negative_integer(const QString& value, const QString& key, int line, int* result, QString* error)
         {
             bool ok = false;
             const int parsed = value.toInt(&ok);
@@ -50,8 +48,7 @@ namespace rm_terminal
             return true;
         }
 
-        bool parse_boolean(const QString& value, const QString& key, int line, bool* result,
-                           QString* error)
+        bool parse_boolean(const QString& value, const QString& key, int line, bool* result, QString* error)
         {
             if (value == QLatin1String("true"))
             {
@@ -239,11 +236,6 @@ namespace rm_terminal
                     return false;
                 }
             }
-            else if (key == QLatin1String("map_enabled"))
-            {
-                if (!parse_boolean(value, key, line, &config->map_enabled, error))
-                    return false;
-            }
             else if (key == QLatin1String("map_mark_ms"))
             {
                 if (!parse_integer(value, key, line, &config->map_mark_ms, error))
@@ -292,26 +284,6 @@ namespace rm_terminal
             else if (key == QLatin1String("speech_dir"))
             {
                 config->speech_dir = value;
-            }
-            else if (key == QLatin1String("alerts_disabled"))
-            {
-                config->alerts_disabled.clear();
-                for (const QString& part : value.split(QLatin1Char(','), Qt::SkipEmptyParts))
-                {
-                    const QString name = part.trimmed();
-                    if (!alert_kind_names().contains(name))
-                    {
-                        if (error)
-                        {
-                            *error = QStringLiteral("line %1: unknown alert kind %2 in alerts_disabled; "
-                                                    "expected some of %3")
-                                         .arg(line)
-                                         .arg(name, alert_kind_names().join(QLatin1Char(',')));
-                        }
-                        return false;
-                    }
-                    config->alerts_disabled << name;
-                }
             }
             else if (key == QLatin1String("log_level"))
             {

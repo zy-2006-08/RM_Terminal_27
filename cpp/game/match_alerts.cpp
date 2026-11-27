@@ -155,8 +155,6 @@ namespace rm_terminal
             return;
         if (alert.kind == AlertKind::DartGate && settings_.role != Role::Commander)
             return;
-        if (settings_.disabled.contains(alert_kind_name(alert.kind)))
-            return;
         out.push_back(std::move(alert));
     }
 

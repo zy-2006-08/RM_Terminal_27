@@ -45,7 +45,6 @@ namespace rm_terminal
         static std::optional<Page> page_for(PaneId pane, bool video_cell, bool video_embeddable);
         void showPage(Page page);
         Page page() const { return page_; }
-        void setConfigDisabledAlerts(const QStringList& kinds);
         void refresh();
 
     Q_SIGNALS:
@@ -63,7 +62,6 @@ namespace rm_terminal
 
         UiProfileController* controller_;
         Page page_ = Page::Map;
-        QStringList config_disabled_;
         QLabel* title_ = nullptr;
         // 每块面板一页,只显示当前那页。不用 QStackedWidget:它按最高的那页算高度,短的页下面会空一大截。
         std::vector<QWidget*> pages_;

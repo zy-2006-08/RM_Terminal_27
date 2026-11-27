@@ -1434,13 +1434,12 @@ namespace rm_terminal
         return speech;
     }
 
-    void Dashboard::attachUiProfiles(UiProfileController* controller, const QStringList& config_disabled_alerts)
+    void Dashboard::attachUiProfiles(UiProfileController* controller)
     {
         ui_profiles_ = controller;
         if (!controller)
             return;
         layout_editor_ = new LayoutEditor(controller, this);
-        layout_editor_->setConfigDisabledAlerts(config_disabled_alerts);
         layout_editor_->setVisible(false);
         layout_editor_->setPaneImageSource([this](PaneId pane, QSize size)
                                            { return paneImage(pane, size); });

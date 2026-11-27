@@ -77,8 +77,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$OUT/rm_terminal" "$APP/Contents/MacOS/rm_terminal"
 cp "$FF_DIR/ffmpeg" "$APP/Contents/MacOS/ffmpeg"
-# 程序包带上仓库里那份队内统一配置；第一次双击打开时，终端把它复制到
-# ~/Library/Application Support/rm_terminal/（cpp/app/main.cpp）。正常不用改，改配置在仓库里改。
+# 程序包带上仓库里那份队内统一配置；双击打开时终端直接读它（cpp/app/main.cpp），升级包就是新配置。
 cp "$ROOT/rm_terminal.conf" "$APP/Contents/Resources/rm_terminal.conf"
 VERSION=$(sed -nE 's/^project\(rm_terminal VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
 # 用 Homebrew 的库编出来的程序只能在同版本或更新的 macOS 上运行，所以最低版本写这台机器的。
@@ -224,6 +223,6 @@ rm -rf "$STAGE"
 step "好了。"
 step "  程序：${DEST}（启动台里也有，双击就开；可以拖到程序坞上）"
 step "  第一次打开会问能不能访问本地网络，点「允许」，不然连不上裁判系统。"
-step "  配置：程序包里带的是仓库里的队内统一配置，第一次打开会复制到 ~/Library/Application Support/rm_terminal/rm_terminal.conf（正常不用改）；日志和录像也在那个文件夹"
+step "  配置：程序包里带的就是仓库里的队内统一配置，双击时直接读包里那份，升级即生效；日志和录像在 ~/Library/Application Support/rm_terminal"
 step "  给别的 Mac：${DMG}（要 Apple 芯片、macOS ${MACOS%%.*} 或更新；第一次打开被拦时，去「系统设置 → 隐私与安全性」点「仍要打开」）"
 open -R "$DEST"

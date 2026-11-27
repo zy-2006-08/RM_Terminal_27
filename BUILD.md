@@ -68,11 +68,9 @@ and template documenting every key.
 | `mode_exit_hysteresis_ms` | `3000` | Consecutive clear time before leaving video mode |
 | `event_history_capacity` | `50` | Bounded event ring size; oldest records drop first |
 | `blind_stale_fallback_ms` | `15000` | Stale-blind fallback delay; **`0` disables it** |
-| `map_enabled` | `true` | Draw the tactical map pane: `true` or `false` |
 | `controller_serial` | (unset) | Custom controller serial port, or `auto` to use whichever USB serial port sends controller frames; unset means this seat has none |
 | `controller_baud` | `115200` | Controller baud rate; one of 9600 … 921600. The firmware uses 115200 |
 | `mqtt_keepalive_s` | `5` | MQTT keepalive; a pulled cable is detected after about two of these |
-| `alerts_disabled` | (none) | Comma list of event alerts to switch off: `outpost`, `control`, `fortress`, `dart`, `energy`, `low_hp`, `base` |
 | `alert_control_gap` | `30` | Control-point deficit that triggers the 控制度落后 alert |
 | `speech_dir` | (default) | Linux voice install directory; default `~/.local/share/rm_terminal/tts` |
 | `map_mark_ms` | `30000` | How long a map mark (sent or received) stays on the map; the last 5 s fade |
@@ -160,7 +158,7 @@ shown in the event feed; `sentry_result`, `dart_status` (target and gate on chan
 and `map_mark_received` record what the server answered, `map_mark` what the
 commander sent.
 
-`alert` carries `kind` (an `alerts_disabled` name, or `tactical` for a due tactical
+`alert` carries `kind` (an alert kind name, or `tactical` for a due tactical
 reminder), `level` (`critical`, `warning`, `info`) and the banner `text`.
 `alert_voice` reports pre-synthesis of the alert phrases (`state=preparing|ready`,
 or `synth_failed` with the phrase and error).
@@ -399,7 +397,7 @@ warning amber, info cyan; 4 s each, critical first, anything that waited over 10
 is dropped) and speaks a fixed phrase. A due tactical reminder also shows a banner,
 whether or not the machine has a voice.
 
-| `alerts_disabled` name | Fires when | How often |
+| kind name | Fires when | How often |
 | --- | --- | --- |
 | `outpost` | our outpost zone becomes enemy temporary control; again when it becomes enemy full control | once per change |
 | `control` | enemy control points lead by `alert_control_gap` | once; re-armed after the gap falls below half |
@@ -485,7 +483,7 @@ The model is `cpp/layout/ui_profile.*`: operator → role → scheme (built-ins 
 minimal, video — the commander gets standard, minimal — plus custom copies),
 each scheme holding its cells on the 16 × 9 grid, the panes it hides and per-pane options
 (map background opacity, enemy markers, marks, enemy low-HP pulse, analysis control-only,
-alert voice, extra muted alert kinds on top of `alerts_disabled`, next-step options).
+alert voice and which alert kinds are spoken, next-step options).
 Every pane can be removed; at least one stays. `cpp/layout/layout_ops.*` holds the edits (insert at
 an edge, swap, replace, move a seam, remove), each keeping the grid fully tiled and every pane
 at or above `pane_min_units`; the editor tries insert, then swap (a moved pane) or replace (a
@@ -625,9 +623,10 @@ bash scripts/package_macos.sh
 再像双击那样起一次自检、画一次主界面；最后装进「应用程序」，另出
 `build/macos-app/RM-Terminal-macOS-<芯片>.dmg` 给别的 Mac。再运行一次就是升级。
 
-- 打出来的程序连真实裁判系统：第一次双击打开时，包里带的配置（`mqtt_host=192.168.12.1`，
-  不写席位，所以每次先弹选席位页）复制到 `~/Library/Application Support/rm_terminal/rm_terminal.conf`，
-  以后改那个文件。日志 `rm_terminal.log` 和录像也在这个文件夹。原因：从访达、程序坞打开时工作目录是
+- 打出来的程序连真实裁判系统：包里带的配置就是仓库里那份（`mqtt_host=192.168.12.1`，
+  不写席位，所以每次先弹选席位页），双击时终端直接读包里的 `Contents/Resources/rm_terminal.conf`，
+  升级 app 后配置跟着更新，不用手动删任何文件。日志 `rm_terminal.log` 和录像在
+  `~/Library/Application Support/rm_terminal/`。原因：从访达、程序坞打开时工作目录是
   `/`，`./rm_terminal.conf` 找不到、日志写不进去；`cpp/app/main.cpp` 只在「在 .app 里、工作目录是 /」时换目录，
   在终端里运行时一切照旧。
 - 终端先找自己旁边的 ffmpeg，再找 PATH：从访达打开时 PATH 里没有 Homebrew。

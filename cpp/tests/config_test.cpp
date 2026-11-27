@@ -76,7 +76,6 @@ namespace
         check(cfg.log_level == rm_terminal::LogLevel::info, "default log_level");
         check(cfg.mode_exit_hysteresis_ms == 3000, "default mode_exit_hysteresis_ms");
         check(cfg.event_history_capacity == 50, "default event_history_capacity");
-        check(cfg.map_enabled, "default map_enabled");
         check(cfg.blind_stale_fallback_ms == 15000, "default blind_stale_fallback_ms");
     }
 
@@ -96,7 +95,6 @@ namespace
                                               "log_destination=custom.log\n"
                                               "mode_exit_hysteresis_ms=4500\n"
                                               "event_history_capacity=120\n"
-                                              "map_enabled=false\n"
                                               "map_mark_ms=12000\n"
                                               "display_fullscreen=true\n"
                                               "display_screen=HDMI-1\n"
@@ -122,7 +120,6 @@ namespace
         check(cfg.display_fullscreen, "override display_fullscreen");
         check(cfg.display_screen == QLatin1String("HDMI-1"), "override display_screen");
         check(cfg.self_robot_id_set, "an explicit self_robot_id is remembered as explicit");
-        check(!cfg.map_enabled, "override map_enabled");
         check(cfg.blind_stale_fallback_ms == 9000, "override blind_stale_fallback_ms");
     }
 
@@ -142,33 +139,6 @@ namespace
         check(ok, "blind_stale_fallback_ms=0 is legal");
         check(error.isEmpty(), "blind_stale_fallback_ms=0 sets no error");
         check(cfg.blind_stale_fallback_ms == 0, "blind_stale_fallback_ms=0 is stored as 0");
-    }
-
-    void map_enabled_accepts_both_booleans(const QTemporaryDir& dir)
-    {
-        struct Case
-        {
-            const char* name;
-            const char* body;
-            bool expected;
-        };
-        // Given: the two accepted spellings of the boolean key.
-        const Case cases[] = {
-            {"map_true", "map_enabled=true\n", true},
-            {"map_false", "map_enabled=false\n", false},
-        };
-        for (const Case& item : cases)
-        {
-            const QString path = dir.filePath(QString::fromLatin1(item.name) + QStringLiteral(".conf"));
-            check(write_file(path, QString::fromLatin1(item.body)), item.name);
-            // When: the config is loaded.
-            rm_terminal::Config cfg;
-            QString error;
-            const bool ok = rm_terminal::load_config(path, &cfg, &error);
-            // Then: the flag reflects the file and no error is raised.
-            check(ok, item.name);
-            check(cfg.map_enabled == item.expected, item.name);
-        }
     }
 
     void malformed_config_fails_with_named_key(const QTemporaryDir& dir)
@@ -194,7 +164,6 @@ namespace
             {"zero_capacity", "event_history_capacity=0\n", "event_history_capacity"},
             {"negative_fallback", "blind_stale_fallback_ms=-1\n", "blind_stale_fallback_ms"},
             {"non_numeric_fallback", "blind_stale_fallback_ms=soon\n", "blind_stale_fallback_ms"},
-            {"non_boolean_map", "map_enabled=yes\n", "map_enabled"},
         };
         for (const Case& item : cases)
         {
@@ -375,14 +344,11 @@ namespace
         check(cfg.controller_baud == 921600, "override controller_baud");
         check(cfg.mqtt_keepalive_s == 3, "override mqtt_keepalive_s");
 
-        check(defaults.alerts_disabled.isEmpty(), "every alert is on by default");
         check(defaults.alert_control_gap == 30, "default alert_control_gap");
-        check(write_file(path, QStringLiteral("alerts_disabled=dart, energy\nalert_control_gap=50\n"
+        check(write_file(path, QStringLiteral("alert_control_gap=50\n"
                                               "speech_dir=/opt/voice\n")),
               "write alert config");
         check(rm_terminal::load_config(path, &cfg, &error), "alert config loads");
-        check(cfg.alerts_disabled == QStringList({QStringLiteral("dart"), QStringLiteral("energy")}),
-              "alerts_disabled is a trimmed comma list");
         check(cfg.alert_control_gap == 50, "override alert_control_gap");
         check(cfg.speech_dir == QLatin1String("/opt/voice"), "override speech_dir");
 
@@ -396,7 +362,6 @@ namespace
             {"controller_baud=12345\n", "controller_baud", "non-standard baud rejected"},
             {"controller_baud=0\n", "controller_baud", "zero baud rejected"},
             {"mqtt_keepalive_s=0\n", "mqtt_keepalive_s", "zero keepalive rejected"},
-            {"alerts_disabled=dart,bogus\n", "bogus", "unknown alert kind rejected"},
             {"alert_control_gap=0\n", "alert_control_gap", "zero control gap rejected"},
         };
         for (const Bad& item : bad)
@@ -474,7 +439,6 @@ int main(int argc, char* argv[])
     missing_file_uses_documented_defaults(dir);
     every_key_is_honoured(dir);
     blind_stale_fallback_accepts_zero_as_disabled(dir);
-    map_enabled_accepts_both_booleans(dir);
     malformed_config_fails_with_named_key(dir);
     record_format_is_greppable(dir);
     level_filtering_drops_quiet_records(dir);

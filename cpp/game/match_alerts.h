@@ -77,7 +77,6 @@ namespace rm_terminal
         // 能量机关只有步兵能开(规则手册 5.6.3),不提醒重装;飞镖闸门由指挥手开(5.7.3),只提醒指挥手。
         Role role = Role::Infantry;
         int control_gap = 30;
-        QStringList disabled;
     };
 
     constexpr double kLowHpRatio = 0.25;
@@ -97,8 +96,6 @@ namespace rm_terminal
     public:
         explicit MatchAlerts(MatchAlertSettings settings);
         std::vector<MatchAlert> observe(const Snapshot& snapshot, MonotonicMs now);
-        // 运行中改关掉的种类(操作手的界面设置)。只影响以后的提醒,判定状态不清零。
-        void setDisabled(QStringList disabled) { settings_.disabled = std::move(disabled); }
 
     private:
         void report(std::vector<MatchAlert>& out, MatchAlert alert) const;

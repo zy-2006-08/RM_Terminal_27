@@ -40,8 +40,7 @@ namespace rm_terminal
         // 战场数据分析只画控制度,数字放大。
         bool analysis_control_only = false;
         bool alert_voice = true;
-        // alert_kind_names() 里的名字。只能在配置文件 alerts_disabled 之外**再多关**几种,
-        // 配置文件关掉的这里打不开:那是队里统一定的。
+        // alert_kind_names() 里的名字:这里关掉的种类不念语音,横幅照常显示。
         QStringList alerts_muted;
         // 「下一步」。关掉它是在面板开关里藏掉;这里是开着时怎么显示:
         // next_mode 0 一直显示,1 有急事才弹出(阵亡、堡垒被偷、基地被打时才弹到画面中间)。

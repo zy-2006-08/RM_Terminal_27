@@ -376,14 +376,8 @@ namespace
               "after dying and respawning a new low-HP episode alerts");
     }
 
-    void disabled_kinds_and_phrases()
+    void kind_names_and_phrases()
     {
-        rm_terminal::MatchAlertSettings settings;
-        settings.disabled = {QStringLiteral("energy")};
-        auto alerts = red_alerts(settings);
-        alerts.observe(preparing(), 0);
-        check(count(alerts.observe(in_match(0), 1000), AlertKind::Energy) == 0, "energy can be switched off");
-
         for (const QString& name : rm_terminal::alert_kind_names())
         {
             bool known = false;
@@ -426,7 +420,7 @@ int main()
     intrusion_names_the_route();
     field_zones();
     enemy_low_hp_per_robot();
-    disabled_kinds_and_phrases();
+    kind_names_and_phrases();
     banner_queue_orders_and_expires();
     if (failures != 0)
     {
